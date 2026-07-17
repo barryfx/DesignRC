@@ -1,0 +1,73 @@
+DesignRC GUI Parameter windows Layouts
+
+Menu bar:
+File		Edit
+  New		  Copy
+  Open		  Paste	
+  Save		  Defaults
+  Save As
+  ------
+  Exit
+
+New, Open, Save, and Save As default to the last directory selected. 
+Open, Save, and Save As allow you to open/save a project file with all the options currently selected.
+New resets all options to the user's Defaults
+Defaults opens a large dialog with all the panel windows side by side that let you change all default options on the windows including radio button selections, height, width, etc. Metric and inch defaults are stored separately and persist across app restarts. Inch dimensions display as fractions and step through 1/32, 1/16, 3/32, 1/8, 5/32, 3/16, 1/4, 5/16, 3/8, and 1/2 inch fractional stops.
+Copy and Paste let you copy textbox contents and paste else where.
+
+--------------------------------- End Menu Bar ---------------------------
+
+The Left hand panel starts with one parameter that stays permanently at the top of the parameter window called "Number of Wing Panels" (defaults to 1).  If they change the number of panels, a verification pop up should appear.
+Under that are N Tabs equal to the number of wing Panels selected named (Panel 1, Panel 2, ...). The number of tabs changes when "Number of Wing Panels" changes.
+When a wing panel tab is selected, another row of tabs appears in a tall skinny column on the left side of the wing panel window.  On the tabs should be written:  "Specs", "Spars", "LE/TE", "Ailerons/Flaps".  The first letter of each tab should be towards the bottom of the window, the last at the top and the top of letters to the left side of the GUI. (i.e. they are printed sideways on the tab), and the bottom of the letters to the right.
+When the "Specs" tab is selected, the window next to the tabs changed to contain the same parameters in the current Airfoils + Dimensions panels.  Change the label "Half Span" to "Panel Span".
+When the "Spars" tab is selected the window next to it changes to contain spar parameters defined below.
+When the "LE/TE" tab is selected the window next to it changes to contain LE/TE parameters defined below.
+At the bottom of the window, regardless of the tabs selected is the current text "Full span: ..." and under that, the current "Update View", "Fit View", and "Export DXFs" buttons with the current functions for each.
+
+"Spars" tab parameters:
+Individually selectable radio buttons called:
+	"Top Spar" (if selected, Height and Width text boxes are displayed defaulting to (5mm and 10mm))
+	"Bottom Spar" (if selected, Height and Width text boxes are displayed defaulting to (5mm and 10mm))
+		if Both Top & Bottom spars are selected another radio button appears named "Shear Webs".  If selected, a Thickness textbox is displayed defaulting to 3mm.
+Mutually exclusive from Top and Bottom spar is 2 more radio buttons that are mutually exclusive:
+	"CF Tube" (If selected, a OD & ID text box are displayed defaulting to 6mm and 5mm.)
+	"CF Rod" (If selected, a OD text box is displayed defaulting to 6mm.)
+Individually selectable is more radio buttons:
+	"LE Top Sheeting" (if selected Thickness and Stop Rib Number fields are displayed, defaulting to 2mm and 1.)
+	"LE Bottom Sheeting" (if selected Thickness and Stop Rib Number fields are displayed, defaulting to 2mm and 1.)
+	"TE Top Sheeting" (if selected Thickness and Stop Rib Number fields are displayed, defaulting to 2mm and 1.)
+	"TE Bottom Sheeting" (if selected Thickness and Stop Rib Number fields are displayed, defaulting to 2mm and 1.)
+Separator ----------------------
+Radio button:
+	"Turbulators" (if selected, a spinner for entering a number between 1 and 4 is displayed. and Height and Width textboxes defaulting to (2mm x 2mm).
+Separator ----------------------
+Radio Buttons individually selectable:
+	Top 60% Rear Spar (If selected, textboxes for Height & Width are displayed defaulting to 4mm x 4mm)
+	Bottom 60% Rear Spar (If selected, textboxes for Height & Width are displayed defaulting to 4mm x 4mm)
+=============================== END SPARS ==============================================	
+"LE/TE" tab parameters:
+Mutually exclusive radio buttons:
+	"Shaped LE Stock" (if selected Width & Height textboxes are displayed defaulting to "5mm x 7mm")
+	"Block LE Stock" (if selected Width & Height textboxes are displayed defaulting to "5mm x 7mm")
+	"CF Tube LE" (If selected, a OD & ID text box are displayed defaulting to 2mm and 1mm.)
+	"CF Rod LE"  (If selected, a OD text box is displayed defaulting to 2mm.)
+separator --------------------
+Mutually exclusive radio buttons:
+	"Shaped TE Stock" (if selected Width & Height textboxes are displayed defaulting to "20mm x 3mm")
+	"Sheet TE Stock" (if selected Width & Height textboxes are displayed defaulting to "20mm x 3mm")(also, radio button appears labeled "Slotted for Ribs"; slots are 6mm in metric mode or 1/4 inch in inch mode, and Sheet TE Stock is offered in DXF export)
+=============================== END TE/LE ==============================================
+"Ailerons/Flaps" tab parameters:
+two individually selectable radio buttons:
+	"Ailerons"
+		If ailerons is selected show Width & Height textboxes.
+		Below those, show Start Rib & Stop Rib spinners with range from 1 to number of ribs in the panel.
+		Below those, show Hinge Post Width & Hinge Post Height textboxes defaulting to 6mm x 10mm.
+	"Flaps"
+		If flaps is selected show Width & Height textboxes.
+		Below those, show Start Rib & Stop Rib spinners with range from 1 to number of ribs in the panel.
+		Below those, show Hinge Post Width & Hinge Post Height textboxes defaulting to 6mm x 10mm.
+		Flap and aileron rib ranges may share a boundary rib but must not overlap.
+=============================== END Ailerons/Flaps ==============================================
+
+

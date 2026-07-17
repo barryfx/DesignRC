@@ -1,0 +1,35 @@
+# Generated build trees and IDE state
+/build/
+/cmake-build-*/
+/install/
+/.vs/
+/.vscode/
+/.idea/
+
+# In-source CMake/CTest artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+
+# Visual Studio/MSVC output
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+*.exe
+*.dll
+*.lib
+*.exp
+*.ilk
+*.pdb
+
+# Generated projects and CAD exports
+/out/
+*.dxf
+
+# Logs and temporary files
+*.log
+*.tmp
+*~
