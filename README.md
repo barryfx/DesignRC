@@ -24,6 +24,12 @@ current release is **0.9.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
+## Downloading Installer for Windows 11
+
+Download the installer from the Releases section of the right hand column and run the installer.
+Windows will give an error because the installer isn't signed (that costs money and this is free).
+Run it anyway if you wish to install.
+
 ## Typical use
 
 1. Select the number of wing panels.
