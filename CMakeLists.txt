@@ -69,8 +69,30 @@ if(WIN32)
   get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
   get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
   find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}" REQUIRED)
+  execute_process(
+    COMMAND "${QT_QMAKE_EXECUTABLE}" -query QT_INSTALL_PREFIX
+    OUTPUT_VARIABLE QT_INSTALL_PREFIX
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  execute_process(
+    COMMAND "${QT_QMAKE_EXECUTABLE}" -query QT_INSTALL_DOCS
+    OUTPUT_VARIABLE QT_INSTALL_DOCS
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
 
-  set(_occt_runtime "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/occt/install-debug/win64/vc14/bind")
+  set(DESIGNRC_OCCT_RUNTIME_DIR "" CACHE PATH
+      "Directory containing the OpenCascade runtime DLLs")
+  if(NOT DESIGNRC_OCCT_RUNTIME_DIR)
+    if(EXISTS "${OpenCASCADE_INSTALL_PREFIX}/win64/vc14/bin")
+      set(DESIGNRC_OCCT_RUNTIME_DIR
+          "${OpenCASCADE_INSTALL_PREFIX}/win64/vc14/bin")
+    elseif(EXISTS "${OpenCASCADE_INSTALL_PREFIX}/win64/vc14/bind")
+      set(DESIGNRC_OCCT_RUNTIME_DIR
+          "${OpenCASCADE_INSTALL_PREFIX}/win64/vc14/bind")
+    else()
+      message(FATAL_ERROR "OpenCascade runtime DLL directory was not found")
+    endif()
+  endif()
   set(_occt_freetype
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/occt/3rdparty-vc14-64/freetype-2.13.3-x64/bin/freetype.dll")
   if(OpenCASCADE_WITH_FREETYPE AND NOT EXISTS "${_occt_freetype}")
@@ -78,14 +100,54 @@ if(WIN32)
   endif()
   add_custom_command(TARGET designrc POST_BUILD
     COMMAND "${WINDEPLOYQT_EXECUTABLE}" --no-translations "$<TARGET_FILE:designrc>"
-    COMMAND "${CMAKE_COMMAND}" -E copy_directory "${_occt_runtime}" "$<TARGET_FILE_DIR:designrc>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${DESIGNRC_OCCT_RUNTIME_DIR}" "$<TARGET_FILE_DIR:designrc>"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
       "${_occt_freetype}" "$<TARGET_FILE_DIR:designrc>"
     COMMAND "${CMAKE_COMMAND}" -E copy_directory
       "${CMAKE_CURRENT_SOURCE_DIR}/resources/help" "$<TARGET_FILE_DIR:designrc>/help"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/licenses" "$<TARGET_FILE_DIR:designrc>/licenses"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+      "$<TARGET_FILE_DIR:designrc>/licenses/DESIGNRC-GPL-3.0.txt"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+      "$<TARGET_FILE_DIR:designrc>/licenses/THIRD_PARTY_NOTICES.md"
     COMMENT "Deploying Qt and OpenCascade runtimes"
     VERBATIM
   )
+  if(EXISTS "${QT_INSTALL_PREFIX}/sbom/qtbase-${Qt6_VERSION}.spdx")
+    add_custom_command(TARGET designrc POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-sbom"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${QT_INSTALL_PREFIX}/sbom/qtbase-${Qt6_VERSION}.spdx"
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-sbom/qtbase-${Qt6_VERSION}.spdx"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${QT_INSTALL_PREFIX}/sbom/qtsvg-${Qt6_VERSION}.spdx"
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-sbom/qtsvg-${Qt6_VERSION}.spdx"
+      COMMENT "Deploying Qt software bills of materials"
+      VERBATIM
+    )
+  endif()
+  if(EXISTS "${QT_INSTALL_DOCS}/qtdoc/licenses-used-in-qt.html")
+    add_custom_command(TARGET designrc POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-attributions"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${QT_INSTALL_DOCS}/qtdoc/licenses-used-in-qt.html"
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-attributions/licenses-used-in-qt.html"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${QT_INSTALL_DOCS}/qtdoc/qt-attribution-llvmpipe.html"
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-attributions/qt-attribution-llvmpipe.html"
+      COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${QT_INSTALL_DOCS}/qtdoc/qt-attribution-llvm.html"
+        "$<TARGET_FILE_DIR:designrc>/licenses/qt-attributions/qt-attribution-llvm.html"
+      COMMENT "Deploying Qt and Mesa attribution documents"
+      VERBATIM
+    )
+  endif()
 endif()
 
 if(DESIGNRC_BUILD_TESTS)

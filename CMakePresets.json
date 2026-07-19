@@ -11,6 +11,19 @@
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
         "DESIGNRC_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows MSVC Release",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
+        "OpenCASCADE_DIR": "${sourceDir}/../third_party/occt/install-release/cmake",
+        "DESIGNRC_OCCT_RUNTIME_DIR": "${sourceDir}/../third_party/occt/install-release/win64/vc14/bin",
+        "DESIGNRC_BUILD_TESTS": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -18,6 +31,11 @@
       "name": "windows-debug",
       "configurePreset": "windows-debug",
       "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -29,4 +47,3 @@
     }
   ]
 }
-

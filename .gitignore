@@ -27,6 +27,7 @@ Testing/
 
 # Generated projects and CAD exports
 /out/
+/dist/
 *.dxf
 
 # Logs and temporary files

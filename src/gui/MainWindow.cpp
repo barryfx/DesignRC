@@ -693,9 +693,18 @@ void MainWindow::openHelp() {
 }
 
 void MainWindow::showAbout() {
+  const QString licensesPath = QDir::toNativeSeparators(
+      QDir{QApplication::applicationDirPath()}.filePath("licenses"));
   QMessageBox::about(this, "About DesignRC",
-      QString{"<h2>DesignRC</h2><p>Version %1</p><p>Release date: %2</p>"}
-          .arg(QApplication::applicationVersion(), DESIGNRC_RELEASE_DATE));
+      QString{"<h2>DesignRC</h2><p>Version %1</p><p>Release date: %2</p>"
+              "<p>Copyright &copy; 2026 Barry Foust</p>"
+              "<p>DesignRC is free software licensed under the GNU General Public License "
+              "version 3 only. It comes with absolutely no warranty.</p>"
+              "<p>DesignRC uses Qt 6 under LGPL 3.0, Open CASCADE Technology under LGPL 2.1 "
+              "with its additional exception, and FreeType under the FreeType License.</p>"
+              "<p>License texts and third-party notices are installed in:<br><code>%3</code></p>"}
+          .arg(QApplication::applicationVersion(), DESIGNRC_RELEASE_DATE,
+               licensesPath.toHtmlEscaped()));
 }
 
 std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) const {

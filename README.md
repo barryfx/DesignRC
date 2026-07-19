@@ -144,6 +144,25 @@ ctest --test-dir build/debug -C Debug -R designrc_geometry_tests --output-on-fai
 The application starts maximized. A new project intentionally leaves the 3D viewport blank until
 **Update View** is pressed.
 
+### Build the Windows installer
+
+An installer requires the optimized OCCT libraries at `../third_party/occt/install-release` and
+Inno Setup 6. Install the installer compiler once with:
+
+```powershell
+winget install --id JRSoftware.InnoSetup -e
+```
+
+Then build the Release application and installer with:
+
+```powershell
+.\installer\build-installer.ps1
+```
+
+The packaging script copies Microsoft's redistributable Visual C++ runtime DLLs beside the
+application, creates a corresponding-source archive for GPL compliance, and writes the installer
+to `dist`. The resulting installer does not require administrator privileges.
+
 ## Main dependencies
 
 - [Qt 6](https://www.qt.io/) provides the desktop interface, plan scene, and PDF writer.
@@ -152,3 +171,20 @@ The application starts maximized. A new project intentionally leaves the 3D view
 
 DXF and SVG part export are written directly from DesignRC's two-dimensional manufacturing
 geometry and do not require an additional export library.
+
+## License
+
+DesignRC is Copyright (C) 2026 Barry Foust and is licensed under the **GNU General Public License
+version 3 only** (`GPL-3.0-only`). See [LICENSE](LICENSE) for the complete terms. DesignRC comes
+with absolutely no warranty.
+
+DesignRC dynamically links Qt 6, Open CASCADE Technology, and FreeType. Their licenses, attribution,
+exact version source locations, and redistribution notes are documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Complete dependency license texts are stored in
+`resources/licenses` and copied into the application's `licenses` directory during every Windows
+build. Matching Qt SPDX software bills of materials and attribution pages are also copied from the
+installed Qt distribution.
+
+When distributing an installer, publish the corresponding DesignRC source archive and build scripts
+beside that installer. Users must be allowed to replace the LGPL-covered DLLs with compatible
+modified versions and to reverse engineer the application when needed to debug those modifications.
