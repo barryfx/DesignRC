@@ -38,4 +38,34 @@ void exportDihedralAngleDxf(
     const std::filesystem::path& path,
     const std::string& label);
 
+void exportRibSvg(
+    const RibDefinition& rib,
+    const std::filesystem::path& path,
+    const std::string& label);
+
+void exportStructuredRibSvg(
+    const StructuredRib& rib,
+    const std::filesystem::path& path,
+    const std::string& label);
+
+void exportShearWebSvg(
+    const ShearWebPart& web,
+    const std::filesystem::path& path,
+    const std::string& label);
+
+void exportSheetStockSvg(
+    const SheetStockPart& stock,
+    const std::filesystem::path& path,
+    const std::string& label);
+
+void exportWoodJoinerSvg(
+    const JoinerPart& joiner,
+    const std::filesystem::path& path,
+    const std::string& label);
+
+void exportDihedralAngleSvg(
+    double dihedralDegrees,
+    const std::filesystem::path& path,
+    const std::string& label);
+
 } // namespace designrc::domain

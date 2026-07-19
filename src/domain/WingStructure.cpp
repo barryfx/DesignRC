@@ -4,8 +4,21 @@
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
+#include <tuple>
+#include <utility>
 
 namespace designrc::domain {
+
+EdgeHeightError::EdgeHeightError(std::string edgeName, const std::size_t ribIndex,
+                                 const double cutHeightMm,
+                                 const double specifiedHeightMm)
+    : std::invalid_argument(edgeName + " cut edge at rib " +
+          std::to_string(ribIndex) + " is " + std::to_string(cutHeightMm) +
+          " mm, not smaller than the specified " + edgeName + " Height of " +
+          std::to_string(specifiedHeightMm) + " mm"),
+      edgeName_{std::move(edgeName)}, ribIndex_{ribIndex},
+      cutHeightMm_{cutHeightMm}, specifiedHeightMm_{specifiedHeightMm} {}
+
 namespace {
 
 struct Notch {
@@ -340,34 +353,52 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   if (ribs.size() < 2) throw std::invalid_argument("Wing structure requires at least two ribs");
   StructuredWing wing;
   wing.ribs.reserve(ribs.size());
-  ProfiledSpanMember leadingStock{
-      p.leadingEdgeType == 1 ? "Shaped leading edge" : "Block leading edge", {}};
-  ProfiledSpanMember trailingStock{
-      p.trailingEdgeType == 1 ? "Shaped trailing edge" : "Sheet trailing edge", {}};
+  ProfiledSpanMember leadingStock{"Block leading edge", {}};
+  ProfiledSpanMember trailingStock{"Sheet trailing edge", {}};
   const double trailingEdgeSlotDepth = std::max(0.0,
       std::min(p.trailingEdgeSlotDepth, p.trailingEdgeWidth));
   std::vector<ControlSurfacePart> controlParts;
   const auto addControl = [&](const bool enabled, const std::string& name,
                               const double width, const double hingeWidth,
                               const double hingeHeight, const int startRib,
-                              const int stopRib) {
+                              const int stopRib, const bool allowTipRib) {
     if (!enabled) return;
     if (ribs.size() < 4) return;
     const int lastInternalRib = static_cast<int>(ribs.size()) - 1;
+    const int lastStopRib = allowTipRib
+        ? static_cast<int>(ribs.size()) : lastInternalRib;
     const auto start = static_cast<std::size_t>(
         std::clamp(startRib, 2, lastInternalRib) - 1);
     const auto stop = static_cast<std::size_t>(
-        std::clamp(stopRib, 2, lastInternalRib) - 1);
+        std::clamp(stopRib, 2, lastStopRib) - 1);
     if (stop <= start) return;
     controlParts.push_back({name, start, stop, width, p.controlSurfaceGap,
                             hingeWidth, hingeHeight, {}, {}});
+    if (allowTipRib && stop + 1 == ribs.size()) {
+      controlParts.back().cutStopRib = true;
+      controlParts.back().extendThroughStopRib = true;
+    }
     controlParts.back().profiles.reserve(stop - start + 1);
     controlParts.back().hingePostCenters.reserve(stop - start + 1);
   };
+  if (p.flaps && p.ailerons && p.aileronStartRib < p.flapStopRib)
+    throw std::invalid_argument(
+        "Aileron Start Rib cannot be less than Flap Stop Rib");
+  if (p.flaps && p.ailerons && p.aileronStartRib == p.flapStopRib &&
+      std::abs(p.aileronWidth - p.flapWidth) > 1.0e-8)
+    throw std::invalid_argument(
+        "Flap Width and Aileron Width must match when their rib ranges meet");
   addControl(p.flaps, "Flap", p.flapWidth, p.flapHingePostWidth,
-             p.flapHingePostHeight, p.flapStartRib, p.flapStopRib);
+             p.flapHingePostHeight, p.flapStartRib, p.flapStopRib, false);
   addControl(p.ailerons, "Aileron", p.aileronWidth, p.aileronHingePostWidth,
-             p.aileronHingePostHeight, p.aileronStartRib, p.aileronStopRib);
+             p.aileronHingePostHeight, p.aileronStartRib, p.aileronStopRib, true);
+  if (controlParts.size() == 2 &&
+      controlParts[0].name == "Flap" && controlParts[1].name == "Aileron" &&
+      controlParts[0].stopRibIndex == controlParts[1].startRibIndex) {
+    controlParts[0].cutStopRib = true;
+    controlParts[0].extendThroughStopRib = true;
+    controlParts[1].cutStartRib = true;
+  }
   std::vector<Point2> carbonSparCenters;
   if (p.carbonSpar != 0) {
     std::vector<Point2> nominal;
@@ -485,7 +516,14 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     return static_cast<std::size_t>(
         std::clamp(ribNumber, 2, static_cast<int>(ribs.size())) - 1);
   };
-  SheetingPart leTopSheet{"LE top sheeting", stopIndex(p.leTopSheetStopRib), {}};
+  const int turbulatorCount = std::clamp(p.turbulatorCount, 1, 4);
+  const std::size_t leTopSheetPartCount = p.leTopSheet && p.turbulators
+      ? static_cast<std::size_t>(turbulatorCount + 1) : 1;
+  std::vector<SheetingPart> leTopSheets;
+  leTopSheets.reserve(leTopSheetPartCount);
+  for (std::size_t i = 0; i < leTopSheetPartCount; ++i)
+    leTopSheets.push_back(
+        {"LE top sheeting", stopIndex(p.leTopSheetStopRib), {}});
   SheetingPart leBottomSheet{"LE bottom sheeting", stopIndex(p.leBottomSheetStopRib), {}};
   SheetingPart teTopSheet{"TE top sheeting", stopIndex(p.teTopSheetStopRib), {}};
   SheetingPart teBottomSheet{"TE bottom sheeting", stopIndex(p.teBottomSheetStopRib), {}};
@@ -493,8 +531,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   for (std::size_t ribIndex = 0; ribIndex < ribs.size(); ++ribIndex) {
     const auto& rib = ribs[ribIndex];
     const auto [upper, lower] = localSurfaces(rib);
-    const bool solidLeadingEdge = p.leadingEdgeType == 1 || p.leadingEdgeType == 2;
-    const bool solidTrailingEdge = p.trailingEdgeType == 1 || p.trailingEdgeType == 2;
+    const bool solidLeadingEdge = p.leadingEdgeType == 2;
+    const bool solidTrailingEdge = p.trailingEdgeType == 2;
     const double minimumX = solidLeadingEdge
         ? std::clamp(p.leadingEdgeWidth, 0.001, rib.chord - 0.001) : 0.0;
     const double maximumX = solidTrailingEdge
@@ -503,18 +541,17 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     const bool slottedSheet = p.trailingEdgeType == 2 && p.trailingEdgeSlotted;
     double retainedMaximumX = slottedSheet
         ? std::min(rib.chord, maximumX + trailingEdgeSlotDepth) : maximumX;
-    const double fullSheetingMaximumX = retainedMaximumX;
-    double controlSheetingMaximumX = retainedMaximumX;
+    // The slot extends the rib into the TE stock, but sheeting must stop at
+    // the stock's inner face rather than following the rib into that slot.
+    const double fullSheetingMaximumX = maximumX;
+    double controlSheetingMaximumX = maximumX;
     if (minimumX >= maximumX)
       throw std::invalid_argument("Leading- and trailing-edge cuts overlap");
     const auto validateCutHeight = [&](const char* edgeName, const double cutX,
                                        const double specifiedHeight) {
       const double cutHeight = interpolateY(upper, cutX) - interpolateY(lower, cutX);
-      if (cutHeight + 1.0e-8 < specifiedHeight) {
-        throw std::invalid_argument(std::string{edgeName} + " cut edge at rib " +
-            std::to_string(ribIndex + 1) + " is " + std::to_string(cutHeight) +
-            " mm, less than the specified " + edgeName + " Height of " +
-            std::to_string(specifiedHeight) + " mm");
+      if (cutHeight >= specifiedHeight - 1.0e-8) {
+        throw EdgeHeightError{edgeName, ribIndex + 1, cutHeight, specifiedHeight};
       }
     };
     if (solidLeadingEdge) {
@@ -543,7 +580,11 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       // clearance even though the boundary rib itself must remain intact.
       controlSheetingMaximumX = std::min(controlSheetingMaximumX,
           std::max(0.001, controlLeadingX - control.gap - control.hingePostWidth));
-      if (ribIndex > control.startRibIndex && ribIndex < control.stopRibIndex) {
+      const bool cutBoundary =
+          (control.cutStartRib && ribIndex == control.startRibIndex) ||
+          (control.cutStopRib && ribIndex == control.stopRibIndex);
+      if ((ribIndex > control.startRibIndex && ribIndex < control.stopRibIndex) ||
+          cutBoundary) {
         retainedMaximumX = std::min(retainedMaximumX,
             std::max(0.001, controlLeadingX - control.gap - control.hingePostWidth));
       }
@@ -579,14 +620,40 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       part.profiles.push_back(sheetingProfile(surface, clippedLeft, clippedRight, thickness, top));
       recesses.push_back({clippedLeft, clippedRight, thickness});
     };
-    addSheet(leTopSheet, p.leTopSheet, p.leTopSheetThickness, upper,
-             sheetingMinimumX, topLeEnd, true, upperRecesses);
+    if (p.leTopSheet && p.turbulators &&
+        ribIndex <= leTopSheets.front().stopRibIndex) {
+      double stripStart = sheetingMinimumX;
+      for (int i = 1; i <= turbulatorCount; ++i) {
+        const double center = 0.25 * static_cast<double>(i) /
+            static_cast<double>(turbulatorCount + 1) * rib.chord;
+        const double stripEnd = center - p.turbulatorWidth * 0.5;
+        if (stripEnd <= stripStart + 1.0e-6)
+          throw std::invalid_argument(
+              "Turbulator width leaves no room for an LE top sheeting strip at rib " +
+              std::to_string(ribIndex + 1));
+        addSheet(leTopSheets[static_cast<std::size_t>(i - 1)], true,
+            p.leTopSheetThickness, upper, stripStart, stripEnd, true,
+            upperRecesses);
+        stripStart = center + p.turbulatorWidth * 0.5;
+      }
+      if (topLeEnd <= stripStart + 1.0e-6)
+        throw std::invalid_argument(
+            "Turbulator width leaves no room for the final LE top sheeting strip at rib " +
+            std::to_string(ribIndex + 1));
+      addSheet(leTopSheets.back(), true, p.leTopSheetThickness, upper,
+          stripStart, topLeEnd, true, upperRecesses);
+    } else {
+      addSheet(leTopSheets.front(), p.leTopSheet, p.leTopSheetThickness, upper,
+               sheetingMinimumX, topLeEnd, true, upperRecesses);
+    }
     addSheet(teTopSheet, p.teTopSheet, p.teTopSheetThickness, upper,
-             topTeStart, retainedMaximumX, true, upperRecesses);
+             topTeStart, std::min(fullSheetingMaximumX, retainedMaximumX),
+             true, upperRecesses);
     addSheet(leBottomSheet, p.leBottomSheet, p.leBottomSheetThickness, lower,
              sheetingMinimumX, bottomLeEnd, false, lowerRecesses);
     addSheet(teBottomSheet, p.teBottomSheet, p.teBottomSheetThickness, lower,
-             bottomTeStart, retainedMaximumX, false, lowerRecesses);
+             bottomTeStart, std::min(fullSheetingMaximumX, retainedMaximumX),
+             false, lowerRecesses);
     const auto addTeAlternatives = [&](SheetingPart& part, const bool enabled,
                                        const double thickness,
                                        const std::vector<Point2>& surface,
@@ -690,7 +757,10 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     wing.ribs.push_back(std::move(structured));
   }
 
-  if (p.leTopSheet && !leTopSheet.profiles.empty()) wing.sheeting.push_back(std::move(leTopSheet));
+  if (p.leTopSheet) {
+    for (auto& sheet : leTopSheets)
+      if (!sheet.profiles.empty()) wing.sheeting.push_back(std::move(sheet));
+  }
   if (p.leBottomSheet && !leBottomSheet.profiles.empty()) wing.sheeting.push_back(std::move(leBottomSheet));
   const auto markControlBays = [&controlParts](SheetingPart& part) {
     std::vector<bool> bays(part.stopRibIndex, false);
@@ -714,22 +784,38 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   }
 
   if (!leadingStock.profiles.empty()) wing.profiledMembers.push_back(std::move(leadingStock));
-  std::vector<std::pair<std::size_t, std::size_t>> excludedRanges;
+  struct ControlExclusion {
+    std::size_t first{};
+    std::size_t last{};
+    bool cutsLast{};
+  };
+  std::vector<ControlExclusion> excludedRanges;
   for (const auto& control : controlParts)
-    excludedRanges.emplace_back(control.startRibIndex, control.stopRibIndex);
-  std::sort(excludedRanges.begin(), excludedRanges.end());
-  std::vector<std::pair<std::size_t, std::size_t>> mergedExclusions;
+    excludedRanges.push_back({control.startRibIndex, control.stopRibIndex,
+                              control.cutStopRib});
+  std::sort(excludedRanges.begin(), excludedRanges.end(),
+      [](const ControlExclusion& a, const ControlExclusion& b) {
+        return std::tie(a.first, a.last) < std::tie(b.first, b.last);
+      });
+  std::vector<ControlExclusion> mergedExclusions;
   for (const auto& range : excludedRanges) {
-    if (mergedExclusions.empty() || range.first > mergedExclusions.back().second)
+    if (mergedExclusions.empty() || range.first > mergedExclusions.back().last)
       mergedExclusions.push_back(range);
-    else
-      mergedExclusions.back().second = std::max(mergedExclusions.back().second, range.second);
+    else if (range.last >= mergedExclusions.back().last) {
+      if (range.last > mergedExclusions.back().last)
+        mergedExclusions.back().cutsLast = range.cutsLast;
+      else
+        mergedExclusions.back().cutsLast =
+            mergedExclusions.back().cutsLast || range.cutsLast;
+      mergedExclusions.back().last = range.last;
+    }
   }
   std::vector<std::pair<std::size_t, std::size_t>> trailingRanges;
   std::size_t rangeStart = 0;
   for (const auto& excluded : mergedExclusions) {
     if (rangeStart <= excluded.first) trailingRanges.emplace_back(rangeStart, excluded.first);
-    rangeStart = std::max(rangeStart, excluded.second);
+    rangeStart = std::max(rangeStart,
+        excluded.last + static_cast<std::size_t>(excluded.cutsLast));
   }
   if (rangeStart <= ribs.size() - 1) trailingRanges.emplace_back(rangeStart, ribs.size() - 1);
   trailingStock.activeRanges = trailingRanges;
@@ -843,18 +929,36 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       auto bottom0 = surfaceCenter(wing.ribs[i].rib, 0.25, false, p.bottomSparHeight);
       auto top1 = surfaceCenter(wing.ribs[i + 1].rib, 0.25, true, p.topSparHeight);
       auto bottom1 = surfaceCenter(wing.ribs[i + 1].rib, 0.25, false, p.bottomSparHeight);
-      // Webs fill the clear space between the inward-facing spar surfaces.
-      top0.y -= p.topSparHeight * 0.5;
-      top1.y -= p.topSparHeight * 0.5;
-      bottom0.y += p.bottomSparHeight * 0.5;
-      bottom1.y += p.bottomSparHeight * 0.5;
-      const double bay = wing.ribs[i + 1].rib.spanPosition - wing.ribs[i].rib.spanPosition;
+      // Webs extend from the centerline of the bottom spar to the centerline
+      // of the top spar at both rib stations.
+      const auto& rootRib = wing.ribs[i].rib;
+      const auto& tipRib = wing.ribs[i + 1].rib;
+      const double panelDy = ribs.back().spanPosition - ribs.front().spanPosition;
+      const double panelDz = ribs.back().dihedralHeight - ribs.front().dihedralHeight;
+      const double panelLength = std::hypot(panelDy, panelDz);
+      const auto projectedFaceOffset = [&](const RibDefinition& rib,
+                                           const double materialOffset) {
+        if (panelLength < 1.0e-9) return 0.0;
+        const double plane = rib.ribPlaneAngleDegrees *
+            std::numbers::pi / 180.0;
+        return materialOffset *
+            (std::cos(plane) * panelDy + std::sin(plane) * panelDz) /
+            panelLength;
+      };
+      const double centerBay = std::hypot(
+          tipRib.spanPosition - rootRib.spanPosition,
+          tipRib.dihedralHeight - rootRib.dihedralHeight);
+      const double rootEnd = projectedFaceOffset(rootRib,
+          (rootRib.ribThicknessStartFactor + 1.0) * p.ribThickness);
+      const double tipStart = projectedFaceOffset(tipRib,
+          tipRib.ribThicknessStartFactor * p.ribThickness);
+      const double clearBay = std::max(0.0, centerBay + tipStart - rootEnd);
       ShearWebPart web;
       web.name = "SW" + std::to_string(i + 1);
       web.bayIndex = i + 1;
       web.thickness = p.shearWebThickness;
-      web.outline = {{0.0, 0.0}, {bay, bottom1.y - bottom0.y},
-                     {bay, top1.y - bottom0.y}, {0.0, top0.y - bottom0.y}};
+      web.outline = {{0.0, 0.0}, {clearBay, bottom1.y - bottom0.y},
+                     {clearBay, top1.y - bottom0.y}, {0.0, top0.y - bottom0.y}};
       web.stationCorners = {bottom0, bottom1, top1, top0};
       wing.shearWebs.push_back(std::move(web));
     }

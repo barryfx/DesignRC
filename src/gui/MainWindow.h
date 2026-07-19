@@ -22,6 +22,7 @@ class QThread;
 namespace designrc::gui {
 
 class OcctViewport;
+class PlanViewport;
 
 class MainWindow final : public QMainWindow {
 public:
@@ -35,6 +36,9 @@ private:
   void rebuildPanelTabs(const std::vector<WingPanelData>& panels);
   void changePanelCount(int count);
   void markPreviewPending();
+  void generatePlan();
+  void exportPlanPdf();
+  void invalidatePlan();
   void regeneratePreview();
   void regeneratePreviewSynchronous();
   void regeneratePreviewLegacy();
@@ -46,6 +50,8 @@ private:
   bool writeProject(const QString& path);
   void updateWindowTitle();
   void openDefaults();
+  void openHelp();
+  void showAbout();
   void copyFocusedText();
   void pasteFocusedText();
   [[nodiscard]] std::vector<WingPanelData> panelData() const;
@@ -55,10 +61,14 @@ private:
   bool loadProjectJson(const QJsonObject& object);
 
   OcctViewport* viewport_{};
+  PlanViewport* planViewport_{};
+  QTabWidget* graphicsTabs_{};
   QSpinBox* panelCount_{};
   QTabWidget* panelTabs_{};
   QLabel* metrics_{};
   QPushButton* updateButton_{};
+  QPushButton* generatePlanButton_{};
+  QPushButton* exportPlanButton_{};
   QPushButton* cancelUpdateButton_{};
   QProgressBar* updateProgress_{};
   QThread* updateThread_{};
@@ -67,6 +77,8 @@ private:
   std::vector<domain::RibDefinition> currentRibs_;
   domain::StructuredWing currentStructuredWing_;
   std::vector<domain::StructuredWing> currentStructuredPanels_;
+  std::vector<double> currentRibThicknesses_;
+  std::vector<WingPanelData> currentPlanParameters_;
   std::vector<double> currentDihedralAngles_;
   QString currentFile_;
   DisplayUnit globalUnit_{DisplayUnit::Millimeters};

@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 
 namespace designrc::domain {
@@ -45,10 +46,15 @@ bool pointInPolygon(const Point2 point, const std::vector<Point2>& polygon) {
   return inside;
 }
 
-void writeCenteredText(std::ostream& output, const std::string& label,
-                       const std::vector<Point2>& outline,
-                       const std::vector<std::vector<Point2>>& exclusions = {}) {
-  if (outline.empty() || label.empty()) return;
+struct TextPlacement {
+  Point2 position;
+  double height{};
+};
+
+std::optional<TextPlacement> centeredTextPlacement(
+    const std::string& label, const std::vector<Point2>& outline,
+    const std::vector<std::vector<Point2>>& exclusions = {}) {
+  if (outline.empty() || label.empty()) return std::nullopt;
   double minimumX = outline.front().x, maximumX = minimumX;
   double minimumY = outline.front().y, maximumY = minimumY;
   for (const auto& point : outline) {
@@ -99,11 +105,19 @@ void writeCenteredText(std::ostream& output, const std::string& label,
   const double textHeight = std::max(0.8, std::min({5.0, height * 0.16,
       width / std::max(2.0, 0.75 * static_cast<double>(label.size())),
       bestClearance > 0.0 ? bestClearance * 0.7 : 5.0}));
-  const double x = placement.x;
-  const double y = placement.y;
+  return TextPlacement{placement, textHeight};
+}
+
+void writeCenteredText(std::ostream& output, const std::string& label,
+                       const std::vector<Point2>& outline,
+                       const std::vector<std::vector<Point2>>& exclusions = {}) {
+  const auto placement = centeredTextPlacement(label, outline, exclusions);
+  if (!placement) return;
+  const double x = placement->position.x;
+  const double y = placement->position.y;
   output << "0\nTEXT\n8\nANNOTATION\n10\n" << x << "\n20\n" << y
          << "\n11\n" << x << "\n21\n" << y
-         << "\n40\n" << textHeight << "\n72\n1\n73\n2\n1\n" << label << "\n";
+         << "\n40\n" << placement->height << "\n72\n1\n73\n2\n1\n" << label << "\n";
 }
 
 void writeFooter(std::ostream& output) {
@@ -138,6 +152,79 @@ std::vector<Point2> clipAtX(const std::vector<Point2>& polygon,
                                       result.front().y - result.back().y) < 1.0e-8)
     result.pop_back();
   return result;
+}
+
+std::string escapeXml(const std::string& text) {
+  std::string result;
+  result.reserve(text.size());
+  for (const char character : text) {
+    switch (character) {
+      case '&': result += "&amp;"; break;
+      case '<': result += "&lt;"; break;
+      case '>': result += "&gt;"; break;
+      case '\"': result += "&quot;"; break;
+      case '\'': result += "&apos;"; break;
+      default: result += character; break;
+    }
+  }
+  return result;
+}
+
+void writeSvg(const std::filesystem::path& path,
+              const std::vector<std::vector<Point2>>& polygons,
+              const std::string& label, const std::vector<Point2>& labelOutline,
+              const std::vector<std::vector<Point2>>& exclusions = {}) {
+  const auto firstPolygon = std::find_if(polygons.begin(), polygons.end(),
+      [](const auto& polygon) { return !polygon.empty(); });
+  if (firstPolygon == polygons.end())
+    throw std::invalid_argument("An SVG part requires a valid outline");
+
+  double minimumX = firstPolygon->front().x, maximumX = minimumX;
+  double minimumY = firstPolygon->front().y, maximumY = minimumY;
+  for (const auto& polygon : polygons) for (const auto point : polygon) {
+    minimumX = std::min(minimumX, point.x); maximumX = std::max(maximumX, point.x);
+    minimumY = std::min(minimumY, point.y); maximumY = std::max(maximumY, point.y);
+  }
+  constexpr double margin = 2.0;
+  const double width = std::max(0.1, maximumX - minimumX) + 2.0 * margin;
+  const double height = std::max(0.1, maximumY - minimumY) + 2.0 * margin;
+  const auto svgX = [=](const double x) { return x - minimumX + margin; };
+  const auto svgY = [=](const double y) { return maximumY - y + margin; };
+
+  std::ofstream output{path};
+  if (!output) throw std::runtime_error("Unable to create SVG file: " + path.string());
+  output << std::fixed << std::setprecision(6)
+         << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+         << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"" << width
+         << "mm\" height=\"" << height << "mm\" viewBox=\"0 0 " << width
+         << ' ' << height << "\">\n"
+         << "  <g fill=\"none\" stroke=\"#000000\" stroke-width=\"0.1\" "
+            "stroke-linejoin=\"round\">\n";
+  for (const auto& polygon : polygons) {
+    if (polygon.size() < 2) continue;
+    output << "    <polygon points=\"";
+    for (const auto point : polygon) output << svgX(point.x) << ',' << svgY(point.y) << ' ';
+    output << "\"/>\n";
+  }
+  output << "  </g>\n";
+  if (const auto placement = centeredTextPlacement(label, labelOutline, exclusions)) {
+    output << "  <text x=\"" << svgX(placement->position.x) << "\" y=\""
+           << svgY(placement->position.y) << "\" font-family=\"sans-serif\" font-size=\""
+           << placement->height << "\" text-anchor=\"middle\" dominant-baseline=\"middle\">"
+           << escapeXml(label) << "</text>\n";
+  }
+  output << "</svg>\n";
+  if (!output) throw std::runtime_error("Unable to finish SVG file: " + path.string());
+}
+
+std::vector<Point2> dihedralAngleOutline(const double dihedralDegrees) {
+  constexpr double width = 25.4;
+  constexpr double length = 38.1;
+  const double halfAngle = 0.5 * dihedralDegrees * std::numbers::pi / 180.0;
+  const double endOffset = width * std::tan(halfAngle);
+  const double bottomEndX = endOffset >= 0.0 ? length - endOffset : length;
+  const double topEndX = endOffset >= 0.0 ? length : length + endOffset;
+  return {{0.0, 0.0}, {bottomEndX, 0.0}, {topEndX, width}, {0.0, width}};
 }
 
 } // namespace
@@ -231,14 +318,7 @@ void exportWoodJoinerDxf(const JoinerPart& joiner, const std::filesystem::path& 
 void exportDihedralAngleDxf(const double dihedralDegrees,
                             const std::filesystem::path& path,
                             const std::string& label) {
-  constexpr double width = 25.4;
-  constexpr double length = 38.1;
-  const double halfAngle = 0.5 * dihedralDegrees * std::numbers::pi / 180.0;
-  const double endOffset = width * std::tan(halfAngle);
-  const double bottomEndX = endOffset >= 0.0 ? length - endOffset : length;
-  const double topEndX = endOffset >= 0.0 ? length : length + endOffset;
-  const std::vector<Point2> outline{{0.0, 0.0}, {bottomEndX, 0.0},
-                                    {topEndX, width}, {0.0, width}};
+  const auto outline = dihedralAngleOutline(dihedralDegrees);
   std::ofstream output{path};
   if (!output) throw std::runtime_error("Unable to create DXF file: " + path.string());
   writeHeader(output);
@@ -246,6 +326,74 @@ void exportDihedralAngleDxf(const double dihedralDegrees,
   writeCenteredText(output, label, outline);
   writeFooter(output);
   if (!output) throw std::runtime_error("Unable to finish DXF file: " + path.string());
+}
+
+void exportRibSvg(const RibDefinition& rib, const std::filesystem::path& path,
+                  const std::string& label) {
+  if (rib.chord <= 0.0 || rib.profile.outline().size() < 3)
+    throw std::invalid_argument("An SVG rib requires a valid chord and outline");
+  std::vector<Point2> outline;
+  outline.reserve(rib.profile.outline().size());
+  for (const auto point : rib.profile.outline())
+    outline.push_back({point.x * rib.chord, point.y * rib.chord});
+  writeSvg(path, {outline}, label, outline);
+}
+
+void exportStructuredRibSvg(const StructuredRib& rib,
+                            const std::filesystem::path& path,
+                            const std::string& label) {
+  std::vector<std::vector<Point2>> polygons;
+  bool exportedSplitPieces = false;
+  if (rib.booleanCutouts.size() == 1 && rib.booleanCutouts.front().size() >= 4) {
+    const auto& slot = rib.booleanCutouts.front();
+    const auto [minimum, maximum] = std::minmax_element(slot.begin(), slot.end(),
+        [](const Point2 a, const Point2 b) { return a.x < b.x; });
+    auto leadingPiece = clipAtX(rib.outerOutline, minimum->x, true);
+    auto trailingPiece = clipAtX(rib.outerOutline, maximum->x, false);
+    if (leadingPiece.size() >= 3 && trailingPiece.size() >= 3) {
+      polygons.push_back(std::move(leadingPiece));
+      polygons.push_back(std::move(trailingPiece));
+      exportedSplitPieces = true;
+    }
+  }
+  if (!exportedSplitPieces) polygons.push_back(rib.outerOutline);
+  polygons.insert(polygons.end(), rib.holes.begin(), rib.holes.end());
+  if (!exportedSplitPieces)
+    polygons.insert(polygons.end(), rib.booleanCutouts.begin(), rib.booleanCutouts.end());
+  polygons.insert(polygons.end(), rib.booleanHoles.begin(), rib.booleanHoles.end());
+  std::vector<std::vector<Point2>> exclusions = rib.holes;
+  exclusions.insert(exclusions.end(), rib.booleanCutouts.begin(), rib.booleanCutouts.end());
+  exclusions.insert(exclusions.end(), rib.booleanHoles.begin(), rib.booleanHoles.end());
+  writeSvg(path, polygons, label, rib.outerOutline, exclusions);
+}
+
+void exportShearWebSvg(const ShearWebPart& web,
+                       const std::filesystem::path& path,
+                       const std::string& label) {
+  writeSvg(path, {web.outline}, label, web.outline);
+}
+
+void exportSheetStockSvg(const SheetStockPart& stock,
+                         const std::filesystem::path& path,
+                         const std::string& label) {
+  std::vector<std::vector<Point2>> polygons{stock.outline};
+  polygons.insert(polygons.end(), stock.slots.begin(), stock.slots.end());
+  writeSvg(path, polygons, label, stock.outline, stock.slots);
+}
+
+void exportWoodJoinerSvg(const JoinerPart& joiner,
+                         const std::filesystem::path& path,
+                         const std::string& label) {
+  if (joiner.kind != SpanMemberKind::Rectangular || joiner.dxfOutline.size() < 3)
+    throw std::invalid_argument("A wood joiner SVG requires a valid outline");
+  writeSvg(path, {joiner.dxfOutline}, label, joiner.dxfOutline);
+}
+
+void exportDihedralAngleSvg(const double dihedralDegrees,
+                            const std::filesystem::path& path,
+                            const std::string& label) {
+  const auto outline = dihedralAngleOutline(dihedralDegrees);
+  writeSvg(path, {outline}, label, outline);
 }
 
 } // namespace designrc::domain

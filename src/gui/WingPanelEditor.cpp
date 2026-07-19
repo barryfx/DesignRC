@@ -6,6 +6,7 @@
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
+#include <QFontMetrics>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -13,14 +14,15 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QResizeEvent>
 #include <QScrollArea>
-#include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <filesystem>
 #include <limits>
@@ -31,46 +33,18 @@ namespace designrc::gui {
 namespace {
 
 constexpr double kMmPerInch = 25.4;
-constexpr std::array<int, 11> kAllowedFractionThirtySeconds{
-    0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16};
-
-double snapToAllowedInches(const double value) {
-  const double magnitude = std::abs(value);
-  const double base = std::floor(magnitude);
-  double closest = magnitude;
-  double distance = std::numeric_limits<double>::max();
-  for (int wholeOffset = 0; wholeOffset <= 1; ++wholeOffset) {
-    const double whole = base + wholeOffset;
-    for (const int numerator : kAllowedFractionThirtySeconds) {
-      const double candidate = whole + static_cast<double>(numerator) / 32.0;
-      const double candidateDistance = std::abs(candidate - magnitude);
-      if (candidateDistance < distance) {
-        closest = candidate;
-        distance = candidateDistance;
-      }
-    }
-  }
-  return value < 0.0 ? -closest : closest;
+int nineCharacterSpinnerWidth(const QWidget* spinner) {
+  const QFontMetrics metrics{spinner->font()};
+  const int textWidth = metrics.horizontalAdvance(QString(9, QChar{'M'}));
+  const int arrowWidth = spinner->style()->pixelMetric(
+      QStyle::PM_ScrollBarExtent, nullptr, spinner);
+  const int frameWidth = spinner->style()->pixelMetric(
+      QStyle::PM_DefaultFrameWidth, nullptr, spinner);
+  return textWidth + arrowWidth + 2 * frameWidth + 12;
 }
 
-double adjacentAllowedInches(const double value, const bool increasing) {
-  double result = increasing ? std::numeric_limits<double>::max()
-                             : std::numeric_limits<double>::lowest();
-  const int maximumWhole = static_cast<int>(std::ceil(std::abs(value))) + 2;
-  for (int whole = 0; whole <= maximumWhole; ++whole) {
-    for (const int numerator : kAllowedFractionThirtySeconds) {
-      const double magnitude = whole + static_cast<double>(numerator) / 32.0;
-      for (const double candidate : {magnitude, -magnitude}) {
-        if (increasing && candidate > value + 1.0e-8) result = std::min(result, candidate);
-        if (!increasing && candidate < value - 1.0e-8) result = std::max(result, candidate);
-      }
-    }
-  }
-  return result;
-}
-
-bool isAllowedFractionalInches(const double value) {
-  return std::abs(snapToAllowedInches(value) - value) < 1.0e-8;
+bool isThirtySecondMultiple(const double value) {
+  return std::abs(value * 32.0 - std::round(value * 32.0)) < 1.0e-8;
 }
 
 QString decimalInchText(const double value) {
@@ -81,7 +55,7 @@ QString decimalInchText(const double value) {
 }
 
 QString fractionalInchText(const double input) {
-  const double value = snapToAllowedInches(input);
+  const double value = std::round(input * 32.0) / 32.0;
   const bool negative = value < -1.0e-8;
   const double magnitude = std::abs(value);
   long long whole = static_cast<long long>(std::floor(magnitude + 1.0e-8));
@@ -182,15 +156,15 @@ public:
 protected:
   QString textFromValue(const double value) const override {
     if (!fractionalInches_) return QDoubleSpinBox::textFromValue(value);
-    return std::abs(value) > 0.5 + 1.0e-8 && !isAllowedFractionalInches(value)
-        ? decimalInchText(value) : fractionalInchText(value);
+    return isThirtySecondMultiple(value)
+        ? fractionalInchText(value) : decimalInchText(value);
   }
 
   double valueFromText(const QString& text) const override {
     if (!fractionalInches_) return QDoubleSpinBox::valueFromText(text);
     double parsed = value();
     if (!parseInchText(text, parsed)) return value();
-    return std::abs(parsed) > 0.5 + 1.0e-8 ? parsed : snapToAllowedInches(parsed);
+    return parsed;
   }
 
   QValidator::State validate(QString& text, int& position) const override {
@@ -206,15 +180,13 @@ protected:
 
   void stepBy(int steps) override {
     if (!fractionalInches_) { QDoubleSpinBox::stepBy(steps); return; }
-    double stepped = value();
-    if (std::abs(stepped) > 0.5 + 1.0e-8 ||
-        (std::abs(stepped - 0.5) < 1.0e-8 && steps > 0)) {
-      setValue(stepped + static_cast<double>(steps) * 0.01);
-      return;
-    }
-    while (steps > 0) { stepped = adjacentAllowedInches(stepped, true); --steps; }
-    while (steps < 0) { stepped = adjacentAllowedInches(stepped, false); ++steps; }
-    setValue(stepped);
+    if (steps == 0) return;
+    constexpr double tolerance = 1.0e-8;
+    const double thirtySeconds = value() * 32.0;
+    const double grid = steps > 0
+        ? std::floor(thirtySeconds + tolerance)
+        : std::ceil(thirtySeconds - tolerance);
+    setValue((grid + static_cast<double>(steps)) / 32.0);
   }
 
 private:
@@ -229,12 +201,15 @@ LengthInput::LengthInput(const QString& key, const double valueMm, QWidget* pare
   layout->setSpacing(3);
   spin_ = new FractionalSpinBox;
   spin_->setDecimals(2);
-  spin_->setRange(-100000.0, 100000.0);
+  spin_->setRange(std::numeric_limits<double>::lowest(),
+                  std::numeric_limits<double>::max());
+  spin_->setFixedWidth(nineCharacterSpinnerWidth(spin_));
   unit_ = new QComboBox;
   unit_->addItems({"Global", "mm", "in"});
   unit_->setToolTip("Use the global unit or override this length");
-  layout->addWidget(spin_, 1);
+  layout->addWidget(spin_, 0, Qt::AlignLeft | Qt::AlignVCenter);
   layout->addWidget(unit_);
+  layout->addStretch(1);
   connect(spin_, &QDoubleSpinBox::valueChanged, this, [this](double value) {
     if (refreshing_) return;
     const auto effective = unitOverride() == UnitOverride::Global
@@ -261,6 +236,7 @@ UnitOverride LengthInput::unitOverride() const {
   return static_cast<UnitOverride>(unit_->currentIndex());
 }
 void LengthInput::setOverrideSelectorVisible(const bool visible) { unit_->setVisible(visible); }
+int LengthInput::measurementFieldWidth() const { return spin_->width(); }
 void LengthInput::refreshDisplay() {
   refreshing_ = true;
   const auto effective = unitOverride() == UnitOverride::Global
@@ -269,7 +245,7 @@ void LengthInput::refreshDisplay() {
   spin_->setFractionalInches(effective == DisplayUnit::Inches);
   const double inches = valueMm_ / kMmPerInch;
   spin_->setValue(effective == DisplayUnit::Inches
-      ? (std::abs(inches) > 0.5 + 1.0e-8 ? inches : snapToAllowedInches(inches))
+      ? inches
       : valueMm_);
   refreshing_ = false;
 }
@@ -285,9 +261,9 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(leBottomSheetThickness); PUT(leBottomSheetStopRib); PUT(teTopSheet); PUT(teTopSheetThickness); PUT(teTopSheetStopRib); PUT(teBottomSheet);
   PUT(teBottomSheetThickness); PUT(teBottomSheetStopRib); PUT(turbulators); PUT(turbulatorCount); PUT(turbulatorHeight);
   PUT(turbulatorWidth); PUT(topRearSpar); PUT(topRearSparHeight); PUT(topRearSparWidth);
-  PUT(bottomRearSpar); PUT(bottomRearSparHeight); PUT(bottomRearSparWidth); PUT(leadingEdgeType);
+  PUT(bottomRearSpar); PUT(bottomRearSparHeight); PUT(bottomRearSparWidth);
   PUT(leadingEdgeWidth); PUT(leadingEdgeHeight); PUT(leadingEdgeTubeOd); PUT(leadingEdgeTubeId);
-  PUT(leadingEdgeRodOd); PUT(trailingEdgeType); PUT(trailingEdgeWidth); PUT(trailingEdgeHeight);
+  PUT(leadingEdgeRodOd); PUT(trailingEdgeWidth); PUT(trailingEdgeHeight);
   PUT(slottedForRibs); PUT(ailerons); PUT(aileronWidth); PUT(aileronHeight); PUT(aileronStartRib);
   PUT(aileronStopRib); PUT(aileronHingePostWidth); PUT(aileronHingePostHeight);
   PUT(flaps); PUT(flapWidth); PUT(flapHeight); PUT(flapStartRib); PUT(flapStopRib);
@@ -296,6 +272,8 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(behindSparJoinerOd); PUT(behindSparJoinerId); PUT(fiftyPercentJoiner);
   PUT(fiftyPercentJoinerType); PUT(fiftyPercentJoinerOd); PUT(fiftyPercentJoinerId);
 #undef PUT
+  o.insert("leadingEdgeType", d.leadingEdgeType == 1 ? 2 : d.leadingEdgeType);
+  o.insert("trailingEdgeType", d.trailingEdgeType == 1 ? 2 : d.trailingEdgeType);
   o.insert("units", unitOverridesToJson(d.unitOverrides));
   return o;
 }
@@ -340,13 +318,18 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
     d.tipAirfoilPath.clear();
   }
   readUnitOverrides(o, d);
+  // Legacy projects used type 1 for the removed shaped-stock choices.
+  // Preserve those designs by loading them as the remaining wood-stock types.
+  if (d.leadingEdgeType == 1) d.leadingEdgeType = 2;
+  if (d.trailingEdgeType == 1) d.trailingEdgeType = 2;
   return d;
 }
 
 WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
   WingPanelData rounded = metricData;
   const auto roundLength = [](double& millimetres) {
-    millimetres = snapToAllowedInches(millimetres / kMmPerInch) * kMmPerInch;
+    const double inches = millimetres / kMmPerInch;
+    millimetres = (std::round(inches * 32.0) / 32.0) * kMmPerInch;
   };
 #define ROUND_LENGTH(name) roundLength(rounded.name)
   ROUND_LENGTH(panelSpan); ROUND_LENGTH(rootChord); ROUND_LENGTH(tipChord); ROUND_LENGTH(sweep);
@@ -373,8 +356,10 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
 
 WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   WingPanelData defaults;
-  defaults.leadingEdgeType = 1;
+  defaults.leadingEdgeType = 2;
+  defaults.leadingEdgeHeight = 15.875;
   defaults.trailingEdgeType = 2;
+  defaults.trailingEdgeHeight = 9.525;
   defaults.unitOverrides.insert("cfRodOd", UnitOverride::Millimeters);
   defaults.unitOverrides.insert("cfTubeId", UnitOverride::Millimeters);
   defaults.unitOverrides.insert("cfTubeOd", UnitOverride::Millimeters);
@@ -408,9 +393,9 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   defaults.turbulatorWidth = 3.175;
   defaults.leadingEdgeType = 2;
   defaults.leadingEdgeWidth = 4.7625;
-  defaults.leadingEdgeHeight = 6.35;
+  defaults.leadingEdgeHeight = 15.875;
   defaults.trailingEdgeWidth = 25.4;
-  defaults.trailingEdgeHeight = 3.175;
+  defaults.trailingEdgeHeight = 9.525;
   defaults.aileronWidth = 34.925;
   defaults.aileronHeight = 9.525;
   defaults.aileronHingePostWidth = 6.35;
@@ -478,6 +463,19 @@ WingPanelEditor::WingPanelEditor(const WingPanelData& data, const DisplayUnit gl
   setData(data);
 }
 
+void WingPanelEditor::resizeEvent(QResizeEvent* event) {
+  QWidget::resizeEvent(event);
+  QTimer::singleShot(0, this, [this] { updateAngleInputWidths(); });
+}
+
+void WingPanelEditor::updateAngleInputWidths() {
+  if (!span_ || !dihedral_ || !twist_ || !ribCount_) return;
+  const int width = span_->measurementFieldWidth();
+  dihedral_->setFixedWidth(width);
+  twist_->setFixedWidth(width);
+  ribCount_->setFixedWidth(width);
+}
+
 QWidget* WingPanelEditor::makeSpecsPage() {
   auto* content = new QWidget;
   auto* layout = new QVBoxLayout{content};
@@ -507,9 +505,13 @@ QWidget* WingPanelEditor::makeSpecsPage() {
   tipChord_ = makeLength("tipChord", 150.0);
   sweep_ = makeLength("sweep", 70.0);
   dihedral_ = angleInput(4.0);
+  dihedral_->setObjectName("dihedral");
   twist_ = angleInput(0.0);
+  twist_->setObjectName("twist");
   ribThickness_ = makeLength("ribThickness", 3.0);
   ribCount_ = new QSpinBox; ribCount_->setObjectName("ribCount"); ribCount_->setRange(2, 100);
+  ribSpacing_ = new QLabel;
+  ribSpacing_->setObjectName("ribSpacing");
   form->addRow("Panel Span", span_);
   rootChordLabel_ = new QLabel{"Root Chord"};
   form->addRow(rootChordLabel_, rootChord_);
@@ -517,12 +519,16 @@ QWidget* WingPanelEditor::makeSpecsPage() {
   form->addRow("Tip Chord", tipChord_); form->addRow("Tip Sweep", sweep_);
   form->addRow("Dihedral", dihedral_); form->addRow("Tip Twist", twist_);
   form->addRow("Rib Thickness", ribThickness_); form->addRow("Rib Count", ribCount_);
+  form->addRow("Rib Spacing", ribSpacing_);
   layout->addWidget(dimensions); layout->addStretch();
   connect(rootButton, &QPushButton::clicked, this, [this] { importAirfoil(true); });
   connect(tipButton, &QPushButton::clicked, this, [this] { importAirfoil(false); });
   connect(dihedral_, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
   connect(twist_, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
-  connect(ribCount_, &QSpinBox::valueChanged, this, [this] { updateConditionalControls(); emitChanged(); });
+  connect(span_, &LengthInput::valueChanged, this, &WingPanelEditor::updateRibSpacing);
+  connect(ribCount_, &QSpinBox::valueChanged, this, [this] {
+    updateRibSpacing(); updateConditionalControls(); emitChanged();
+  });
   return scrollPage(content);
 }
 
@@ -596,20 +602,6 @@ QWidget* WingPanelEditor::makeSparsPage() {
   turbulatorDetails_ = detailRow({{"Count", turbulatorCount_}, {"Height", turbulatorHeight_}, {"Width", turbulatorWidth_}});
   layout->addWidget(turbulatorDetails_);
   connect(turbulators_, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
-  const auto rejectConflictingSelection = [this](QCheckBox* selected, QCheckBox* conflicting) {
-    if (!selected->isChecked() || !conflicting->isChecked()) return;
-    const QSignalBlocker blocker{selected};
-    selected->setChecked(false);
-    updateConditionalControls();
-    QMessageBox::warning(this, "Conflicting spar options",
-        "LE Top Sheeting and Turbulators cannot both be selected.");
-  };
-  connect(leTopSheet_, &QCheckBox::clicked, this, [this, rejectConflictingSelection](bool) {
-    rejectConflictingSelection(leTopSheet_, turbulators_);
-  });
-  connect(turbulators_, &QCheckBox::clicked, this, [this, rejectConflictingSelection](bool) {
-    rejectConflictingSelection(turbulators_, leTopSheet_);
-  });
   connect(turbulatorCount_, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
   auto* line2 = new QFrame; line2->setFrameShape(QFrame::HLine); layout->addWidget(line2);
   addCheck("Top 60% Rear Spar", topRearSpar_, topRearDetails_);
@@ -630,22 +622,25 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
     connect(input, &LengthInput::valueChanged, this, &WingPanelEditor::emitChanged); return input;
   };
   auto* leGroup = new QButtonGroup{this}; leGroup->setExclusive(true);
-  shapedLe_ = new QRadioButton{"Shaped LE Stock"}; blockLe_ = new QRadioButton{"Block LE Stock"};
+  blockLe_ = new QRadioButton{"Block LE Stock"};
   tubeLe_ = new QRadioButton{"CF Tube LE"}; rodLe_ = new QRadioButton{"CF Rod LE"};
-  for (auto* button : {shapedLe_, blockLe_, tubeLe_, rodLe_}) { leGroup->addButton(button); layout->addWidget(button); }
+  leGroup->addButton(blockLe_); leGroup->addButton(tubeLe_); leGroup->addButton(rodLe_);
+  layout->addWidget(blockLe_);
   leWidth_ = makeLength("leadingEdgeWidth", 5); leHeight_ = makeLength("leadingEdgeHeight", 7);
-  stockLeDetails_ = detailRow({{"Width", leWidth_}, {"Height", leHeight_}}); layout->insertWidget(1, stockLeDetails_);
+  stockLeDetails_ = detailRow({{"Width", leWidth_}, {"Height", leHeight_}}); layout->addWidget(stockLeDetails_);
+  layout->addWidget(tubeLe_);
   leTubeOd_ = makeLength("leadingEdgeTubeOd", 2); leTubeId_ = makeLength("leadingEdgeTubeId", 1);
-  tubeLeDetails_ = detailRow({{"OD", leTubeOd_}, {"ID", leTubeId_}}); layout->insertWidget(4, tubeLeDetails_);
+  tubeLeDetails_ = detailRow({{"OD", leTubeOd_}, {"ID", leTubeId_}}); layout->addWidget(tubeLeDetails_);
+  layout->addWidget(rodLe_);
   leRodOd_ = makeLength("leadingEdgeRodOd", 2); rodLeDetails_ = detailRow({{"OD", leRodOd_}}); layout->addWidget(rodLeDetails_);
   auto* line = new QFrame; line->setFrameShape(QFrame::HLine); layout->addWidget(line);
   auto* teGroup = new QButtonGroup{this}; teGroup->setExclusive(true);
-  shapedTe_ = new QRadioButton{"Shaped TE Stock"}; sheetTe_ = new QRadioButton{"Sheet TE Stock"};
-  teGroup->addButton(shapedTe_); teGroup->addButton(sheetTe_); layout->addWidget(shapedTe_); layout->addWidget(sheetTe_);
+  sheetTe_ = new QRadioButton{"Sheet TE Stock"};
+  teGroup->addButton(sheetTe_); layout->addWidget(sheetTe_);
   teWidth_ = makeLength("trailingEdgeWidth", 20); teHeight_ = makeLength("trailingEdgeHeight", 3);
   stockTeDetails_ = detailRow({{"Width", teWidth_}, {"Height", teHeight_}}); layout->addWidget(stockTeDetails_);
   slottedForRibs_ = new QCheckBox{"Slotted for Ribs"}; slottedDetails_ = detailRow({{"", slottedForRibs_}}); layout->addWidget(slottedDetails_);
-  for (auto* button : {shapedLe_, blockLe_, tubeLe_, rodLe_, shapedTe_, sheetTe_})
+  for (auto* button : {blockLe_, tubeLe_, rodLe_, sheetTe_})
     connect(button, &QRadioButton::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
   connect(slottedForRibs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   layout->addStretch(); return scrollPage(content);
@@ -686,6 +681,10 @@ QWidget* WingPanelEditor::makeControlsPage() {
   flapDetails_ = makeDetails("flap", 40, 10, flapWidth_, flapHeight_,
       flapHingePostWidth_, flapHingePostHeight_, flapStart_, flapStop_);
   layout->addWidget(flapDetails_);
+  connect(aileronWidth_, &LengthInput::valueChanged, this,
+      [this] { lastControlWidthEdited_ = aileronWidth_; });
+  connect(flapWidth_, &LengthInput::valueChanged, this,
+      [this] { lastControlWidthEdited_ = flapWidth_; });
   connect(ailerons_, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
   connect(flaps_, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
   for (auto* spinner : {aileronStart_, aileronStop_, flapStart_, flapStop_})
@@ -776,10 +775,10 @@ WingPanelData WingPanelEditor::data() const {
   d.turbulatorHeight = turbulatorHeight_->valueMm(); d.turbulatorWidth = turbulatorWidth_->valueMm();
   d.topRearSpar = topRearSpar_->isChecked(); d.topRearSparHeight = topRearHeight_->valueMm(); d.topRearSparWidth = topRearWidth_->valueMm();
   d.bottomRearSpar = bottomRearSpar_->isChecked(); d.bottomRearSparHeight = bottomRearHeight_->valueMm(); d.bottomRearSparWidth = bottomRearWidth_->valueMm();
-  d.leadingEdgeType = shapedLe_->isChecked() ? 1 : blockLe_->isChecked() ? 2 : tubeLe_->isChecked() ? 3 : rodLe_->isChecked() ? 4 : 0;
+  d.leadingEdgeType = blockLe_->isChecked() ? 2 : tubeLe_->isChecked() ? 3 : rodLe_->isChecked() ? 4 : 0;
   d.leadingEdgeWidth = leWidth_->valueMm(); d.leadingEdgeHeight = leHeight_->valueMm(); d.leadingEdgeTubeOd = leTubeOd_->valueMm();
   d.leadingEdgeTubeId = leTubeId_->valueMm(); d.leadingEdgeRodOd = leRodOd_->valueMm();
-  d.trailingEdgeType = shapedTe_->isChecked() ? 1 : sheetTe_->isChecked() ? 2 : 0;
+  d.trailingEdgeType = sheetTe_->isChecked() ? 2 : 0;
   d.trailingEdgeWidth = teWidth_->valueMm(); d.trailingEdgeHeight = teHeight_->valueMm(); d.slottedForRibs = slottedForRibs_->isChecked();
   d.ailerons = ailerons_->isChecked(); d.aileronWidth = aileronWidth_->valueMm(); d.aileronHeight = aileronHeight_->valueMm();
   d.aileronStartRib = aileronStart_->value(); d.aileronStopRib = aileronStop_->value();
@@ -823,12 +822,12 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   leBottomSheet_->setChecked(d.leBottomSheet); SET_LENGTH(leBottomSheetThickness_, leBottomSheetThickness); leBottomSheetStopRib_->setValue(d.leBottomSheetStopRib);
   teTopSheet_->setChecked(d.teTopSheet); SET_LENGTH(teTopSheetThickness_, teTopSheetThickness); teTopSheetStopRib_->setValue(d.teTopSheetStopRib);
   teBottomSheet_->setChecked(d.teBottomSheet); SET_LENGTH(teBottomSheetThickness_, teBottomSheetThickness); teBottomSheetStopRib_->setValue(d.teBottomSheetStopRib);
-  turbulators_->setChecked(d.turbulators && !d.leTopSheet); turbulatorCount_->setValue(d.turbulatorCount); SET_LENGTH(turbulatorHeight_, turbulatorHeight); SET_LENGTH(turbulatorWidth_, turbulatorWidth);
+  turbulators_->setChecked(d.turbulators); turbulatorCount_->setValue(d.turbulatorCount); SET_LENGTH(turbulatorHeight_, turbulatorHeight); SET_LENGTH(turbulatorWidth_, turbulatorWidth);
   topRearSpar_->setChecked(d.topRearSpar); SET_LENGTH(topRearHeight_, topRearSparHeight); SET_LENGTH(topRearWidth_, topRearSparWidth);
   bottomRearSpar_->setChecked(d.bottomRearSpar); SET_LENGTH(bottomRearHeight_, bottomRearSparHeight); SET_LENGTH(bottomRearWidth_, bottomRearSparWidth);
-  shapedLe_->setChecked(d.leadingEdgeType == 1); blockLe_->setChecked(d.leadingEdgeType == 2); tubeLe_->setChecked(d.leadingEdgeType == 3); rodLe_->setChecked(d.leadingEdgeType == 4);
+  blockLe_->setChecked(d.leadingEdgeType == 1 || d.leadingEdgeType == 2); tubeLe_->setChecked(d.leadingEdgeType == 3); rodLe_->setChecked(d.leadingEdgeType == 4);
   SET_LENGTH(leWidth_, leadingEdgeWidth); SET_LENGTH(leHeight_, leadingEdgeHeight); SET_LENGTH(leTubeOd_, leadingEdgeTubeOd); SET_LENGTH(leTubeId_, leadingEdgeTubeId); SET_LENGTH(leRodOd_, leadingEdgeRodOd);
-  shapedTe_->setChecked(d.trailingEdgeType == 1); sheetTe_->setChecked(d.trailingEdgeType == 2); SET_LENGTH(teWidth_, trailingEdgeWidth); SET_LENGTH(teHeight_, trailingEdgeHeight); slottedForRibs_->setChecked(d.slottedForRibs);
+  sheetTe_->setChecked(d.trailingEdgeType == 1 || d.trailingEdgeType == 2); SET_LENGTH(teWidth_, trailingEdgeWidth); SET_LENGTH(teHeight_, trailingEdgeHeight); slottedForRibs_->setChecked(d.slottedForRibs);
   ailerons_->setChecked(d.ailerons); SET_LENGTH(aileronWidth_, aileronWidth); SET_LENGTH(aileronHeight_, aileronHeight); aileronStart_->setValue(d.aileronStartRib); aileronStop_->setValue(d.aileronStopRib); SET_LENGTH(aileronHingePostWidth_, aileronHingePostWidth); SET_LENGTH(aileronHingePostHeight_, aileronHingePostHeight);
   flaps_->setChecked(d.flaps); SET_LENGTH(flapWidth_, flapWidth); SET_LENGTH(flapHeight_, flapHeight); flapStart_->setValue(d.flapStartRib); flapStop_->setValue(d.flapStopRib); SET_LENGTH(flapHingePostWidth_, flapHingePostWidth); SET_LENGTH(flapHingePostHeight_, flapHingePostHeight);
   if (showJoinerPage_) {
@@ -846,14 +845,32 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   }
 #undef SET_LENGTH
   updateConditionalControls();
+  updateRibSpacing();
 }
 
 void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
   globalUnit_ = unit;
   for (auto* input : lengths_) input->setGlobalUnit(unit);
+  updateRibSpacing();
 }
 
-bool WingPanelEditor::validate(QString& error) const {
+void WingPanelEditor::updateRibSpacing() {
+  if (!ribSpacing_ || !span_ || !ribCount_) return;
+  const double spacingMm = span_->valueMm() /
+      static_cast<double>(std::max(1, ribCount_->value() - 1));
+  const UnitOverride override = span_->unitOverride();
+  const bool useInches = override == UnitOverride::Inches ||
+      (override == UnitOverride::Global && globalUnit_ == DisplayUnit::Inches);
+  if (useInches) {
+    const double inches = spacingMm / kMmPerInch;
+    ribSpacing_->setText((isThirtySecondMultiple(inches)
+        ? fractionalInchText(inches) : decimalInchText(inches)) + " in");
+  } else {
+    ribSpacing_->setText(QString{"%1 mm"}.arg(spacingMm, 0, 'f', 2));
+  }
+}
+
+bool WingPanelEditor::validate(QString& error) {
   if (showJoinerPage_ && behindSparJoiner_->isChecked() &&
       !behindJoinerRod_->isChecked() && !behindJoinerCfTube_->isChecked() &&
       !behindJoinerAlTube_->isChecked()) {
@@ -866,18 +883,46 @@ bool WingPanelEditor::validate(QString& error) const {
     error = "Select CF Rod, CF Tube, or Aluminum Tube for the joiner at 60% chord.";
     return false;
   }
-  if (ailerons_->isChecked() && aileronStart_->value() >= aileronStop_->value()) {
-    error = "Aileron Start Rib must be less than Aileron Stop Rib.";
-    return false;
-  }
   if (flaps_->isChecked() && flapStart_->value() >= flapStop_->value()) {
     error = "Flap Start Rib must be less than Flap Stop Rib.";
     return false;
   }
   if (flaps_->isChecked() && ailerons_->isChecked() &&
-      std::max(flapStart_->value(), aileronStart_->value()) <
-          std::min(flapStop_->value(), aileronStop_->value())) {
-    error = "Flap and aileron rib ranges may meet at a rib but cannot overlap.";
+      aileronStart_->value() < flapStop_->value()) {
+    const int correctedStart = flapStop_->value();
+    aileronStart_->setValue(correctedStart);
+    const bool correctedStop = aileronStop_->value() <= correctedStart;
+    if (correctedStop)
+      aileronStop_->setValue(std::min(ribCount_->value(), correctedStart + 1));
+    error = QString{
+        "Aileron Start Rib cannot be less than Flap Stop Rib. "
+        "Aileron Start Rib was corrected to %1%2."}
+        .arg(correctedStart)
+        .arg(correctedStop
+                 ? QString{" and Aileron Stop Rib was corrected to %1"}
+                       .arg(aileronStop_->value())
+                 : QString{});
+    return false;
+  }
+  if (flaps_->isChecked() && ailerons_->isChecked() &&
+      aileronStart_->value() == flapStop_->value() &&
+      std::abs(aileronWidth_->valueMm() - flapWidth_->valueMm()) > 1.0e-8) {
+    LengthInput* corrected = lastControlWidthEdited_ == aileronWidth_
+        ? aileronWidth_ : flapWidth_;
+    LengthInput* reference = corrected == aileronWidth_
+        ? flapWidth_ : aileronWidth_;
+    const QString correctedName = corrected == aileronWidth_
+        ? QString{"Aileron Width"} : QString{"Flap Width"};
+    corrected->setValueMm(reference->valueMm());
+    emitChanged();
+    error = QString{
+        "When Flap Stop Rib equals Aileron Start Rib, Flap Width and "
+        "Aileron Width must match. %1 was corrected to match the other width."}
+        .arg(correctedName);
+    return false;
+  }
+  if (ailerons_->isChecked() && aileronStart_->value() >= aileronStop_->value()) {
+    error = "Aileron Start Rib must be less than Aileron Stop Rib.";
     return false;
   }
   return true;
@@ -891,8 +936,8 @@ void WingPanelEditor::updateConditionalControls() {
   leTopSheetDetails_->setVisible(leTopSheet_->isChecked()); leBottomSheetDetails_->setVisible(leBottomSheet_->isChecked());
   teTopSheetDetails_->setVisible(teTopSheet_->isChecked()); teBottomSheetDetails_->setVisible(teBottomSheet_->isChecked());
   turbulatorDetails_->setVisible(turbulators_->isChecked()); topRearDetails_->setVisible(topRearSpar_->isChecked()); bottomRearDetails_->setVisible(bottomRearSpar_->isChecked());
-  stockLeDetails_->setVisible(shapedLe_->isChecked() || blockLe_->isChecked()); tubeLeDetails_->setVisible(tubeLe_->isChecked()); rodLeDetails_->setVisible(rodLe_->isChecked());
-  stockTeDetails_->setVisible(shapedTe_->isChecked() || sheetTe_->isChecked()); slottedDetails_->setVisible(sheetTe_->isChecked());
+  stockLeDetails_->setVisible(blockLe_->isChecked()); tubeLeDetails_->setVisible(tubeLe_->isChecked()); rodLeDetails_->setVisible(rodLe_->isChecked());
+  stockTeDetails_->setVisible(sheetTe_->isChecked()); slottedDetails_->setVisible(sheetTe_->isChecked());
   aileronDetails_->setVisible(ailerons_->isChecked()); flapDetails_->setVisible(flaps_->isChecked());
   if (showJoinerPage_) {
     const bool woodAvailable = topSpar_->isChecked() || bottomSpar_->isChecked();
@@ -916,8 +961,9 @@ void WingPanelEditor::updateConditionalControls() {
                       teTopSheetStopRib_, teBottomSheetStopRib_})
     input->setRange(2, ribs);
   const int lastInternalRib = std::max(2, ribs - 1);
-  for (auto* input : {aileronStart_, aileronStop_, flapStart_, flapStop_})
+  for (auto* input : {aileronStart_, flapStart_, flapStop_})
     input->setRange(2, lastInternalRib);
+  aileronStop_->setRange(2, ribs);
 }
 
 void WingPanelEditor::emitChanged() { emit changed(); }

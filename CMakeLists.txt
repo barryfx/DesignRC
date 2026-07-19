@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 0.1.0 LANGUAGES CXX)
+project(DesignRC VERSION 0.9.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 
@@ -42,9 +42,17 @@ add_executable(designrc WIN32
   src/gui/WingPanelEditor.h
   src/gui/OcctViewport.cpp
   src/gui/OcctViewport.h
+  src/gui/PlanViewport.cpp
+  src/gui/PlanViewport.h
+  src/gui/TechnicalDrawing.cpp
+  src/gui/TechnicalDrawing.h
 )
 set_target_properties(designrc PROPERTIES AUTOMOC ON)
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
+target_compile_definitions(designrc PRIVATE
+  DESIGNRC_VERSION="${PROJECT_VERSION}"
+  DESIGNRC_RELEASE_DATE="July 19, 2026"
+)
 target_link_libraries(designrc PRIVATE
   designrc_domain
   Qt6::Widgets
@@ -73,6 +81,8 @@ if(WIN32)
     COMMAND "${CMAKE_COMMAND}" -E copy_directory "${_occt_runtime}" "$<TARGET_FILE_DIR:designrc>"
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
       "${_occt_freetype}" "$<TARGET_FILE_DIR:designrc>"
+    COMMAND "${CMAKE_COMMAND}" -E copy_directory
+      "${CMAKE_CURRENT_SOURCE_DIR}/resources/help" "$<TARGET_FILE_DIR:designrc>/help"
     COMMENT "Deploying Qt and OpenCascade runtimes"
     VERBATIM
   )
@@ -86,6 +96,10 @@ if(DESIGNRC_BUILD_TESTS)
 
   add_executable(designrc_gui_tests
     tests/GuiDefaultsTests.cpp
+    src/gui/PlanViewport.cpp
+    src/gui/PlanViewport.h
+    src/gui/TechnicalDrawing.cpp
+    src/gui/TechnicalDrawing.h
     src/gui/WingPanelEditor.cpp
     src/gui/WingPanelEditor.h
   )

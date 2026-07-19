@@ -381,6 +381,18 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (timings) timings->profiledStockMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  const domain::ControlSurfacePart* sharedFlap = nullptr;
+  const domain::ControlSurfacePart* sharedAileron = nullptr;
+  for (const auto& flap : structuredWing.controlSurfaces) {
+    if (flap.name != "Flap") continue;
+    for (const auto& aileron : structuredWing.controlSurfaces) {
+      if (aileron.name == "Aileron" &&
+          flap.stopRibIndex == aileron.startRibIndex) {
+        sharedFlap = &flap;
+        sharedAileron = &aileron;
+      }
+    }
+  }
   for (const auto& control : structuredWing.controlSurfaces) {
     BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
     loft.CheckCompatibility(false);
@@ -393,25 +405,59 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       if (!polygon.IsDone()) throw std::runtime_error("Unable to construct control-surface profile");
       loft.AddWire(polygon.Wire());
     };
-    addControlProfile(0, ribThickness * 0.5 + control.gap);
+    addControlProfile(0,
+        ribEndOffset(structuredWing.ribs[control.startRibIndex].rib,
+                     ribThickness) + control.gap);
     for (std::size_t local = 1; local + 1 < control.profiles.size(); ++local) {
-      addControlProfile(local, -ribThickness * 0.5);
-      addControlProfile(local, ribThickness * 0.5);
+      const auto& rib = structuredWing.ribs[control.startRibIndex + local].rib;
+      addControlProfile(local, ribStartOffset(rib, ribThickness));
+      addControlProfile(local, ribEndOffset(rib, ribThickness));
     }
-    addControlProfile(control.profiles.size() - 1, -ribThickness * 0.5 - control.gap);
+    const auto& stopRib = structuredWing.ribs[control.stopRibIndex].rib;
+    addControlProfile(control.profiles.size() - 1,
+        control.extendThroughStopRib
+            ? ribEndOffset(stopRib, ribThickness)
+            : ribStartOffset(stopRib, ribThickness) - control.gap);
     loft.Build();
     if (!loft.IsDone()) throw std::runtime_error("Unable to loft the control surface");
     addShape(loft.Shape(), PreviewMaterial::Wood);
 
+    if (&control == sharedFlap || &control == sharedAileron) continue;
     const auto hingeStart = transformLocal(
         structuredWing.ribs[control.startRibIndex].rib,
-        control.hingePostCenters.front(), ribThickness * 0.5);
+        control.hingePostCenters.front(),
+        ribEndOffset(structuredWing.ribs[control.startRibIndex].rib, ribThickness));
     const auto hingeEnd = transformLocal(
         structuredWing.ribs[control.stopRibIndex].rib,
-        control.hingePostCenters.back(), -ribThickness * 0.5);
+        control.hingePostCenters.back(),
+        control.extendThroughStopRib
+            ? ribEndOffset(structuredWing.ribs[control.stopRibIndex].rib,
+                           ribThickness)
+            : ribStartOffset(structuredWing.ribs[control.stopRibIndex].rib,
+                             ribThickness));
     addShape(makeRectangularSegment(
         hingeStart, hingeEnd, control.hingePostWidth, control.hingePostHeight),
         PreviewMaterial::Wood);
+  }
+  if (sharedFlap != nullptr && sharedAileron != nullptr) {
+    const auto hingeStart = transformLocal(
+        structuredWing.ribs[sharedFlap->startRibIndex].rib,
+        sharedFlap->hingePostCenters.front(),
+        ribEndOffset(structuredWing.ribs[sharedFlap->startRibIndex].rib,
+                     ribThickness));
+    const auto hingeEnd = transformLocal(
+        structuredWing.ribs[sharedAileron->stopRibIndex].rib,
+        sharedAileron->hingePostCenters.back(),
+        sharedAileron->extendThroughStopRib
+            ? ribEndOffset(
+                  structuredWing.ribs[sharedAileron->stopRibIndex].rib,
+                  ribThickness)
+            : ribStartOffset(
+                  structuredWing.ribs[sharedAileron->stopRibIndex].rib,
+                  ribThickness));
+    addShape(makeRectangularSegment(
+        hingeStart, hingeEnd, sharedFlap->hingePostWidth,
+        sharedFlap->hingePostHeight), PreviewMaterial::Wood);
   }
   if (timings) timings->controlsMs = elapsedMs(stageStart);
 
@@ -511,16 +557,27 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   for (const auto& web : structuredWing.shearWebs) {
     const std::size_t i = web.bayIndex - 1;
-    const gp_Pnt bottom0 = transformLocal(structuredWing.ribs[i].rib, web.stationCorners[0]);
-    const gp_Pnt bottom1 = transformLocal(structuredWing.ribs[i + 1].rib, web.stationCorners[1]);
-    const gp_Pnt top1 = transformLocal(structuredWing.ribs[i + 1].rib, web.stationCorners[2]);
-    const gp_Pnt top0 = transformLocal(structuredWing.ribs[i].rib, web.stationCorners[3]);
+    const auto& rootRib = structuredWing.ribs[i].rib;
+    const auto& tipRib = structuredWing.ribs[i + 1].rib;
+    // The web occupies only the clear bay between the facing rib surfaces.
+    const double rootFace = ribEndOffset(rootRib, ribThickness);
+    const double tipFace = ribStartOffset(tipRib, ribThickness);
+    const gp_Pnt bottom0 = transformLocal(rootRib, web.stationCorners[0], rootFace);
+    const gp_Pnt bottom1 = transformLocal(tipRib, web.stationCorners[1], tipFace);
+    const gp_Pnt top1 = transformLocal(tipRib, web.stationCorners[2], tipFace);
+    const gp_Pnt top0 = transformLocal(rootRib, web.stationCorners[3], rootFace);
     const auto addTriangle = [&](const gp_Pnt& a, const gp_Pnt& b, const gp_Pnt& c) {
       BRepBuilderAPI_MakePolygon polygon;
       polygon.Add(a); polygon.Add(b); polygon.Add(c); polygon.Close();
       BRepBuilderAPI_MakeFace face{polygon.Wire()};
+      // Extrude equal half-thicknesses forward and aft from the spar center
+      // plane. Keeping the source face on the centerline makes the symmetry
+      // explicit and avoids accumulating a one-sided offset.
+      const double halfThickness = web.thickness * 0.5;
       addShape(BRepPrimAPI_MakePrism{
-          face.Face(), gp_Vec{web.thickness, 0.0, 0.0}}.Shape(), PreviewMaterial::Wood);
+          face.Face(), gp_Vec{halfThickness, 0.0, 0.0}}.Shape(), PreviewMaterial::Wood);
+      addShape(BRepPrimAPI_MakePrism{
+          face.Face(), gp_Vec{-halfThickness, 0.0, 0.0}}.Shape(), PreviewMaterial::Wood);
     };
     addTriangle(bottom0, bottom1, top1);
     addTriangle(bottom0, top1, top0);

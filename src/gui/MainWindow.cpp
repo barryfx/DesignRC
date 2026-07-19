@@ -3,13 +3,18 @@
 #include "domain/DxfExporter.h"
 #include "geometry/OcctRibBuilder.h"
 #include "gui/OcctViewport.h"
+#include "gui/PlanViewport.h"
+#include "gui/TechnicalDrawing.h"
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QCloseEvent>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDesktopServices>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFileDialog>
@@ -37,6 +42,7 @@
 #include <QTabWidget>
 #include <QTextEdit>
 #include <QThread>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include <Standard_Failure.hxx>
@@ -63,6 +69,44 @@ public:
 };
 
 QString projectFilter() { return "DesignRC project (*.designrc)"; }
+
+DisplayUnit effectiveParameterUnit(const WingPanelData& panel,
+                                   const QString& key,
+                                   const DisplayUnit globalUnit) {
+  const auto override = panel.unitOverrides.value(key, UnitOverride::Global);
+  if (override == UnitOverride::Inches) return DisplayUnit::Inches;
+  if (override == UnitOverride::Millimeters) return DisplayUnit::Millimeters;
+  return globalUnit;
+}
+
+QString compactNumber(const double value, const int decimals) {
+  QString result = QString::number(value, 'f', decimals);
+  while (result.contains('.') && result.endsWith('0')) result.chop(1);
+  if (result.endsWith('.')) result.chop(1);
+  return result;
+}
+
+QString formatParameterLength(const double millimeters, const DisplayUnit unit) {
+  return unit == DisplayUnit::Inches
+      ? compactNumber(millimeters / 25.4, 3) + " in"
+      : compactNumber(millimeters, 2) + " mm";
+}
+
+QString formatEdgeHeightError(const domain::EdgeHeightError& error,
+                              const WingPanelData& panel,
+                              const DisplayUnit globalUnit,
+                              const std::size_t panelIndex) {
+  const QString edge = QString::fromStdString(error.edgeName());
+  const QString parameterKey = edge == "LE"
+      ? QString{"leadingEdgeHeight"} : QString{"trailingEdgeHeight"};
+  const DisplayUnit unit = effectiveParameterUnit(panel, parameterKey, globalUnit);
+  return QString{"Panel %1: %2 cut edge at rib %3 is %4, not smaller than "
+                 "the specified %2 Height of %5"}
+      .arg(static_cast<qulonglong>(panelIndex + 1)).arg(edge)
+      .arg(static_cast<qulonglong>(error.ribIndex()))
+      .arg(formatParameterLength(error.cutHeightMm(), unit))
+      .arg(formatParameterLength(error.specifiedHeightMm(), unit));
+}
 
 domain::StructureParameters structureParametersFor(const WingPanelData& d,
                                                     const DisplayUnit unit,
@@ -119,14 +163,18 @@ struct ModelPoint {
   double z{};
 };
 
-ModelPoint modelSectionPoint(const domain::RibDefinition& rib, const domain::Point2 point) {
+ModelPoint modelSectionPoint(const domain::RibDefinition& rib,
+                             const domain::Point2 point,
+                             const double normalOffset = 0.0) {
   const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
   const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
   const double sectionX = std::cos(twist) * point.x - std::sin(twist) * point.y;
   const double sectionZ = std::sin(twist) * point.x + std::cos(twist) * point.y;
   return {rib.leadingEdgeOffset + sectionX,
-          rib.spanPosition - std::sin(plane) * sectionZ,
-          rib.dihedralHeight + std::cos(plane) * sectionZ};
+          rib.spanPosition - std::sin(plane) * sectionZ +
+              std::cos(plane) * normalOffset,
+          rib.dihedralHeight + std::cos(plane) * sectionZ +
+              std::sin(plane) * normalOffset};
 }
 
 domain::Point2 localSectionPoint(const domain::RibDefinition& rib, const ModelPoint point) {
@@ -161,7 +209,6 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
     ModelPoint rootModel;
     ModelPoint endModel;
     double width = joiner.outerDiameter;
-    double halfHeight = 0.0;
     std::array<ModelPoint, 4> rootCorners{};
     std::array<ModelPoint, 4> endCorners{};
     if (joiner.kind == domain::SpanMemberKind::Rectangular) {
@@ -177,9 +224,6 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
       endModel = modelSectionPoint(outerEndRib,
           {0.5 * (endProfile[0].x + endProfile[2].x),
            0.5 * (endProfile[0].y + endProfile[2].y)});
-      halfHeight = 0.25 * ((rootProfile[2].y - rootProfile[0].y) +
-                           (endProfile[2].y - endProfile[0].y));
-      halfHeight = std::max(0.0, halfHeight - 0.01);
     } else {
       rootModel = modelSectionPoint(outerRootRib, joiner.centers.front());
       endModel = modelSectionPoint(outerEndRib, joiner.centers.back());
@@ -194,7 +238,6 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
       endModel = {rootModel.x + direction.x, rootModel.y + direction.y,
                   rootModel.z + direction.z};
     }
-    const double minimumY = rootModel.y - std::abs(deltaY) - 1.0e-6;
     const domain::SpanMember* topSpar = nullptr;
     const domain::SpanMember* bottomSpar = nullptr;
     for (const auto& member : inner.members) {
@@ -203,11 +246,9 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
     }
     std::size_t firstInnerWoodJoinerRib = inner.ribs.size();
     for (std::size_t reverse = 0; reverse < inner.ribs.size(); ++reverse) {
-      if (joiner.kind != domain::SpanMemberKind::Rectangular && reverse > 1) break;
+      if (reverse > 1) break;
       const std::size_t i = inner.ribs.size() - 1 - reverse;
       const auto& rib = inner.ribs[i].rib;
-      if (joiner.kind == domain::SpanMemberKind::Rectangular &&
-          rib.spanPosition < minimumY) break;
       const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
       const double denominator = std::cos(plane) * direction.y +
           std::sin(plane) * direction.z;
@@ -220,21 +261,11 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
            rootModel.z + direction.z * t});
       if (joiner.kind == domain::SpanMemberKind::Rectangular) {
         firstInnerWoodJoinerRib = std::min(firstInnerWoodJoinerRib, i);
-        if (i + 1 == inner.ribs.size()) {
+        if (reverse == 0) {
           std::vector<domain::Point2> jointCut;
           for (const auto& corner : rootCorners)
             jointCut.push_back(localSectionPoint(rib, corner));
           inner.ribs[i].booleanCutouts.push_back(std::move(jointCut));
-        } else {
-          double bottom = center.y - halfHeight;
-          double top = center.y + halfHeight;
-          if (topSpar && i < topSpar->centers.size())
-            top = topSpar->centers[i].y - topSpar->height * 0.5;
-          if (bottomSpar && i < bottomSpar->centers.size())
-            bottom = bottomSpar->centers[i].y + bottomSpar->height * 0.5;
-          inner.ribs[i].booleanCutouts.push_back({
-              {center.x - width * 0.5, bottom}, {center.x + width * 0.5, bottom},
-              {center.x + width * 0.5, top}, {center.x - width * 0.5, top}});
         }
       } else {
         const double directionLength = std::sqrt(direction.x * direction.x +
@@ -291,33 +322,18 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
                           point.z - 2.0 * normalZ * distance};
       };
       std::array<ModelPoint, 4> reflectedEnd{};
-      double targetY = 0.0;
       for (std::size_t corner = 0; corner < 4; ++corner) {
         reflectedEnd[corner] = reflect(endCorners[corner]);
-        targetY += reflectedEnd[corner].y * 0.25;
       }
-      std::size_t upperIndex = 1;
-      while (upperIndex + 1 < inner.ribs.size() &&
-             inner.ribs[upperIndex].rib.spanPosition < targetY)
-        ++upperIndex;
-      const std::size_t lowerIndex = upperIndex - 1;
-      const double lowerStation = inner.ribs[lowerIndex].rib.spanPosition;
-      const double upperStation = inner.ribs[upperIndex].rib.spanPosition;
-      const double interpolation = std::clamp(
-          (targetY - lowerStation) / std::max(1.0e-9, upperStation - lowerStation),
-          0.0, 1.0);
+      const std::size_t adjacentIndex = inner.ribs.size() - 2;
+      const auto& adjacentRib = inner.ribs[adjacentIndex].rib;
+      const double adjacentTipFace =
+          (adjacentRib.ribThicknessStartFactor + 1.0) * innerRibThickness;
       const auto boundaryPoint = [&](const domain::SpanMember& spar,
                                      const bool topBoundary) {
-        const auto at = [&](const std::size_t i) {
-          auto local = spar.centers[i];
-          local.y += topBoundary ? -spar.height * 0.5 : spar.height * 0.5;
-          return modelSectionPoint(inner.ribs[i].rib, local);
-        };
-        const auto lower = at(lowerIndex);
-        const auto upper = at(upperIndex);
-        return ModelPoint{lower.x + interpolation * (upper.x - lower.x),
-                          lower.y + interpolation * (upper.y - lower.y),
-                          lower.z + interpolation * (upper.z - lower.z)};
+        auto local = spar.centers[adjacentIndex];
+        local.y += topBoundary ? -spar.height * 0.5 : spar.height * 0.5;
+        return modelSectionPoint(adjacentRib, local, adjacentTipFace);
       };
       const auto innerTop = boundaryPoint(*topSpar, true);
       const auto innerBottom = boundaryPoint(*bottomSpar, false);
@@ -439,6 +455,9 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
           panelIndex != 0);
       try {
         result.structuredPanels[panelIndex] = domain::applyWingStructure(ribs, structure);
+      } catch (const domain::EdgeHeightError& exception) {
+        throw std::runtime_error(formatEdgeHeightError(
+            exception, d, unit, panelIndex).toStdString());
       } catch (const std::exception& exception) {
         throw std::runtime_error(
             "Panel " + std::to_string(panelIndex + 1) + ": " + exception.what());
@@ -565,14 +584,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
   leftLayout->addWidget(metrics_);
   updateButton_ = new QPushButton{"Update View"};
   auto* fit = new QPushButton{"Fit View"};
-  auto* exportDxf = new QPushButton{"Export DXFs"};
+  generatePlanButton_ = new QPushButton{"Generate Plan"};
+  generatePlanButton_->setEnabled(false);
+  exportPlanButton_ = new QPushButton{"Export Plan PDF"};
+  exportPlanButton_->setEnabled(false);
+  auto* exportDxf = new QPushButton{"Export DXF/SVG"};
   auto* actions = new QHBoxLayout;
-  actions->addWidget(updateButton_); actions->addWidget(fit); actions->addWidget(exportDxf);
+  actions->addWidget(updateButton_); actions->addWidget(fit);
+  actions->addWidget(generatePlanButton_); actions->addWidget(exportPlanButton_);
+  actions->addWidget(exportDxf);
   leftLayout->addLayout(actions);
 
   viewport_ = new OcctViewport;
+  planViewport_ = new PlanViewport;
+  graphicsTabs_ = new QTabWidget;
+  graphicsTabs_->addTab(viewport_, "3D View");
+  graphicsTabs_->addTab(planViewport_, "Plan View");
+  graphicsTabs_->setTabEnabled(1, false);
   splitter->addWidget(left);
-  splitter->addWidget(viewport_);
+  splitter->addWidget(graphicsTabs_);
   splitter->setChildrenCollapsible(false);
   splitter->setHandleWidth(1);
   splitter->setSizes({470, 930});
@@ -581,8 +611,19 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
 
   connect(panelCount_, &QSpinBox::valueChanged, this, [this](int count) { changePanelCount(count); });
   connect(updateButton_, &QPushButton::clicked, this, [this] { regeneratePreview(); });
-  connect(fit, &QPushButton::clicked, this, [this] { const BusyCursor busy; viewport_->fitAll(); });
+  connect(fit, &QPushButton::clicked, this, [this] {
+    const BusyCursor busy;
+    if (graphicsTabs_->currentIndex() == 1) planViewport_->fitAll();
+    else viewport_->fitAll();
+  });
+  connect(generatePlanButton_, &QPushButton::clicked, this, [this] { generatePlan(); });
+  connect(exportPlanButton_, &QPushButton::clicked, this, [this] { exportPlanPdf(); });
   connect(exportDxf, &QPushButton::clicked, this, [this] { exportRibs(); });
+  connect(graphicsTabs_, &QTabWidget::currentChanged, this, [this](const int index) {
+    statusBar()->showMessage(index == 1
+        ? "Plan: left drag to pan  |  Wheel: zoom"
+        : "Left drag: orbit  |  Right drag: pan  |  Wheel: zoom");
+  });
 
   rebuildPanelTabs(defaultPanelData(globalUnit_));
   updateProgress_ = new QProgressBar;
@@ -607,6 +648,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
 void MainWindow::buildMenus() {
   auto* file = menuBar()->addMenu("&File");
   auto* edit = menuBar()->addMenu("&Edit");
+  auto* help = menuBar()->addMenu("&Help");
   auto* newAction = file->addAction("&New");
   auto* openAction = file->addAction("&Open...");
   auto* saveAction = file->addAction("&Save");
@@ -616,11 +658,14 @@ void MainWindow::buildMenus() {
   auto* copyAction = edit->addAction("&Copy");
   auto* pasteAction = edit->addAction("&Paste");
   auto* defaultsAction = edit->addAction("&Defaults...");
+  auto* helpAction = help->addAction("&Help");
+  auto* aboutAction = help->addAction("&About");
   newAction->setShortcut(QKeySequence::New); openAction->setShortcut(QKeySequence::Open);
   saveAction->setShortcut(QKeySequence::Save); saveAsAction->setShortcut(QKeySequence::SaveAs);
   copyAction->setShortcut(QKeySequence::Copy); pasteAction->setShortcut(QKeySequence::Paste);
   exitAction->setShortcut(QKeySequence{Qt::ALT | Qt::Key_F4});
   defaultsAction->setShortcut(QKeySequence{Qt::CTRL | Qt::Key_Comma});
+  helpAction->setShortcut(QKeySequence::HelpContents);
   connect(newAction, &QAction::triggered, this, [this] { newProject(); });
   connect(openAction, &QAction::triggered, this, [this] { openProject(); });
   connect(saveAction, &QAction::triggered, this, [this] { saveProject(); });
@@ -629,6 +674,28 @@ void MainWindow::buildMenus() {
   connect(copyAction, &QAction::triggered, this, [this] { copyFocusedText(); });
   connect(pasteAction, &QAction::triggered, this, [this] { pasteFocusedText(); });
   connect(defaultsAction, &QAction::triggered, this, [this] { openDefaults(); });
+  connect(helpAction, &QAction::triggered, this, [this] { openHelp(); });
+  connect(aboutAction, &QAction::triggered, this, [this] { showAbout(); });
+}
+
+void MainWindow::openHelp() {
+  const QString path = QDir{QApplication::applicationDirPath()}
+      .filePath("help/index.html");
+  if (!QFileInfo::exists(path)) {
+    QMessageBox::critical(this, "Help unavailable",
+        QString{"The DesignRC help document was not found at:\n%1"}.arg(path));
+    return;
+  }
+  if (!QDesktopServices::openUrl(QUrl::fromLocalFile(path))) {
+    QMessageBox::critical(this, "Help unavailable",
+        "The system could not open the DesignRC help document.");
+  }
+}
+
+void MainWindow::showAbout() {
+  QMessageBox::about(this, "About DesignRC",
+      QString{"<h2>DesignRC</h2><p>Version %1</p><p>Release date: %2</p>"}
+          .arg(QApplication::applicationVersion(), DESIGNRC_RELEASE_DATE));
 }
 
 std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) const {
@@ -710,7 +777,59 @@ void MainWindow::markPreviewPending() {
   ++designRevision_;
   projectModified_ = true;
   setWindowModified(true);
+  invalidatePlan();
   statusBar()->showMessage("Design changed - press Update View to recompute");
+}
+
+void MainWindow::invalidatePlan() {
+  if (generatePlanButton_) generatePlanButton_->setEnabled(false);
+  if (exportPlanButton_) exportPlanButton_->setEnabled(false);
+  if (graphicsTabs_) {
+    if (graphicsTabs_->currentIndex() == 1) graphicsTabs_->setCurrentIndex(0);
+    graphicsTabs_->setTabEnabled(1, false);
+  }
+  if (planViewport_) planViewport_->clearPlan();
+}
+
+void MainWindow::generatePlan() {
+  if (!generatePlanButton_->isEnabled() || currentStructuredPanels_.empty()) return;
+  const BusyCursor busy;
+  const QString projectFileName = currentFile_.isEmpty()
+      ? QString{"Untitled.designrc"} : QFileInfo{currentFile_}.fileName();
+  const auto document = buildFlattenedWingPlan(
+      currentStructuredPanels_, currentRibThicknesses_, currentPlanParameters_,
+      globalUnit_ == DisplayUnit::Inches, projectFileName);
+  if (document.empty()) {
+    QMessageBox::warning(this, "Generate Plan", "No valid wing geometry is available for the plan.");
+    return;
+  }
+  planViewport_->setDocument(document);
+  graphicsTabs_->setTabEnabled(1, true);
+  graphicsTabs_->setCurrentIndex(1);
+  exportPlanButton_->setEnabled(true);
+  statusBar()->showMessage("Flattened full-scale plan generated", 3000);
+}
+
+void MainWindow::exportPlanPdf() {
+  if (!exportPlanButton_->isEnabled()) return;
+  QSettings settings;
+  const QString directory = settings.value("lastDirectory").toString();
+  const QString projectName = currentFile_.isEmpty()
+      ? QString{"Untitled"} : QFileInfo{currentFile_}.completeBaseName();
+  QString path = QFileDialog::getSaveFileName(
+      this, "Export Full-Scale Plan PDF",
+      QDir{directory}.filePath(projectName + ".pdf"), "PDF files (*.pdf)");
+  if (path.isEmpty()) return;
+  if (QFileInfo{path}.suffix().isEmpty()) path += ".pdf";
+
+  const BusyCursor busy;
+  QString error;
+  if (!planViewport_->exportPdf(path, error)) {
+    QMessageBox::critical(this, "Plan PDF export failed", error);
+    return;
+  }
+  settings.setValue("lastDirectory", QFileInfo{path}.absolutePath());
+  statusBar()->showMessage("Full-scale plan PDF exported", 3000);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -760,6 +879,7 @@ void MainWindow::regeneratePreview() {
   updateCancellation_ = std::make_shared<std::atomic_bool>(false);
   const auto cancellation = updateCancellation_;
 
+  invalidatePlan();
   updateButton_->setEnabled(false);
   panelCount_->setEnabled(false);
   panelTabs_->setEnabled(false);
@@ -805,7 +925,7 @@ void MainWindow::regeneratePreview() {
       error = "An unknown geometry error occurred while rebuilding the wing.";
     }
     if (!window) return;
-    QMetaObject::invokeMethod(window, [window, result, error, cancelled, selected, revision] {
+    QMetaObject::invokeMethod(window, [window, result, error, cancelled, selected, revision, panels] {
       if (!window) return;
       window->updateThread_ = nullptr;
       window->updateCancellation_.reset();
@@ -841,6 +961,8 @@ void MainWindow::regeneratePreview() {
       window->currentRibs_ = result->ribSets[selectedPanel];
       window->currentStructuredWing_ = result->structuredPanels[selectedPanel];
       window->currentStructuredPanels_ = result->structuredPanels;
+      window->currentRibThicknesses_ = result->thicknesses;
+      window->currentPlanParameters_ = panels;
       window->currentDihedralAngles_ = result->dihedrals;
       const double lengthFactor = window->globalUnit_ == DisplayUnit::Inches ? 1.0 / 25.4 : 1.0;
       const QString lengthUnit = window->globalUnit_ == DisplayUnit::Inches ? "in" : "mm";
@@ -889,6 +1011,7 @@ void MainWindow::regeneratePreview() {
           .arg(displayMs / 1000.0, 0, 'f', 2)
           .arg(totalMs / 1000.0, 0, 'f', 2);
       window->metrics_->setText(designMetrics);
+      window->generatePlanButton_->setEnabled(true);
       finishUi();
       window->statusBar()->showMessage(timing, 15000);
     }, Qt::QueuedConnection);
@@ -1011,6 +1134,8 @@ void MainWindow::regeneratePreviewSynchronous() {
     currentRibs_ = ribSets[selected];
     currentStructuredWing_ = structuredPanels[selected];
     currentStructuredPanels_ = structuredPanels;
+    currentRibThicknesses_ = thicknesses;
+    currentPlanParameters_ = panels;
     currentDihedralAngles_ = dihedrals;
     const double fullSpan = structuredPanels.back().ribs.back().rib.spanPosition * 2.0;
     const double fullArea = halfArea * 2.0;
@@ -1130,6 +1255,24 @@ void MainWindow::exportRibs() {
   if (currentStructuredPanels_.empty()) return;
   QDialog dialog{this}; dialog.setWindowTitle("Choose parts to export");
   auto* layout = new QVBoxLayout{&dialog};
+  auto* formatLayout = new QHBoxLayout;
+  auto* exportDxf = new QCheckBox{"DXF"};
+  auto* exportSvg = new QCheckBox{"SVG"};
+  exportDxf->setChecked(true);
+  formatLayout->addWidget(new QLabel{"Export formats:"});
+  formatLayout->addWidget(exportDxf);
+  formatLayout->addWidget(exportSvg);
+  formatLayout->addStretch();
+  layout->addLayout(formatLayout);
+
+  auto* selectionLayout = new QHBoxLayout;
+  auto* selectAll = new QPushButton{"Select All"};
+  auto* selectNone = new QPushButton{"Select None"};
+  selectionLayout->addWidget(selectAll);
+  selectionLayout->addWidget(selectNone);
+  selectionLayout->addStretch();
+  layout->addLayout(selectionLayout);
+
   auto* list = new QListWidget;
   const auto addItem = [list](const QString& label, const char* type,
                               const std::size_t panel, const std::size_t index) {
@@ -1155,49 +1298,83 @@ void MainWindow::exportRibs() {
     addItem(QString{"Dihedral Angle %1"}.arg(panel + 1), "dihedral", panel, 0);
   layout->addWidget(list);
   auto* buttons = new QDialogButtonBox{QDialogButtonBox::Ok | QDialogButtonBox::Cancel}; layout->addWidget(buttons);
+  connect(selectAll, &QPushButton::clicked, &dialog, [list] {
+    for (int row = 0; row < list->count(); ++row) list->item(row)->setCheckState(Qt::Checked);
+  });
+  connect(selectNone, &QPushButton::clicked, &dialog, [list] {
+    for (int row = 0; row < list->count(); ++row) list->item(row)->setCheckState(Qt::Unchecked);
+  });
+  const auto updateOkEnabled = [=] {
+    buttons->button(QDialogButtonBox::Ok)->setEnabled(
+        exportDxf->isChecked() || exportSvg->isChecked());
+  };
+  connect(exportDxf, &QCheckBox::toggled, &dialog, updateOkEnabled);
+  connect(exportSvg, &QCheckBox::toggled, &dialog, updateOkEnabled);
   connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  dialog.adjustSize();
+  dialog.resize(dialog.width(), dialog.height() * 2);
   if (dialog.exec() != QDialog::Accepted) return;
   QSettings settings;
-  const auto directory = QFileDialog::getExistingDirectory(this, "Export DXF parts", settings.value("lastDirectory").toString());
+  const QString formats = exportDxf->isChecked() && exportSvg->isChecked()
+      ? "DXF and SVG" : exportDxf->isChecked() ? "DXF" : "SVG";
+  const auto directory = QFileDialog::getExistingDirectory(
+      this, QString{"Export %1 parts"}.arg(formats),
+      settings.value("lastDirectory").toString());
   if (directory.isEmpty()) return;
   settings.setValue("lastDirectory", directory);
   const BusyCursor busy;
   try {
+    const auto outputPath = [&](const QString& name, const QString& extension) {
+      return std::filesystem::path{directory.toStdWString()} /
+          (name + extension).toStdWString();
+    };
+    const auto exportPart = [&](const QString& type, const std::size_t panel,
+                                const std::size_t index, const bool svg) {
+      const auto& wing = currentStructuredPanels_[panel];
+      if (type == "rib") {
+        const auto name = QString::fromStdString(wing.ribs[index].name);
+        if (svg) domain::exportStructuredRibSvg(
+            wing.ribs[index], outputPath(name, ".svg"), name.toStdString());
+        else domain::exportStructuredRibDxf(
+            wing.ribs[index], outputPath(name, ".dxf"), name.toStdString());
+      } else if (type == "web") {
+        const auto name = QString::fromStdString(wing.shearWebs[index].name);
+        if (svg) domain::exportShearWebSvg(
+            wing.shearWebs[index], outputPath(name, ".svg"), name.toStdString());
+        else domain::exportShearWebDxf(
+            wing.shearWebs[index], outputPath(name, ".dxf"), name.toStdString());
+      } else if (type == "sheet_te") {
+        const auto name = QString::fromStdString(wing.sheetStockParts[index].name);
+        if (svg) domain::exportSheetStockSvg(
+            wing.sheetStockParts[index], outputPath(name, ".svg"), name.toStdString());
+        else domain::exportSheetStockDxf(
+            wing.sheetStockParts[index], outputPath(name, ".dxf"), name.toStdString());
+      } else if (type == "wood_joiner") {
+        const auto name = QString::fromStdString(wing.joiners[index].name);
+        if (svg) domain::exportWoodJoinerSvg(
+            wing.joiners[index], outputPath(name, ".svg"), name.toStdString());
+        else domain::exportWoodJoinerDxf(
+            wing.joiners[index], outputPath(name, ".dxf"), name.toStdString());
+      } else if (type == "dihedral") {
+        const auto name = QString{"Dihedral Angle %1"}.arg(panel + 1);
+        if (svg) domain::exportDihedralAngleSvg(
+            currentDihedralAngles_[panel], outputPath(name, ".svg"), name.toStdString());
+        else domain::exportDihedralAngleDxf(
+            currentDihedralAngles_[panel], outputPath(name, ".dxf"), name.toStdString());
+      }
+    };
     for (int row = 0; row < list->count(); ++row) if (list->item(row)->checkState() == Qt::Checked) {
       const auto type = list->item(row)->data(Qt::UserRole).toString();
       const auto index = static_cast<std::size_t>(list->item(row)->data(Qt::UserRole + 1).toInt());
       const auto panel = static_cast<std::size_t>(list->item(row)->data(Qt::UserRole + 2).toInt());
-      const auto& wing = currentStructuredPanels_[panel];
-      if (type == "rib") {
-        const auto name = QString::fromStdString(wing.ribs[index].name);
-        domain::exportStructuredRibDxf(wing.ribs[index],
-            std::filesystem::path{directory.toStdWString()} / (name + ".dxf").toStdWString(),
-            name.toStdString());
-      } else if (type == "web") {
-        const auto name = QString::fromStdString(wing.shearWebs[index].name);
-        domain::exportShearWebDxf(wing.shearWebs[index],
-            std::filesystem::path{directory.toStdWString()} / (name + ".dxf").toStdWString(),
-            name.toStdString());
-      } else if (type == "sheet_te") {
-        const auto name = QString::fromStdString(wing.sheetStockParts[index].name);
-        domain::exportSheetStockDxf(wing.sheetStockParts[index],
-            std::filesystem::path{directory.toStdWString()} / (name + ".dxf").toStdWString(),
-            name.toStdString());
-      } else if (type == "wood_joiner") {
-        const auto name = QString::fromStdString(wing.joiners[index].name);
-        domain::exportWoodJoinerDxf(wing.joiners[index],
-            std::filesystem::path{directory.toStdWString()} / (name + ".dxf").toStdWString(),
-            name.toStdString());
-      } else if (type == "dihedral") {
-        const auto name = QString{"Dihedral Angle %1"}.arg(panel + 1);
-        domain::exportDihedralAngleDxf(currentDihedralAngles_[panel],
-            std::filesystem::path{directory.toStdWString()} / (name + ".dxf").toStdWString(),
-            name.toStdString());
-      }
+      if (exportDxf->isChecked()) exportPart(type, panel, index, false);
+      if (exportSvg->isChecked()) exportPart(type, panel, index, true);
     }
-    statusBar()->showMessage("DXF export complete", 3000);
-  } catch (const std::exception& exception) { QMessageBox::critical(this, "DXF export failed", exception.what()); }
+    statusBar()->showMessage(QString{"%1 export complete"}.arg(formats), 3000);
+  } catch (const std::exception& exception) {
+    QMessageBox::critical(this, "Part export failed", exception.what());
+  }
 }
 
 QJsonObject MainWindow::projectJson(const std::vector<WingPanelData>& panels, const DisplayUnit unit) const {
@@ -1226,9 +1403,12 @@ void MainWindow::newProject() {
   currentRibs_.clear();
   currentStructuredWing_ = {};
   currentStructuredPanels_.clear();
+  currentRibThicknesses_.clear();
+  currentPlanParameters_.clear();
   currentDihedralAngles_.clear();
   metrics_->clear();
   viewport_->clearShape();
+  invalidatePlan();
   projectModified_ = false;
   setWindowModified(false);
   statusBar()->showMessage("New project - press Update View to generate the preview");

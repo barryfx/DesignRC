@@ -43,11 +43,11 @@ int runTest(int argc, char* argv[]) {
   controlSheeting.teTopSheetStopRib = controlSheeting.teBottomSheetStopRib =
       static_cast<int>(ribs.size());
   controlSheeting.ailerons = true;
-  controlSheeting.aileronStartRib = 2;
-  controlSheeting.aileronStopRib = 4;
+  controlSheeting.aileronStartRib = 5;
+  controlSheeting.aileronStopRib = 7;
   controlSheeting.flaps = true;
-  controlSheeting.flapStartRib = 5;
-  controlSheeting.flapStopRib = 7;
+  controlSheeting.flapStartRib = 2;
+  controlSheeting.flapStopRib = 4;
   const auto controlSheetedWing = designrc::domain::applyWingStructure(ribs, controlSheeting);
   const auto controlSheetedShape = designrc::geometry::buildStructuredWingPreview(
       controlSheetedWing, parameters.ribThickness);
@@ -70,6 +70,7 @@ int runTest(int argc, char* argv[]) {
   savedProjectStructure.leadingEdgeRodOd = 2.0;
   savedProjectStructure.trailingEdgeType = 2;
   savedProjectStructure.trailingEdgeWidth = 25.4;
+  savedProjectStructure.trailingEdgeHeight = 50.0;
   savedProjectStructure.leTopSheet = savedProjectStructure.leBottomSheet = true;
   savedProjectStructure.teTopSheet = savedProjectStructure.teBottomSheet = true;
   savedProjectStructure.leTopSheetThickness = savedProjectStructure.leBottomSheetThickness = 2.38125;
@@ -118,8 +119,10 @@ int runTest(int argc, char* argv[]) {
   structureParameters.topRearSpar = true;
   structureParameters.turbulators = true;
   structureParameters.turbulatorCount = 2;
-  structureParameters.leadingEdgeType = 1;
+  structureParameters.leadingEdgeType = 2;
+  structureParameters.leadingEdgeHeight = 50.0;
   structureParameters.trailingEdgeType = 2;
+  structureParameters.trailingEdgeHeight = 50.0;
   structureParameters.trailingEdgeSlotted = true;
   structureParameters.trailingEdgeSlotDepth = 6.0;
   structureParameters.ailerons = true;

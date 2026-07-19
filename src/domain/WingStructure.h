@@ -4,10 +4,26 @@
 
 #include <string>
 #include <array>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace designrc::domain {
+
+class EdgeHeightError final : public std::invalid_argument {
+public:
+  EdgeHeightError(std::string edgeName, std::size_t ribIndex,
+                  double cutHeightMm, double specifiedHeightMm);
+  [[nodiscard]] const std::string& edgeName() const { return edgeName_; }
+  [[nodiscard]] std::size_t ribIndex() const { return ribIndex_; }
+  [[nodiscard]] double cutHeightMm() const { return cutHeightMm_; }
+  [[nodiscard]] double specifiedHeightMm() const { return specifiedHeightMm_; }
+private:
+  std::string edgeName_;
+  std::size_t ribIndex_{};
+  double cutHeightMm_{};
+  double specifiedHeightMm_{};
+};
 
 enum class SpanMemberKind { Rectangular, Tube, Rod, Turbulator };
 
@@ -53,13 +69,13 @@ struct StructureParameters {
   bool bottomRearSpar{false};
   double bottomRearSparHeight{4.0};
   double bottomRearSparWidth{4.0};
-  int leadingEdgeType{0}; // 0 none, 1 shaped, 2 block, 3 tube, 4 rod
+  int leadingEdgeType{0}; // 0 none, 2 block, 3 tube, 4 rod
   double leadingEdgeWidth{5.0};
   double leadingEdgeHeight{7.0};
   double leadingEdgeTubeOd{2.0};
   double leadingEdgeTubeId{1.0};
   double leadingEdgeRodOd{2.0};
-  int trailingEdgeType{0}; // 0 none, 1 shaped, 2 sheet
+  int trailingEdgeType{0}; // 0 none, 2 sheet
   double trailingEdgeWidth{20.0};
   double trailingEdgeHeight{3.0};
   bool trailingEdgeSlotted{false};
@@ -139,6 +155,9 @@ struct ControlSurfacePart {
   double hingePostHeight{};
   std::vector<std::vector<Point2>> profiles;
   std::vector<Point2> hingePostCenters;
+  bool cutStartRib{};
+  bool cutStopRib{};
+  bool extendThroughStopRib{};
 };
 
 struct SheetStockPart {

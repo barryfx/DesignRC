@@ -30,6 +30,7 @@ Testing/
 *.dxf
 
 # Logs and temporary files
+/tmp/
 *.log
 *.tmp
 *~

@@ -92,11 +92,32 @@ int main() {
     foundSixtyPercentRearSpar = true;
   }
   assert(foundSixtyPercentRearSpar);
+  const auto topSparMember = std::find_if(structured.members.begin(), structured.members.end(),
+      [](const auto& member) { return member.name == "Top spar"; });
+  const auto bottomSparMember = std::find_if(structured.members.begin(), structured.members.end(),
+      [](const auto& member) { return member.name == "Bottom spar"; });
+  assert(topSparMember != structured.members.end());
+  assert(bottomSparMember != structured.members.end());
   for (const auto& web : structured.shearWebs) {
     assert(web.name == "SW" + std::to_string(web.bayIndex));
     assert(web.outline.size() == 4);
     assert(web.stationCorners[2].y > web.stationCorners[1].y);
     assert(web.stationCorners[3].y > web.stationCorners[0].y);
+    const std::size_t outer = web.bayIndex;
+    const std::size_t inner = outer - 1;
+    const double ribCenterBay = std::hypot(
+        ribs[outer].spanPosition - ribs[inner].spanPosition,
+        ribs[outer].dihedralHeight - ribs[inner].dihedralHeight);
+    assert(web.outline[1].x > 0.0);
+    assert(web.outline[1].x < ribCenterBay);
+    assert(std::abs(web.stationCorners[0].y -
+                    bottomSparMember->centers[inner].y) < 1.0e-9);
+    assert(std::abs(web.stationCorners[1].y -
+                    bottomSparMember->centers[outer].y) < 1.0e-9);
+    assert(std::abs(web.stationCorners[2].y -
+                    topSparMember->centers[outer].y) < 1.0e-9);
+    assert(std::abs(web.stationCorners[3].y -
+                    topSparMember->centers[inner].y) < 1.0e-9);
   }
 
   designrc::domain::StructureParameters sheetedSparParameters;
@@ -224,6 +245,30 @@ int main() {
   assert(sheeted.ribs.front().booleanHoles.empty());
   assert(sheeted.ribs.front().holes.size() == 2);
 
+  auto turbulatorSheetingParameters = sheetingParameters;
+  turbulatorSheetingParameters.teTopSheet = false;
+  turbulatorSheetingParameters.turbulators = true;
+  turbulatorSheetingParameters.turbulatorCount = 2;
+  turbulatorSheetingParameters.turbulatorWidth = 3.0;
+  turbulatorSheetingParameters.turbulatorHeight = 2.0;
+  const auto turbulatorSheeted = designrc::domain::applyWingStructure(
+      ribs, turbulatorSheetingParameters);
+  assert(turbulatorSheeted.sheeting.size() == 3);
+  for (const auto& strip : turbulatorSheeted.sheeting)
+    assert(strip.profiles.size() == 3);
+  const auto xBounds = [](const std::vector<designrc::domain::Point2>& profile) {
+    const auto [minimum, maximum] = std::minmax_element(
+        profile.begin(), profile.end(),
+        [](const auto& a, const auto& b) { return a.x < b.x; });
+    return std::pair{minimum->x, maximum->x};
+  };
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto left = xBounds(turbulatorSheeted.sheeting[i].profiles.front());
+    const auto right = xBounds(turbulatorSheeted.sheeting[i + 1].profiles.front());
+    assert(std::abs((right.first - left.second) -
+        turbulatorSheetingParameters.turbulatorWidth) < 1.0e-8);
+  }
+
   designrc::domain::StructureParameters controlSheetingParameters;
   controlSheetingParameters.teTopSheet = true;
   controlSheetingParameters.teTopSheetThickness = 2.0;
@@ -268,10 +313,12 @@ int main() {
   assert(carbonStructured.ribs.front().holes.size() == 1);
 
   auto edgeParameters = structureParameters;
-  edgeParameters.leadingEdgeType = 1;
+  edgeParameters.leadingEdgeType = 2;
   edgeParameters.leadingEdgeWidth = 8.0;
-  edgeParameters.trailingEdgeType = 1;
+  edgeParameters.leadingEdgeHeight = 50.0;
+  edgeParameters.trailingEdgeType = 2;
   edgeParameters.trailingEdgeWidth = 18.0;
+  edgeParameters.trailingEdgeHeight = 50.0;
   const auto edged = designrc::domain::applyWingStructure(ribs, edgeParameters);
   assert(edged.profiledMembers.size() == 2);
   assert(std::abs(edged.profiledMembers.front().profiles.front().front().x -
@@ -293,31 +340,41 @@ int main() {
   assert(std::abs(minimumX->x - edgeParameters.leadingEdgeWidth) < 1.0e-9);
   assert(std::abs(maximumX->x - (ribs.front().chord - edgeParameters.trailingEdgeWidth)) < 1.0e-9);
 
-  designrc::domain::StructureParameters undersizedLe;
-  undersizedLe.leadingEdgeType = 1;
-  undersizedLe.leadingEdgeWidth = 1.0;
-  undersizedLe.leadingEdgeHeight = 50.0;
-  bool rejectedUndersizedLe = false;
-  try {
-    static_cast<void>(designrc::domain::applyWingStructure(constantRibs, undersizedLe));
-  } catch (const std::invalid_argument& error) {
-    rejectedUndersizedLe = std::string{error.what()}.find(
-        "less than the specified LE Height") != std::string::npos;
-  }
-  assert(rejectedUndersizedLe);
+  designrc::domain::StructureParameters removedShapedStock;
+  removedShapedStock.leadingEdgeType = 1;
+  removedShapedStock.trailingEdgeType = 1;
+  const auto withoutRemovedStock = designrc::domain::applyWingStructure(
+      ribs, removedShapedStock);
+  assert(withoutRemovedStock.profiledMembers.empty());
+  assert(withoutRemovedStock.sheetStockParts.empty());
 
-  designrc::domain::StructureParameters undersizedTe;
-  undersizedTe.trailingEdgeType = 2;
-  undersizedTe.trailingEdgeWidth = 1.0;
-  undersizedTe.trailingEdgeHeight = 10.0;
-  bool rejectedUndersizedTe = false;
+  designrc::domain::StructureParameters insufficientLeHeight;
+  insufficientLeHeight.leadingEdgeType = 2;
+  insufficientLeHeight.leadingEdgeWidth = 1.0;
+  insufficientLeHeight.leadingEdgeHeight = 0.01;
+  bool rejectedInsufficientLeHeight = false;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(constantRibs, undersizedTe));
+    static_cast<void>(designrc::domain::applyWingStructure(
+        constantRibs, insufficientLeHeight));
   } catch (const std::invalid_argument& error) {
-    rejectedUndersizedTe = std::string{error.what()}.find(
-        "less than the specified TE Height") != std::string::npos;
+    rejectedInsufficientLeHeight = std::string{error.what()}.find(
+        "not smaller than the specified LE Height") != std::string::npos;
   }
-  assert(rejectedUndersizedTe);
+  assert(rejectedInsufficientLeHeight);
+
+  designrc::domain::StructureParameters insufficientTeHeight;
+  insufficientTeHeight.trailingEdgeType = 2;
+  insufficientTeHeight.trailingEdgeWidth = 1.0;
+  insufficientTeHeight.trailingEdgeHeight = 0.01;
+  bool rejectedInsufficientTeHeight = false;
+  try {
+    static_cast<void>(designrc::domain::applyWingStructure(
+        constantRibs, insufficientTeHeight));
+  } catch (const std::invalid_argument& error) {
+    rejectedInsufficientTeHeight = std::string{error.what()}.find(
+        "not smaller than the specified TE Height") != std::string::npos;
+  }
+  assert(rejectedInsufficientTeHeight);
 
   designrc::domain::StructureParameters leadingTubeParameters;
   leadingTubeParameters.leadingEdgeType = 3;
@@ -329,8 +386,9 @@ int main() {
          leadingTubeParameters.leadingEdgeTubeOd * 0.5);
 
   designrc::domain::StructureParameters controlParameters;
-  controlParameters.trailingEdgeType = 1;
+  controlParameters.trailingEdgeType = 2;
   controlParameters.trailingEdgeWidth = 20.0;
+  controlParameters.trailingEdgeHeight = 50.0;
   controlParameters.ailerons = true;
   controlParameters.aileronStartRib = 2;
   controlParameters.aileronStopRib = 6;
@@ -357,12 +415,69 @@ int main() {
   const auto boundedControl = designrc::domain::applyWingStructure(ribs, boundedControlParameters);
   assert(boundedControl.controlSurfaces.size() == 1);
   assert(boundedControl.controlSurfaces.front().startRibIndex == 1);
-  assert(boundedControl.controlSurfaces.front().stopRibIndex == ribs.size() - 2);
+  assert(boundedControl.controlSurfaces.front().stopRibIndex == ribs.size() - 1);
+  assert(boundedControl.controlSurfaces.front().cutStopRib);
+  assert(boundedControl.controlSurfaces.front().extendThroughStopRib);
+  const auto tipMaximum = std::max_element(
+      boundedControl.ribs.back().outerOutline.begin(),
+      boundedControl.ribs.back().outerOutline.end(),
+      [](const auto& a, const auto& b) { return a.x < b.x; });
+  assert(std::abs(tipMaximum->x -
+      (ribs.back().chord - boundedControlParameters.aileronWidth -
+       boundedControlParameters.aileronHingePostWidth -
+       boundedControlParameters.controlSurfaceGap)) < 1.0e-9);
+
+  auto sharedControlParameters = controlParameters;
+  sharedControlParameters.flaps = true;
+  sharedControlParameters.flapWidth = sharedControlParameters.aileronWidth;
+  sharedControlParameters.flapStartRib = 2;
+  sharedControlParameters.flapStopRib = 4;
+  sharedControlParameters.aileronStartRib = 4;
+  sharedControlParameters.aileronStopRib = static_cast<int>(ribs.size());
+  const auto sharedControl = designrc::domain::applyWingStructure(
+      ribs, sharedControlParameters);
+  assert(sharedControl.controlSurfaces.size() == 2);
+  const auto& flap = sharedControl.controlSurfaces.front();
+  const auto& aileron = sharedControl.controlSurfaces.back();
+  assert(flap.stopRibIndex == aileron.startRibIndex);
+  assert(flap.cutStopRib && flap.extendThroughStopRib);
+  assert(aileron.cutStartRib && aileron.cutStopRib);
+  const auto sharedRibMaximum = std::max_element(
+      sharedControl.ribs[flap.stopRibIndex].outerOutline.begin(),
+      sharedControl.ribs[flap.stopRibIndex].outerOutline.end(),
+      [](const auto& a, const auto& b) { return a.x < b.x; });
+  assert(sharedRibMaximum->x <
+      ribs[flap.stopRibIndex].chord - sharedControlParameters.flapWidth);
+
+  auto unequalSharedWidths = sharedControlParameters;
+  unequalSharedWidths.flapWidth += 3.0;
+  bool rejectedSharedWidths = false;
+  try {
+    static_cast<void>(designrc::domain::applyWingStructure(
+        ribs, unequalSharedWidths));
+  } catch (const std::invalid_argument& error) {
+    rejectedSharedWidths = std::string{error.what()}.find(
+        "Width and Aileron Width must match") != std::string::npos;
+  }
+  assert(rejectedSharedWidths);
+
+  auto invalidControlOrder = sharedControlParameters;
+  invalidControlOrder.aileronStartRib = invalidControlOrder.flapStopRib - 1;
+  bool rejectedControlOrder = false;
+  try {
+    static_cast<void>(designrc::domain::applyWingStructure(
+        ribs, invalidControlOrder));
+  } catch (const std::invalid_argument& error) {
+    rejectedControlOrder = std::string{error.what()}.find(
+        "Aileron Start Rib cannot be less") != std::string::npos;
+  }
+  assert(rejectedControlOrder);
 
   designrc::domain::StructureParameters sheetTeParameters;
   sheetTeParameters.ribThickness = parameters.ribThickness;
   sheetTeParameters.trailingEdgeType = 2;
   sheetTeParameters.trailingEdgeWidth = 20.0;
+  sheetTeParameters.trailingEdgeHeight = 50.0;
   sheetTeParameters.trailingEdgeSlotted = true;
   sheetTeParameters.trailingEdgeSlotDepth = 6.0;
   const auto sheetTe = designrc::domain::applyWingStructure(ribs, sheetTeParameters);
@@ -387,6 +502,19 @@ int main() {
   assert(std::abs(sheetRibMaximum->x -
       (ribs.front().chord - sheetTeParameters.trailingEdgeWidth +
        sheetTeParameters.trailingEdgeSlotDepth)) < 1.0e-9);
+  auto slottedSheetingParameters = sheetTeParameters;
+  slottedSheetingParameters.teTopSheet = true;
+  slottedSheetingParameters.teTopSheetStopRib = 2;
+  const auto slottedSheeting = designrc::domain::applyWingStructure(
+      ribs, slottedSheetingParameters);
+  assert(slottedSheeting.sheeting.size() == 1);
+  const double teInnerFace = ribs.front().chord -
+      slottedSheetingParameters.trailingEdgeWidth;
+  const auto sheetingMaximum = std::max_element(
+      slottedSheeting.sheeting.front().profiles.front().begin(),
+      slottedSheeting.sheeting.front().profiles.front().end(),
+      [](const auto& a, const auto& b) { return a.x < b.x; });
+  assert(std::abs(sheetingMaximum->x - teInnerFace) < 1.0e-9);
 
   const auto path = std::filesystem::temp_directory_path() / "designrc_test_rib.dxf";
   designrc::domain::exportRibDxf(ribs.front(), path, "Test rib");
@@ -455,5 +583,45 @@ int main() {
   assert(angleContents.find("Dihedral Angle 1") != std::string::npos);
   angleDxf.close();
   std::filesystem::remove(anglePath);
+
+  const auto svgDirectory = std::filesystem::temp_directory_path();
+  const auto ribSvgPath = svgDirectory / "designrc_test_rib.svg";
+  designrc::domain::exportRibSvg(ribs.front(), ribSvgPath, "Test & rib");
+  std::ifstream ribSvg{ribSvgPath};
+  const std::string ribSvgContents{std::istreambuf_iterator<char>{ribSvg}, {}};
+  assert(ribSvgContents.find("<svg") != std::string::npos);
+  assert(ribSvgContents.find("mm\"") != std::string::npos);
+  assert(ribSvgContents.find("<polygon") != std::string::npos);
+  assert(ribSvgContents.find("Test &amp; rib") != std::string::npos);
+  ribSvg.close();
+  std::filesystem::remove(ribSvgPath);
+
+  const auto structuredSvgPath = svgDirectory / "designrc_structured_rib.svg";
+  designrc::domain::exportStructuredRibSvg(
+      carbonStructured.ribs.front(), structuredSvgPath, "Structured rib");
+  std::ifstream structuredSvg{structuredSvgPath};
+  const std::string structuredSvgContents{
+      std::istreambuf_iterator<char>{structuredSvg}, {}};
+  assert(structuredSvgContents.find("viewBox=") != std::string::npos);
+  assert(structuredSvgContents.find("Structured rib") != std::string::npos);
+  structuredSvg.close();
+  std::filesystem::remove(structuredSvgPath);
+
+  const auto webSvgPath = svgDirectory / "designrc_shear_web.svg";
+  designrc::domain::exportShearWebSvg(
+      structured.shearWebs.front(), webSvgPath, "Shear web");
+  const auto sheetSvgPath = svgDirectory / "designrc_sheet_te.svg";
+  designrc::domain::exportSheetStockSvg(
+      sheetTe.sheetStockParts.front(), sheetSvgPath, "Sheet TE stock");
+  const auto joinerSvgPath = svgDirectory / "designrc_wood_joiner.svg";
+  designrc::domain::exportWoodJoinerSvg(
+      joined.joiners.back(), joinerSvgPath, "Wood joiner");
+  const auto angleSvgPath = svgDirectory / "designrc_dihedral_angle.svg";
+  designrc::domain::exportDihedralAngleSvg(
+      6.0, angleSvgPath, "Dihedral Angle 1");
+  for (const auto& svgPath : {webSvgPath, sheetSvgPath, joinerSvgPath, angleSvgPath}) {
+    assert(std::filesystem::file_size(svgPath) > 100);
+    std::filesystem::remove(svgPath);
+  }
   return 0;
 }

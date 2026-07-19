@@ -13,6 +13,7 @@ class QDoubleSpinBox;
 class QComboBox;
 class QLabel;
 class QRadioButton;
+class QResizeEvent;
 class QSpinBox;
 
 namespace designrc::gui {
@@ -36,6 +37,7 @@ public:
   void setUnitOverride(UnitOverride unit);
   [[nodiscard]] UnitOverride unitOverride() const;
   void setOverrideSelectorVisible(bool visible);
+  [[nodiscard]] int measurementFieldWidth() const;
 signals:
   void valueChanged();
 private:
@@ -113,10 +115,13 @@ public:
   [[nodiscard]] WingPanelData data() const;
   void setData(const WingPanelData& data);
   void setGlobalUnit(DisplayUnit unit);
-  [[nodiscard]] bool validate(QString& error) const;
+  [[nodiscard]] bool validate(QString& error);
 
 signals:
   void changed();
+
+protected:
+  void resizeEvent(QResizeEvent* event) override;
 
 private:
   QWidget* makeSpecsPage();
@@ -125,6 +130,8 @@ private:
   QWidget* makeControlsPage();
   QWidget* makeJoinerPage();
   void importAirfoil(bool root);
+  void updateAngleInputWidths();
+  void updateRibSpacing();
   void updateConditionalControls();
   void emitChanged();
 
@@ -145,6 +152,7 @@ private:
   QDoubleSpinBox* twist_{};
   LengthInput* ribThickness_{};
   QSpinBox* ribCount_{};
+  QLabel* ribSpacing_{};
 
   QCheckBox *topSpar_{}, *bottomSpar_{}, *shearWebs_{}, *leTopSheet_{}, *leBottomSheet_{},
       *teTopSheet_{}, *teBottomSheet_{}, *turbulators_{}, *topRearSpar_{}, *bottomRearSpar_{};
@@ -160,7 +168,7 @@ private:
   QSpinBox *leTopSheetStopRib_{}, *leBottomSheetStopRib_{}, *teTopSheetStopRib_{},
       *teBottomSheetStopRib_{}, *turbulatorCount_{};
 
-  QRadioButton *shapedLe_{}, *blockLe_{}, *tubeLe_{}, *rodLe_{}, *shapedTe_{}, *sheetTe_{};
+  QRadioButton *blockLe_{}, *tubeLe_{}, *rodLe_{}, *sheetTe_{};
   QWidget *stockLeDetails_{}, *tubeLeDetails_{}, *rodLeDetails_{}, *stockTeDetails_{}, *slottedDetails_{};
   LengthInput *leWidth_{}, *leHeight_{}, *leTubeOd_{}, *leTubeId_{}, *leRodOd_{}, *teWidth_{}, *teHeight_{};
   QCheckBox* slottedForRibs_{};
@@ -170,6 +178,7 @@ private:
   LengthInput *aileronWidth_{}, *aileronHeight_{}, *aileronHingePostWidth_{},
       *aileronHingePostHeight_{}, *flapWidth_{}, *flapHeight_{},
       *flapHingePostWidth_{}, *flapHingePostHeight_{};
+  LengthInput* lastControlWidthEdited_{};
   QSpinBox *aileronStart_{}, *aileronStop_{}, *flapStart_{}, *flapStop_{};
 
   QCheckBox *addRib1a_{}, *centerSparWoodJoiner_{}, *behindSparJoiner_{}, *fiftyPercentJoiner_{};
