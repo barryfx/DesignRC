@@ -1,6 +1,6 @@
 # DesignRC
 
-DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
+DesignRC is a parametric desktop application for designing built-up RC airplane wings for Windows. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 current release is **0.9.0**.
 
