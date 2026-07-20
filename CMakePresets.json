@@ -7,6 +7,11 @@
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
         "DESIGNRC_BUILD_TESTS": "ON"
@@ -18,10 +23,47 @@
       "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build/release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
       "cacheVariables": {
         "CMAKE_PREFIX_PATH": "C:/Qt/6.11.1/msvc2022_64",
         "OpenCASCADE_DIR": "${sourceDir}/../third_party/occt/install-release/cmake",
         "DESIGNRC_OCCT_RUNTIME_DIR": "${sourceDir}/../third_party/occt/install-release/win64/vc14/bin",
+        "DESIGNRC_BUILD_TESTS": "OFF"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux GCC Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "OpenCASCADE_DIR": "${sourceDir}/../third_party/occt/install-linux-debug/cmake",
+        "DESIGNRC_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux GCC Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "OpenCASCADE_DIR": "${sourceDir}/../third_party/occt/install-linux-release/cmake",
         "DESIGNRC_BUILD_TESTS": "OFF"
       }
     }
@@ -30,12 +72,40 @@
     {
       "name": "windows-debug",
       "configurePreset": "windows-debug",
-      "configuration": "Debug"
+      "configuration": "Debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     },
     {
       "name": "windows-release",
       "configurePreset": "windows-release",
-      "configuration": "Release"
+      "configuration": "Release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
     }
   ],
   "testPresets": [
@@ -43,6 +113,21 @@
       "name": "windows-debug",
       "configurePreset": "windows-debug",
       "configuration": "Debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
       "output": { "outputOnFailure": true }
     }
   ]

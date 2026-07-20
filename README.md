@@ -1,10 +1,11 @@
 # DesignRC
 
-DesignRC is a parametric desktop application for designing built-up RC airplane wings for Windows. It creates
+DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 current release is **0.9.0**.
 
-> **Platform status:** DesignRC has only been built and tested on Windows 11.
+> **Platform status:** DesignRC is built and tested on Windows 11 and Ubuntu 24.04 x86-64 under
+> WSL 2 with WSLg.
 
 ## What DesignRC does
 
@@ -162,6 +163,44 @@ Then build the Release application and installer with:
 The packaging script copies Microsoft's redistributable Visual C++ runtime DLLs beside the
 application, creates a corresponding-source archive for GPL compliance, and writes the installer
 to `dist`. The resulting installer does not require administrator privileges.
+
+## Building on Ubuntu 24.04
+
+The Linux presets use GCC, Ninja, Qt 6.4 or newer, and an OCCT 8.0 installation in the sibling
+`third_party/occt/install-linux-debug` or `install-linux-release` directory. Configure, build, and
+test the Debug application with:
+
+```bash
+cmake --preset linux-debug
+cmake --build --preset linux-debug
+ctest --preset linux-debug
+```
+
+Run the application through X11 or XWayland with:
+
+```bash
+./build/linux-debug/designrc
+```
+
+### Build the Ubuntu package
+
+After building and installing the optimized OCCT libraries at
+`../third_party/occt/install-linux-release`, run:
+
+```bash
+sh packaging/linux/build-package.sh
+```
+
+The script stages the package on the native Linux filesystem so file permissions remain correct
+when the source tree is hosted on a WSL `/mnt/c` mount. It writes the Ubuntu 24.04 x86-64 `.deb`,
+corresponding source archive, and SHA-256 checksums to `dist`. Install the package with:
+
+```bash
+sudo apt install ./dist/designrc_0.9.0_amd64.deb
+```
+
+The package installs private Qt 6.4 and OCCT 8.0 runtimes. FreeType, Fontconfig, OpenGL, X11/XCB,
+glibc, and the C++ runtime remain Ubuntu-managed package dependencies.
 
 ## Main dependencies
 

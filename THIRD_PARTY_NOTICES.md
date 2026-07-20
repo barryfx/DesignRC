@@ -7,15 +7,17 @@ DesignRC dynamically links the following separately licensed libraries. The dist
 remain replaceable by compatible, user-modified builds. Distribution terms must not prohibit
 reverse engineering when it is necessary to debug modifications to these libraries.
 
-## Qt 6.11.1
+## Qt 6
 
-DesignRC uses Qt Core, GUI, Widgets, OpenGL support, and the runtime plugins selected by
-`windeployqt`. Qt is Copyright (C) The Qt Company Ltd. and other contributors. The Qt components
-used by DesignRC are distributed under the GNU Lesser General Public License version 3
-(`LGPL-3.0-only`). DesignRC does not modify Qt.
+DesignRC uses Qt Core, GUI, Widgets, OpenGL support, and platform runtime plugins. Windows releases
+bundle Qt 6.11.1. The Ubuntu 24.04 package bundles Qt 6.4.2 from Ubuntu's `qt6-base` package. Qt is
+Copyright (C) The Qt Company Ltd. and other contributors. The Qt components used by DesignRC are
+distributed under the GNU Lesser General Public License version 3 (`LGPL-3.0-only`). DesignRC does
+not modify Qt.
 
 - Project: https://www.qt.io/
-- Exact QtBase source: https://code.qt.io/cgit/qt/qtbase.git/tag/?h=v6.11.1
+- Windows QtBase source: https://code.qt.io/cgit/qt/qtbase.git/tag/?h=v6.11.1
+- Ubuntu QtBase source package: https://packages.ubuntu.com/source/noble/qt6-base
 - License: `licenses/QT-LGPL-3.0.txt`
 - GNU GPL version 3 incorporated by the LGPL: `licenses/DESIGNRC-GPL-3.0.txt`
 
@@ -40,12 +42,13 @@ DesignRC does not modify OCCT.
 - License: `licenses/OCCT-LGPL-2.1.txt`
 - Exception: `licenses/OCCT-LGPL-EXCEPTION.txt`
 
-## FreeType 2.13.3
+## FreeType
 
-DesignRC distributes FreeType 2.13.3 for OCCT font support. FreeType is Copyright (C) 1996-2024
-David Turner, Robert Wilhelm, Werner Lemberg, and other contributors. This distribution uses the
-FreeType License (FTL), a BSD-style license with an attribution requirement. DesignRC does not
-modify FreeType.
+Windows releases distribute FreeType 2.13.3 for OCCT font support. The Ubuntu package uses the
+system-provided FreeType 2.13.2 shared library instead of bundling it. FreeType is Copyright (C)
+1996-2024 David Turner, Robert Wilhelm, Werner Lemberg, and other contributors. The Windows
+distribution uses the FreeType License (FTL), a BSD-style license with an attribution requirement.
+DesignRC does not modify FreeType.
 
 - Project: https://freetype.org/
 - Exact source: https://download.savannah.gnu.org/releases/freetype/freetype-2.13.3.tar.xz

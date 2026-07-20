@@ -20,7 +20,11 @@
 #include <QWheelEvent>
 #include <Quantity_Color.hxx>
 #include <V3d_TypeOfVisualization.hxx>
+#if defined(_WIN32)
 #include <WNT_Window.hxx>
+#else
+#include <Xw_Window.hxx>
+#endif
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pnt.hxx>
@@ -102,8 +106,13 @@ void OcctViewport::initializeViewer() {
   context_ = occ::handle<AIS_InteractiveContext>{new AIS_InteractiveContext{viewer_}};
   context_->SetDisplayMode(AIS_Shaded, false);
   view_ = viewer_->CreateView();
+#if defined(_WIN32)
   const auto window = occ::handle<WNT_Window>{
       new WNT_Window{reinterpret_cast<Aspect_Handle>(winId()), Quantity_NOC_WHITE}};
+#else
+  const auto window = occ::handle<Xw_Window>{
+      new Xw_Window{connection, static_cast<Aspect_Drawable>(winId())}};
+#endif
   view_->SetWindow(window);
   view_->SetBackgroundColor(Quantity_NOC_WHITE);
   if (!window->IsMapped()) window->Map();

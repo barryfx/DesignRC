@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=DesignRC
+Comment=Design built-up radio-control aircraft wings
+Exec=designrc
+Icon=designrc
+Terminal=false
+Type=Application
+Categories=Graphics;Engineering;
+Keywords=CAD;RC;Aircraft;Wing;

@@ -1,0 +1,27 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: DesignRC
+Source: https://github.com/barryfx/DesignRC
+
+Files: *
+Copyright: 2026 Barry Foust
+License: GPL-3.0-only
+ DesignRC is free software: you can redistribute it and/or modify it under
+ the terms of the GNU General Public License version 3 only.
+ .
+ The complete license is installed at
+ /usr/lib/designrc/licenses/DESIGNRC-GPL-3.0.txt.
+
+Files: usr/lib/designrc/libQt6*.so.6*
+Copyright: The Qt Company Ltd. and other contributors
+License: LGPL-3.0-only
+ On Debian systems, the complete license is available at
+ /usr/share/common-licenses/LGPL-3 and is also installed at
+ /usr/lib/designrc/licenses/QT-LGPL-3.0.txt.
+
+Files: usr/lib/designrc/libTK*.so.8*
+Copyright: 1999-2026 OPEN CASCADE S.A.S.
+License: LGPL-2.1-only with Open CASCADE exception
+ On Debian systems, the complete LGPL is available at
+ /usr/share/common-licenses/LGPL-2.1. The license and Open CASCADE exception
+ are also installed at /usr/lib/designrc/licenses/OCCT-LGPL-2.1.txt and
+ /usr/lib/designrc/licenses/OCCT-LGPL-EXCEPTION.txt.

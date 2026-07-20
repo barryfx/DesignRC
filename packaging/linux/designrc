@@ -1,0 +1,9 @@
+#!/bin/sh
+
+occt_resources=/usr/share/designrc/occt/resources
+export CSF_OCCTResourcePath="$occt_resources"
+export CSF_MDTVTexturesDirectory="$occt_resources/Textures"
+export CSF_ShadersDirectory="$occt_resources/Shaders"
+export CSF_SHMessage="$occt_resources/SHMessage"
+
+exec /usr/lib/designrc/designrc "$@"

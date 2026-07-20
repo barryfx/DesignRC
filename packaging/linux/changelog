@@ -1,0 +1,5 @@
+designrc (0.9.0) noble; urgency=medium
+
+  * Initial Ubuntu 24.04 x86-64 package.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Mon, 20 Jul 2026 14:00:00 -0400
