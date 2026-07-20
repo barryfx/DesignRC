@@ -4,8 +4,9 @@ DesignRC is a parametric desktop application for designing built-up RC airplane 
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 current release is **0.9.0**.
 
-> **Platform status:** DesignRC is built and tested on Windows 11 and Ubuntu 24.04 x86-64 under
-> WSL 2 with WSLg.
+> **Platform status:** DesignRC is available for Windows 11 x64 and Ubuntu 24.04 LTS x86-64.
+> The Linux build has only been tested on Ubuntu 24.04 under WSL 2 with WSLg; other Linux
+> distributions and Ubuntu releases are not currently tested or supported.
 
 ## What DesignRC does
 
@@ -30,6 +31,27 @@ press **F1**.
 Download the installer from the Releases section of the right hand column and run the installer.
 Windows will give an error because the installer isn't signed (that costs money and this is free).
 Run it anyway if you wish to install.
+
+## Downloading the Ubuntu 24.04 package
+
+Download `designrc_0.9.0_amd64.deb` from the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases). The package targets
+Ubuntu 24.04 LTS on x86-64 (`amd64`) and has only been tested under WSL 2 with WSLg. Install it from
+the directory containing the download:
+
+```bash
+sudo apt install ./designrc_0.9.0_amd64.deb
+designrc
+```
+
+APT installs the required Ubuntu runtime libraries automatically. Qt 6.4.2 and OCCT 8.0 are
+included in the package; FreeType, Fontconfig, OpenGL, X11/XCB, glibc, and the C++ runtime are
+provided by Ubuntu. On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the
+Windows default browser:
+
+```bash
+sudo apt install wslu xdg-utils
+```
 
 ## Typical use
 
@@ -166,9 +188,59 @@ to `dist`. The resulting installer does not require administrator privileges.
 
 ## Building on Ubuntu 24.04
 
-The Linux presets use GCC, Ninja, Qt 6.4 or newer, and an OCCT 8.0 installation in the sibling
-`third_party/occt/install-linux-debug` or `install-linux-release` directory. Configure, build, and
-test the Debug application with:
+These instructions are for Ubuntu 24.04 LTS x86-64, the only Linux environment currently tested.
+They work in a native Ubuntu installation or in WSL 2. WSL users need WSLg to run the graphical
+application.
+
+### Build dependencies
+
+Install the compiler, CMake, Ninja, Qt development files, Debian packaging tools, and the system
+development libraries needed to build OCCT:
+
+```bash
+sudo apt update
+sudo apt install \
+  build-essential cmake ninja-build \
+  qt6-base-dev qt6-base-dev-tools \
+  libgl-dev libglu1-mesa-dev \
+  libx11-dev libxext-dev libxmu-dev libxi-dev \
+  libfreetype-dev libfontconfig1-dev \
+  dpkg-dev fakeroot gzip
+```
+
+DesignRC requires Qt 6.4 or newer and OCCT 8.0. Ubuntu 24.04 supplies Qt 6.4.2. OCCT is built from
+source because the project requires OCCT 8.0 and uses separate Debug and Release installations.
+Place the OCCT 8.0 source tree beside DesignRC as follows:
+
+```text
+projects/
+|-- DesignRC/
+`-- third_party/
+    `-- occt/
+        `-- OCCT-8_0_0/
+```
+
+From the DesignRC source directory, build and install the OCCT Debug libraries:
+
+```bash
+occt_source="$(realpath ../third_party/occt/OCCT-8_0_0)"
+occt_debug_prefix="$(realpath -m ../third_party/occt/install-linux-debug)"
+
+cmake -S "$occt_source" -B "$HOME/build/designrc-occt-debug" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_INSTALL_PREFIX="$occt_debug_prefix" \
+  -DINSTALL_DIR_LAYOUT=Unix -DINSTALL_DIR_CMAKE=cmake \
+  -DBUILD_MODULE_ApplicationFramework=OFF \
+  -DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_Draw=OFF \
+  -DUSE_FREETYPE=ON -DUSE_OPENGL=ON -DUSE_XLIB=ON \
+  -DUSE_FFMPEG=OFF -DUSE_FREEIMAGE=OFF -DUSE_TBB=OFF -DUSE_VTK=OFF
+cmake --build "$HOME/build/designrc-occt-debug"
+cmake --install "$HOME/build/designrc-occt-debug"
+```
+
+### Configure, build, and test DesignRC
+
+The `linux-debug` preset uses the OCCT Debug installation created above:
 
 ```bash
 cmake --preset linux-debug
@@ -184,8 +256,25 @@ Run the application through X11 or XWayland with:
 
 ### Build the Ubuntu package
 
-After building and installing the optimized OCCT libraries at
-`../third_party/occt/install-linux-release`, run:
+Build and install a separate optimized OCCT copy for the distributable package:
+
+```bash
+occt_source="$(realpath ../third_party/occt/OCCT-8_0_0)"
+occt_release_prefix="$(realpath -m ../third_party/occt/install-linux-release)"
+
+cmake -S "$occt_source" -B "$HOME/build/designrc-occt-release" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="$occt_release_prefix" \
+  -DINSTALL_DIR_LAYOUT=Unix -DINSTALL_DIR_CMAKE=cmake \
+  -DBUILD_MODULE_ApplicationFramework=OFF \
+  -DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_Draw=OFF \
+  -DUSE_FREETYPE=ON -DUSE_OPENGL=ON -DUSE_XLIB=ON \
+  -DUSE_FFMPEG=OFF -DUSE_FREEIMAGE=OFF -DUSE_TBB=OFF -DUSE_VTK=OFF
+cmake --build "$HOME/build/designrc-occt-release"
+cmake --install "$HOME/build/designrc-occt-release"
+```
+
+Then build the DesignRC Release executable and Debian package:
 
 ```bash
 sh packaging/linux/build-package.sh
@@ -193,14 +282,19 @@ sh packaging/linux/build-package.sh
 
 The script stages the package on the native Linux filesystem so file permissions remain correct
 when the source tree is hosted on a WSL `/mnt/c` mount. It writes the Ubuntu 24.04 x86-64 `.deb`,
-corresponding source archive, and SHA-256 checksums to `dist`. Install the package with:
+corresponding source archive, and SHA-256 checksums to:
+
+```text
+dist/designrc_0.9.0_amd64.deb
+dist/DesignRC-0.9.0-source.tar.gz
+dist/DesignRC-0.9.0-Linux-x64.sha256
+```
+
+Install the locally built package with:
 
 ```bash
 sudo apt install ./dist/designrc_0.9.0_amd64.deb
 ```
-
-The package installs private Qt 6.4 and OCCT 8.0 runtimes. FreeType, Fontconfig, OpenGL, X11/XCB,
-glibc, and the C++ runtime remain Ubuntu-managed package dependencies.
 
 ## Main dependencies
 
