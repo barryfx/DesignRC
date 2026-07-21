@@ -27,7 +27,7 @@ std::vector<RibDefinition> generateRibs(
       p.rootChord + t * (p.tipChord - p.rootChord),
       p.sweep * t,
       std::tan(dihedral) * span,
-      p.tipTwistDegrees * t,
+      p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
       p.dihedralDegrees,
       -0.5,
       AirfoilProfile::interpolate(root, tip, t)});
@@ -59,6 +59,19 @@ std::vector<PanelAssemblyAngles> calculatePanelAssemblyAngles(
         ? 0.5 * (inclinations[i] + inclinations[i + 1])
         : inclinations[i];
     result.push_back({inclinations[i], rootAngle, inclinations[i], tipAngle});
+  }
+  return result;
+}
+
+std::vector<PanelTwistRange> calculatePanelTwistRanges(
+    const std::vector<double>& panelTwistDegrees) {
+  std::vector<PanelTwistRange> result;
+  result.reserve(panelTwistDegrees.size());
+  double rootTwist = 0.0;
+  for (const double panelTwist : panelTwistDegrees) {
+    const double tipTwist = rootTwist + panelTwist;
+    result.push_back({rootTwist, tipTwist});
+    rootTwist = tipTwist;
   }
   return result;
 }

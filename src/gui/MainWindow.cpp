@@ -398,6 +398,10 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
   for (const auto& panel : panels) result.dihedrals.push_back(panel.dihedral);
   progress(2, "Calculating panel assembly angles...");
   const auto assemblyAngles = domain::calculatePanelAssemblyAngles(result.dihedrals);
+  std::vector<double> panelTwists;
+  panelTwists.reserve(panels.size());
+  for (const auto& panel : panels) panelTwists.push_back(panel.twist);
+  const auto twistRanges = domain::calculatePanelTwistRanges(panelTwists);
   struct PanelOrigin { double x{}, y{}, z{}; };
   std::vector<PanelOrigin> origins(panels.size());
   double originX = 0.0, originY = 0.0, originZ = 0.0;
@@ -426,14 +430,17 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
       const auto origin = origins[panelIndex];
       domain::WingParameters p;
       p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
-      p.sweep = d.sweep; p.dihedralDegrees = 0.0; p.tipTwistDegrees = d.twist;
+      p.sweep = d.sweep; p.dihedralDegrees = 0.0;
+      p.rootTwistDegrees = twistRanges[panelIndex].rootTwistDegrees;
+      p.tipTwistDegrees = twistRanges[panelIndex].tipTwistDegrees;
       p.ribThickness = d.ribThickness; p.ribCount = static_cast<std::size_t>(d.ribCount);
       auto ribs = domain::generateRibs(p, d.rootAirfoil, d.tipAirfoil);
       if (d.addRib1a) {
         const double t = 0.5 / static_cast<double>(d.ribCount - 1);
         ribs.insert(ribs.begin() + 1, {p.halfSpan * t,
             p.rootChord + t * (p.tipChord - p.rootChord), p.sweep * t, 0.0,
-            p.tipTwistDegrees * t, 0.0, -0.5,
+            p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
+            0.0, -0.5,
             domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)});
       }
       const double radians = angles.panelInclinationDegrees * std::numbers::pi / 180.0;
@@ -1051,6 +1058,10 @@ void MainWindow::regeneratePreviewSynchronous() {
     dihedrals.reserve(panels.size());
     for (const auto& panel : panels) dihedrals.push_back(panel.dihedral);
     const auto assemblyAngles = domain::calculatePanelAssemblyAngles(dihedrals);
+    std::vector<double> panelTwists;
+    panelTwists.reserve(panels.size());
+    for (const auto& panel : panels) panelTwists.push_back(panel.twist);
+    const auto twistRanges = domain::calculatePanelTwistRanges(panelTwists);
 
     std::vector<domain::StructuredWing> structuredPanels;
     std::vector<std::vector<domain::RibDefinition>> ribSets;
@@ -1061,14 +1072,17 @@ void MainWindow::regeneratePreviewSynchronous() {
       const auto& d = panels[panelIndex];
       domain::WingParameters p;
       p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
-      p.sweep = d.sweep; p.dihedralDegrees = 0.0; p.tipTwistDegrees = d.twist;
+      p.sweep = d.sweep; p.dihedralDegrees = 0.0;
+      p.rootTwistDegrees = twistRanges[panelIndex].rootTwistDegrees;
+      p.tipTwistDegrees = twistRanges[panelIndex].tipTwistDegrees;
       p.ribThickness = d.ribThickness; p.ribCount = static_cast<std::size_t>(d.ribCount);
       auto ribs = domain::generateRibs(p, d.rootAirfoil, d.tipAirfoil);
       if (d.addRib1a) {
         const double t = 0.5 / static_cast<double>(d.ribCount - 1);
         ribs.insert(ribs.begin() + 1, {p.halfSpan * t,
             p.rootChord + t * (p.tipChord - p.rootChord), p.sweep * t, 0.0,
-            p.tipTwistDegrees * t, 0.0, -0.5,
+            p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
+            0.0, -0.5,
             domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)});
       }
       const auto& angles = assemblyAngles[panelIndex];
@@ -1181,7 +1195,15 @@ void MainWindow::regeneratePreviewLegacy() {
     const auto d = editor->data();
     domain::WingParameters p;
     p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
-    p.sweep = d.sweep; p.dihedralDegrees = d.dihedral; p.tipTwistDegrees = d.twist;
+    p.sweep = d.sweep; p.dihedralDegrees = d.dihedral;
+    const int panelIndex = std::max(0, panelTabs_->currentIndex());
+    std::vector<double> panelTwists;
+    panelTwists.reserve(static_cast<std::size_t>(panelIndex + 1));
+    for (int i = 0; i <= panelIndex; ++i)
+      panelTwists.push_back(panelEditors_[static_cast<std::size_t>(i)]->data().twist);
+    const auto twistRange = domain::calculatePanelTwistRanges(panelTwists).back();
+    p.rootTwistDegrees = twistRange.rootTwistDegrees;
+    p.tipTwistDegrees = twistRange.tipTwistDegrees;
     p.ribThickness = d.ribThickness; p.ribCount = static_cast<std::size_t>(d.ribCount);
     currentRibs_ = domain::generateRibs(p, d.rootAirfoil, d.tipAirfoil);
     const bool panelOne = panelTabs_->currentIndex() == 0;
@@ -1192,7 +1214,7 @@ void MainWindow::regeneratePreviewLegacy() {
           p.rootChord + t * (p.tipChord - p.rootChord),
           p.sweep * t,
           std::tan(p.dihedralDegrees * std::numbers::pi / 180.0) * p.halfSpan * t,
-          p.tipTwistDegrees * t,
+          p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
           p.dihedralDegrees,
           -0.5,
           domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)};

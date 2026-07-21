@@ -24,6 +24,7 @@ struct WingParameters {
   double tipChord{150.0};
   double sweep{70.0};
   double dihedralDegrees{4.0};
+  double rootTwistDegrees{0.0};
   double tipTwistDegrees{0.0};
   double ribThickness{3.0};
   std::size_t ribCount{9};
@@ -43,8 +44,16 @@ struct PanelAssemblyAngles {
   double tipRibAngleDegrees{};
 };
 
+struct PanelTwistRange {
+  double rootTwistDegrees{};
+  double tipTwistDegrees{};
+};
+
 [[nodiscard]] std::vector<PanelAssemblyAngles> calculatePanelAssemblyAngles(
     const std::vector<double>& panelDihedralDegrees);
+
+[[nodiscard]] std::vector<PanelTwistRange> calculatePanelTwistRanges(
+    const std::vector<double>& panelTwistDegrees);
 
 [[nodiscard]] std::vector<RibDefinition> generateRibs(
     const WingParameters& parameters,

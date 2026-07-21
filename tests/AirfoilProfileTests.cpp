@@ -30,6 +30,15 @@ int main() {
   assert(std::abs(panelAngles[2].rootRibAngleDegrees - 13.0) < 1.0e-9);
   assert(std::abs(panelAngles[2].intermediateRibAngleDegrees - 15.0) < 1.0e-9);
 
+  const auto twistRanges = designrc::domain::calculatePanelTwistRanges({4.0, 3.0, -2.0});
+  assert(twistRanges.size() == 3);
+  assert(std::abs(twistRanges[0].rootTwistDegrees) < 1.0e-9);
+  assert(std::abs(twistRanges[0].tipTwistDegrees - 4.0) < 1.0e-9);
+  assert(std::abs(twistRanges[1].rootTwistDegrees - 4.0) < 1.0e-9);
+  assert(std::abs(twistRanges[1].tipTwistDegrees - 7.0) < 1.0e-9);
+  assert(std::abs(twistRanges[2].rootTwistDegrees - 7.0) < 1.0e-9);
+  assert(std::abs(twistRanges[2].tipTwistDegrees - 5.0) < 1.0e-9);
+
   std::istringstream dat{
       "Test foil\n"
       "1.0 0.0\n"
@@ -68,6 +77,12 @@ int main() {
   const auto twistedRibs = designrc::domain::generateRibs(parameters, thick, thin);
   assert(std::abs(twistedRibs.front().twistDegrees) < 1.0e-9);
   assert(std::abs(twistedRibs.back().twistDegrees - 6.0) < 1.0e-9);
+  parameters.rootTwistDegrees = twistRanges[1].rootTwistDegrees;
+  parameters.tipTwistDegrees = twistRanges[1].tipTwistDegrees;
+  const auto inheritedTwistRibs = designrc::domain::generateRibs(parameters, thick, thin);
+  assert(std::abs(inheritedTwistRibs.front().twistDegrees - 4.0) < 1.0e-9);
+  assert(std::abs(inheritedTwistRibs.back().twistDegrees - 7.0) < 1.0e-9);
+  assert(std::abs(inheritedTwistRibs[3].twistDegrees - 5.5) < 1.0e-9);
   const auto metrics = designrc::domain::calculateWingMetrics(parameters);
   assert(std::abs(metrics.fullSpan - parameters.halfSpan * 2.0) < 1.0e-9);
   assert(std::abs(metrics.taperRatio - parameters.tipChord / parameters.rootChord) < 1.0e-9);
