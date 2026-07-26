@@ -1,8 +1,10 @@
 #include "geometry/OcctRibBuilder.h"
 
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepAdaptor_Surface.hxx>
 #include <BRep_Tool.hxx>
@@ -11,8 +13,15 @@
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepGProp.hxx>
 #include <BRepTools.hxx>
 #include <BRep_Builder.hxx>
+#include <Bnd_Box.hxx>
+#include <GProp_GProps.hxx>
+#include <GeomAPI_Interpolate.hxx>
+#include <NCollection_HArray1.hxx>
 #include <Precision.hxx>
 #include <ShapeFix_Shape.hxx>
 #include <TopAbs_ShapeEnum.hxx>
@@ -21,6 +30,7 @@
 #include <TopoDS.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <TopoDS_Compound.hxx>
+#include <TopoDS_Wire.hxx>
 #include <gp_Pnt.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
@@ -30,10 +40,13 @@
 
 #include <stdexcept>
 #include <sstream>
+#include <atomic>
+#include <future>
 #include <vector>
 #include <numbers>
 #include <cmath>
 #include <chrono>
+#include <thread>
 
 namespace designrc::geometry {
 
@@ -177,6 +190,53 @@ double ribEndOffset(const domain::RibDefinition& rib, const double thickness) {
   return (rib.ribThicknessStartFactor + 1.0) * thickness;
 }
 
+TopoDS_Wire makeSplineProfileWire(
+    const domain::RibDefinition& rib,
+    const std::vector<domain::Point2>& profile,
+    const std::size_t splitIndex, const double yOffset,
+    const char* description) {
+  if (profile.size() < 3 || splitIndex == 0 ||
+      splitIndex + 1 >= profile.size())
+    throw std::runtime_error(
+        std::string{description} +
+        " profile cannot be divided into upper and lower contours");
+
+  const auto makeContourEdge = [&](const std::size_t begin,
+                                   const std::size_t end) {
+    if (end == begin + 1)
+      return BRepBuilderAPI_MakeEdge{
+          transformLocal(rib, profile[begin], yOffset),
+          transformLocal(rib, profile[end], yOffset)}.Edge();
+    const auto points = occ::handle<NCollection_HArray1<gp_Pnt>>{
+        new NCollection_HArray1<gp_Pnt>{
+            1, static_cast<int>(end - begin + 1)}};
+    for (std::size_t point = begin; point <= end; ++point)
+      points->SetValue(
+          static_cast<int>(point - begin + 1),
+          transformLocal(rib, profile[point], yOffset));
+    GeomAPI_Interpolate interpolation{
+        points, false, Precision::Confusion()};
+    interpolation.Perform();
+    if (!interpolation.IsDone())
+      throw std::runtime_error(
+          std::string{"Unable to interpolate "} + description +
+          " contour");
+    return BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge();
+  };
+
+  const auto firstPoint = transformLocal(rib, profile.front(), yOffset);
+  const auto lastPoint = transformLocal(rib, profile.back(), yOffset);
+  BRepBuilderAPI_MakeWire wire;
+  wire.Add(makeContourEdge(0, splitIndex));
+  wire.Add(makeContourEdge(splitIndex, profile.size() - 1));
+  wire.Add(BRepBuilderAPI_MakeEdge{lastPoint, firstPoint}.Edge());
+  if (!wire.IsDone())
+    throw std::runtime_error(
+        std::string{"Unable to construct spline "} + description +
+        " profile");
+  return wire.Wire();
+}
+
 TopoDS_Shape makeRectangularSegment(const gp_Pnt& start, const gp_Pnt& end,
                                     const double width, const double height) {
   BRepBuilderAPI_MakePolygon polygon;
@@ -200,12 +260,60 @@ TopoDS_Shape makeTubeSegment(const gp_Pnt& start, const gp_Pnt& end,
   return BRepAlgoAPI_Cut{outer, inner}.Shape();
 }
 
+TopoDS_Shape makeRectangularSpanMember(const domain::StructuredWing& wing,
+                                       const domain::SpanMember& member,
+                                       const double ribThickness) {
+  if (member.centers.size() != wing.ribs.size())
+    throw std::runtime_error("Rectangular member centers do not match the rib stations");
+  BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+  loft.CheckCompatibility(false);
+  const auto addProfile = [&](const std::size_t i, const double yOffset) {
+    const auto& center = member.centers[i];
+    BRepBuilderAPI_MakePolygon polygon;
+    polygon.Add(transformLocal(wing.ribs[i].rib,
+        {center.x - member.width * 0.5, center.y - member.height * 0.5}, yOffset));
+    polygon.Add(transformLocal(wing.ribs[i].rib,
+        {center.x + member.width * 0.5, center.y - member.height * 0.5}, yOffset));
+    polygon.Add(transformLocal(wing.ribs[i].rib,
+        {center.x + member.width * 0.5, center.y + member.height * 0.5}, yOffset));
+    polygon.Add(transformLocal(wing.ribs[i].rib,
+        {center.x - member.width * 0.5, center.y + member.height * 0.5}, yOffset));
+    polygon.Close();
+    if (!polygon.IsDone())
+      throw std::runtime_error("Unable to construct rectangular member profile");
+    loft.AddWire(polygon.Wire());
+  };
+  addProfile(0, ribStartOffset(wing.ribs[0].rib, ribThickness));
+  for (std::size_t i = 0; i < wing.ribs.size(); ++i) {
+    addProfile(i, ribEndOffset(wing.ribs[i].rib, ribThickness));
+    if (i + 1 < wing.ribs.size())
+      addProfile(i + 1, ribStartOffset(wing.ribs[i + 1].rib, ribThickness));
+  }
+  loft.Build();
+  if (!loft.IsDone())
+    throw std::runtime_error("Unable to loft rectangular span member");
+  return loft.Shape();
+}
+
 } // namespace
+
+std::size_t ribGeometryWorkerCount(
+    const std::size_t ribCount, const std::size_t maximumWorkers) {
+  if (ribCount == 0) return 0;
+  const unsigned logicalProcessors = std::thread::hardware_concurrency();
+  std::size_t available = logicalProcessors > 2
+      ? static_cast<std::size_t>(logicalProcessors - 2) : 1;
+  if (maximumWorkers > 0)
+    available = std::min(available, maximumWorkers);
+  return std::min(ribCount, available);
+}
 
 TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structuredWing,
                                         const double ribThickness,
                                         PanelBuildTimings* timings,
-                                        MaterialShapeSet* materialShapes) {
+                                        MaterialShapeSet* materialShapes,
+                                        const GeometryProgressCallback& progress,
+                                        const std::size_t maximumRibWorkers) {
   if (structuredWing.ribs.empty() || ribThickness <= 0.0)
     throw std::invalid_argument("Structured wing preview requires ribs and positive thickness");
   BRep_Builder builder;
@@ -215,21 +323,125 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     builder.MakeCompound(materialShapes->wood);
     builder.MakeCompound(materialShapes->carbonFiber);
     builder.MakeCompound(materialShapes->aluminum);
+    builder.MakeCompound(materialShapes->steel);
+    builder.MakeCompound(materialShapes->fiberglass);
+    builder.MakeCompound(materialShapes->unmirroredWood);
+    builder.MakeCompound(materialShapes->unmirroredCarbonFiber);
+    builder.MakeCompound(materialShapes->unmirroredAluminum);
+    builder.MakeCompound(materialShapes->unmirroredSteel);
+    builder.MakeCompound(materialShapes->unmirroredFiberglass);
   }
-  enum class PreviewMaterial { Wood, CarbonFiber, Aluminum };
-  const auto addShape = [&](const TopoDS_Shape& shape, const PreviewMaterial material) {
+  const auto addShape = [&](const TopoDS_Shape& shape, const PartMaterial material,
+                            const bool mirrorInAssembly = true,
+                            const std::string& name = std::string{}) {
     builder.Add(result, shape);
     if (!materialShapes) return;
+    if (!name.empty())
+      materialShapes->parts.push_back({name, shape, material, mirrorInAssembly});
     switch (material) {
-      case PreviewMaterial::Wood: builder.Add(materialShapes->wood, shape); break;
-      case PreviewMaterial::CarbonFiber: builder.Add(materialShapes->carbonFiber, shape); break;
-      case PreviewMaterial::Aluminum: builder.Add(materialShapes->aluminum, shape); break;
+      case PartMaterial::Wood: builder.Add(mirrorInAssembly
+          ? materialShapes->wood : materialShapes->unmirroredWood, shape); break;
+      case PartMaterial::CarbonFiber: builder.Add(mirrorInAssembly
+          ? materialShapes->carbonFiber : materialShapes->unmirroredCarbonFiber, shape); break;
+      case PartMaterial::Aluminum: builder.Add(mirrorInAssembly
+          ? materialShapes->aluminum : materialShapes->unmirroredAluminum, shape); break;
+      case PartMaterial::Steel: builder.Add(mirrorInAssembly
+          ? materialShapes->steel : materialShapes->unmirroredSteel, shape); break;
+      case PartMaterial::Fiberglass: builder.Add(mirrorInAssembly
+          ? materialShapes->fiberglass : materialShapes->unmirroredFiberglass, shape); break;
     }
   };
+  struct NamedShape {
+    std::string name;
+    TopoDS_Shape shape;
+    Bnd_Box bounds;
+  };
+  std::vector<NamedShape> nonRibShapes;
+  const auto isNewSparPart = [](const std::string& name) {
+    return name.starts_with("Spar ");
+  };
+  const auto isSheetingPart = [](const std::string& name) {
+    return name.find("sheeting") != std::string::npos;
+  };
+  const auto isShearWebPart = [](const std::string& name) {
+    return name.find("shear web") != std::string::npos || name.starts_with("SW");
+  };
+  const auto isSpoilerPart = [](const std::string& name) {
+    return name == "Spoiler" || name.starts_with("Spoiler Frame Rail") ||
+        name.starts_with("Spoiler Support Rail");
+  };
+  const auto isSparMember = [&](const std::string& name) {
+    return !isShearWebPart(name) &&
+        (name.find("Spar") != std::string::npos ||
+         name.find("spar") != std::string::npos);
+  };
+  const auto isWoodJoiner = [](const std::string& name) {
+    return name.starts_with("Wood ") || name.starts_with("Joiner ") ||
+        name == "Center spar wood joiner" ||
+        (name.size() > 1 && name.front() == 'J');
+  };
+  const auto isCheckedJoiner = [&](const std::string& name) {
+    return !isWoodJoiner(name) &&
+        (name.starts_with("Fixed Joiner") ||
+         name.starts_with("Removable Joiner") ||
+         name.starts_with("Alignment Pin"));
+  };
+  const auto isJoinerCollisionTarget = [&](const std::string& name) {
+    return isSparMember(name) || name == "CF tube" || name == "CF rod" ||
+        name.starts_with("LE") || name.starts_with("TE") ||
+        name.find("leading edge") != std::string::npos ||
+        name.find("trailing edge") != std::string::npos ||
+        name.starts_with("Aileron") || name.starts_with("Flap");
+  };
+  const auto addPartShape = [&](const std::string& name, const TopoDS_Shape& shape,
+                                const PartMaterial material,
+                                const bool mirrorInAssembly = true) {
+    Bnd_Box bounds;
+    BRepBndLib::Add(shape, bounds);
+    for (const auto& other : nonRibShapes) {
+      // Legacy features already validate their own layout as they are built.
+      // The generalized collision pass covers every new spar/web against all
+      // non-rib geometry, including other new spars and webs.
+      const bool intendedWebContact =
+          (isShearWebPart(name) && isSparMember(other.name)) ||
+          (isShearWebPart(other.name) && isSparMember(name));
+      const bool joinerCollision =
+          (isCheckedJoiner(name) && isJoinerCollisionTarget(other.name)) ||
+          (isCheckedJoiner(other.name) && isJoinerCollisionTarget(name));
+      const bool newSparCollision = isNewSparPart(name) || isNewSparPart(other.name);
+      const bool spoilerCollision =
+          (isSpoilerPart(name) || isSpoilerPart(other.name)) &&
+          !(isSpoilerPart(name) && isSpoilerPart(other.name));
+      if (isSheetingPart(name) || isSheetingPart(other.name) ||
+          ((isWoodJoiner(name) || isWoodJoiner(other.name)) && !spoilerCollision) ||
+          intendedWebContact ||
+          (!newSparCollision && !joinerCollision && !spoilerCollision) ||
+          other.name == name || bounds.IsOut(other.bounds))
+        continue;
+      BRepAlgoAPI_Common common{shape, other.shape};
+      common.SetRunParallel(true);
+      common.Build();
+      if (!common.IsDone())
+        throw std::runtime_error("Unable to check collision between " + name +
+            " and " + other.name);
+      GProp_GProps properties;
+      BRepGProp::VolumeProperties(common.Shape(), properties);
+      // Boolean commons at intentionally shared faces can contain microscopic
+      // tolerance slivers. Ignore sub-cubic-millimetre artifacts while still
+      // rejecting any manufacturable solid overlap.
+      if (properties.Mass() > 1.0e-3)
+        throw std::invalid_argument("Geometric collision between " + name +
+            " and " + other.name);
+    }
+    nonRibShapes.push_back({name, shape, bounds});
+    addShape(shape, material, mirrorInAssembly, name);
+  };
   const auto materialForName = [](const std::string& name) {
-    if (name.find("Aluminum") != std::string::npos) return PreviewMaterial::Aluminum;
-    if (name.find("CF") != std::string::npos) return PreviewMaterial::CarbonFiber;
-    return PreviewMaterial::Wood;
+    if (name.find("Fiberglass") != std::string::npos) return PartMaterial::Fiberglass;
+    if (name.find("Steel") != std::string::npos) return PartMaterial::Steel;
+    if (name.find("Aluminum") != std::string::npos) return PartMaterial::Aluminum;
+    if (name.find("CF") != std::string::npos) return PartMaterial::CarbonFiber;
+    return PartMaterial::Wood;
   };
 
   const auto elapsedMs = [](const std::chrono::steady_clock::time_point start) {
@@ -237,14 +449,63 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         std::chrono::steady_clock::now() - start).count();
   };
   auto stageStart = std::chrono::steady_clock::now();
+  std::vector<const domain::StructuredRib*> ribsToBuild;
+  ribsToBuild.reserve(
+      structuredWing.ribs.size() + structuredWing.riblets.size());
+  for (const auto& rib : structuredWing.ribs)
+    ribsToBuild.push_back(&rib);
+  for (const auto& riblet : structuredWing.riblets)
+    ribsToBuild.push_back(&riblet);
+  const bool cuttingLighteningHoles = std::any_of(
+      ribsToBuild.begin(), ribsToBuild.end(),
+      [](const domain::StructuredRib* rib) {
+        return std::any_of(
+            rib->internalCutouts.begin(), rib->internalCutouts.end(),
+            [](const auto& opening) { return opening.size() >= 24; });
+      });
+  const std::string ribStageMessage = cuttingLighteningHoles
+      ? "Building Rib Solids and Cutting Lightening Holes"
+      : "Building Rib Solids";
+  if (progress)
+    progress(0, ribStageMessage);
 
-  for (std::size_t structuredIndex = 0; structuredIndex < structuredWing.ribs.size(); ++structuredIndex) {
-    const auto& structured = structuredWing.ribs[structuredIndex];
-    BRepBuilderAPI_MakePolygon outer;
-    for (const auto& point : structured.outerOutline)
-      outer.Add(transformLocal(structured.rib, point, ribStartOffset(structured.rib, ribThickness)));
-    outer.Close();
-    if (!outer.IsDone()) throw std::runtime_error("Unable to construct notched rib outline");
+  struct BuiltRibShape {
+    TopoDS_Shape shape;
+    std::string name;
+    bool mirrorInAssembly{true};
+  };
+  std::vector<std::vector<BuiltRibShape>> builtRibs(
+      ribsToBuild.size());
+  const auto buildRib = [&](const std::size_t structuredIndex) {
+    const auto& structured = *ribsToBuild[structuredIndex];
+    const auto outlineSegments = structured.outlineSegments.empty()
+        ? domain::makeRibOutlineSegments(structured.outerOutline)
+        : structured.outlineSegments;
+    BRepBuilderAPI_MakeWire outer;
+    for (const auto& segment : outlineSegments) {
+      if (segment.spline && segment.points.size() >= 3) {
+        const auto points =
+            occ::handle<NCollection_HArray1<gp_Pnt>>{
+                new NCollection_HArray1<gp_Pnt>{
+                    1, static_cast<int>(segment.points.size())}};
+        for (std::size_t point = 0; point < segment.points.size(); ++point)
+          points->SetValue(static_cast<int>(point + 1),
+              transformLocal(structured.rib, segment.points[point],
+                  ribStartOffset(structured.rib, ribThickness)));
+        GeomAPI_Interpolate interpolation{
+            points, false, Precision::Confusion()};
+        interpolation.Perform();
+        outer.Add(BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge());
+      } else {
+        for (std::size_t point = 0; point + 1 < segment.points.size(); ++point)
+          outer.Add(BRepBuilderAPI_MakeEdge{
+              transformLocal(structured.rib, segment.points[point],
+                  ribStartOffset(structured.rib, ribThickness)),
+              transformLocal(structured.rib, segment.points[point + 1],
+                  ribStartOffset(structured.rib, ribThickness))}.Edge());
+      }
+    }
+    if (!outer.IsDone()) throw std::runtime_error("Unable to construct spline rib outline");
     const double planeAngle = structured.rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
     const gp_Vec ribNormal{0.0, std::cos(planeAngle), std::sin(planeAngle)};
     const bool centerRoot = std::abs(structured.rib.spanPosition) < 1.0e-9 &&
@@ -252,6 +513,11 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     const gp_Pln plane{transformLocal(structured.rib, structured.outerOutline.front(), ribStartOffset(structured.rib, ribThickness)),
                        centerRoot ? gp_Dir{0.0, 1.0, 0.0} : gp_Dir{ribNormal}};
     BRepBuilderAPI_MakeFace face{plane, outer.Wire(), true};
+    if (!face.IsDone() || !BRepCheck_Analyzer{face.Face(), false}.IsValid())
+      throw std::runtime_error(
+          "Unable to fill spline outer outline for structured rib " +
+          std::to_string(structuredIndex + 1) + "; segments=" +
+          std::to_string(outlineSegments.size()));
     for (const auto& hole : structured.holes) {
       BRepBuilderAPI_MakePolygon polygon;
       for (const auto& point : hole)
@@ -284,85 +550,216 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       }
       throw std::runtime_error(detail.str());
     }
-    for (const auto& hole : structured.booleanHoles) {
-      domain::Point2 center{};
-      for (const auto& point : hole) { center.x += point.x; center.y += point.y; }
-      center.x /= static_cast<double>(hole.size());
-      center.y /= static_cast<double>(hole.size());
-      double radius = 0.0;
-      for (const auto& point : hole)
-        radius = std::max(radius, std::hypot(point.x - center.x, point.y - center.y));
-      const auto start = transformLocal(structured.rib, center,
-          ribStartOffset(structured.rib, ribThickness) - 1.0);
-      BRepPrimAPI_MakeCylinder holeTool{
-          gp_Ax2{start, gp_Dir{ribNormal}}, radius, ribThickness + 2.0};
-      BRepAlgoAPI_Cut cut{ribSolid, holeTool.Shape()};
-      cut.Build();
-      if (!cut.IsDone()) throw std::runtime_error("Unable to cut a circular rib opening");
-      ribSolid = cut.Shape();
-      TopExp_Explorer cutSolids{ribSolid, TopAbs_SOLID};
-      if (!cutSolids.More()) throw std::runtime_error("A circular opening removed the rib solid");
-      if (!BRepCheck_Analyzer{ribSolid, false}.IsValid()) {
-        ShapeFix_Shape fixer{ribSolid};
-        fixer.Perform();
-        ribSolid = fixer.Shape();
+    const auto finishRib = [&](const std::vector<std::vector<domain::Point2>>&
+                                   halfSpecificHoles) {
+      auto finished = ribSolid;
+      const auto cutCircularHoles =
+          [&](const std::vector<std::vector<domain::Point2>>& holes) {
+        for (const auto& hole : holes) {
+          domain::Point2 center{};
+          for (const auto& point : hole) {
+            center.x += point.x;
+            center.y += point.y;
+          }
+          center.x /= static_cast<double>(hole.size());
+          center.y /= static_cast<double>(hole.size());
+          double radius = 0.0;
+          for (const auto& point : hole)
+            radius = std::max(
+                radius, std::hypot(point.x - center.x, point.y - center.y));
+          const auto start = transformLocal(
+              structured.rib, center,
+              ribStartOffset(structured.rib, ribThickness) - 1.0);
+          BRepPrimAPI_MakeCylinder holeTool{
+              gp_Ax2{start, gp_Dir{ribNormal}}, radius, ribThickness + 2.0};
+          BRepAlgoAPI_Cut cut{finished, holeTool.Shape()};
+          cut.Build();
+          if (!cut.IsDone())
+            throw std::runtime_error("Unable to cut a circular rib opening");
+          finished = cut.Shape();
+          TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
+          if (!cutSolids.More())
+            throw std::runtime_error("A circular opening removed the rib solid");
+          if (!BRepCheck_Analyzer{finished, false}.IsValid()) {
+            ShapeFix_Shape fixer{finished};
+            fixer.Perform();
+            finished = fixer.Shape();
+          }
+        }
+      };
+      cutCircularHoles(structured.booleanHoles);
+      cutCircularHoles(halfSpecificHoles);
+
+      // Make all internal openings while the rib is still one solid. The wood
+      // joiner through-slot is applied last because it intentionally separates
+      // a joint rib into two independently retained solids.
+      for (const auto& opening : structured.internalCutouts) {
+        BRepBuilderAPI_MakePolygon cutPolygon;
+        for (const auto& point : opening)
+          cutPolygon.Add(transformLocal(
+              structured.rib, point,
+              ribStartOffset(structured.rib, ribThickness) - 1.0));
+        cutPolygon.Close();
+        BRepBuilderAPI_MakeFace cutFace{cutPolygon.Wire()};
+        BRepPrimAPI_MakePrism cutTool{
+            cutFace.Face(), ribNormal * (ribThickness + 2.0)};
+        BRepAlgoAPI_Cut cut{finished, cutTool.Shape()};
+        cut.Build();
+        if (!cut.IsDone())
+          throw std::runtime_error("Unable to cut an internal rib opening");
+        finished = cut.Shape();
+        TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
+        if (!cutSolids.More())
+          throw std::runtime_error("An internal opening removed the rib solid");
+        if (!BRepCheck_Analyzer{finished, false}.IsValid()) {
+          ShapeFix_Shape fixer{finished};
+          fixer.Perform();
+          finished = fixer.Shape();
+        }
       }
-    }
-    // Make all internal openings while the rib is still one solid. The wood
-    // joiner through-slot is applied last because it intentionally separates
-    // a joint rib into two independently retained solids.
-    for (const auto& cutout : structured.booleanCutouts) {
-      BRepBuilderAPI_MakePolygon cutPolygon;
-      for (const auto& point : cutout)
-        cutPolygon.Add(transformLocal(structured.rib, point,
-            ribStartOffset(structured.rib, ribThickness) - 1.0));
-      cutPolygon.Close();
-      BRepBuilderAPI_MakeFace cutFace{cutPolygon.Wire()};
-      BRepPrimAPI_MakePrism cutTool{cutFace.Face(), ribNormal * (ribThickness + 2.0)};
-      BRepAlgoAPI_Cut cut{ribSolid, cutTool.Shape()};
-      cut.Build();
-      if (!cut.IsDone()) throw std::runtime_error("Unable to cut the wood joiner slot");
-      ribSolid = cut.Shape();
-      TopExp_Explorer cutSolids{ribSolid, TopAbs_SOLID};
-      if (!cutSolids.More()) throw std::runtime_error("Wood joiner cut removed the rib solid");
-      if (!BRepCheck_Analyzer{ribSolid, false}.IsValid()) {
-        ShapeFix_Shape fixer{ribSolid};
-        fixer.Perform();
-        ribSolid = fixer.Shape();
+      for (const auto& cutout : structured.booleanCutouts) {
+        BRepBuilderAPI_MakePolygon cutPolygon;
+        for (const auto& point : cutout)
+          cutPolygon.Add(transformLocal(
+              structured.rib, point,
+              ribStartOffset(structured.rib, ribThickness) - 1.0));
+        cutPolygon.Close();
+        BRepBuilderAPI_MakeFace cutFace{cutPolygon.Wire()};
+        BRepPrimAPI_MakePrism cutTool{
+            cutFace.Face(), ribNormal * (ribThickness + 2.0)};
+        BRepAlgoAPI_Cut cut{finished, cutTool.Shape()};
+        cut.Build();
+        if (!cut.IsDone())
+          throw std::runtime_error("Unable to cut the wood joiner slot");
+        finished = cut.Shape();
+        TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
+        if (!cutSolids.More())
+          throw std::runtime_error("Wood joiner cut removed the rib solid");
+        if (!BRepCheck_Analyzer{finished, false}.IsValid()) {
+          ShapeFix_Shape fixer{finished};
+          fixer.Perform();
+          finished = fixer.Shape();
+        }
       }
+
+      std::vector<TopoDS_Shape> resultingSolids;
+      for (TopExp_Explorer solids{finished, TopAbs_SOLID}; solids.More();
+           solids.Next())
+        resultingSolids.push_back(solids.Current());
+      if (resultingSolids.empty())
+        throw std::runtime_error(
+            "Structured rib " + std::to_string(structuredIndex + 1) +
+            " extrusion did not produce a valid capped solid (0 result solids)");
+      BRep_Builder ribBuilder;
+      TopoDS_Compound ribPart;
+      if (resultingSolids.size() > 1) ribBuilder.MakeCompound(ribPart);
+      for (auto& solid : resultingSolids) {
+        if (!BRepCheck_Analyzer{solid, false}.IsValid())
+          throw std::runtime_error(
+              "Structured rib " + std::to_string(structuredIndex + 1) +
+              " contains an invalid solid after Boolean cuts");
+        if (resultingSolids.size() > 1) ribBuilder.Add(ribPart, solid);
+      }
+      return resultingSolids.size() == 1
+          ? resultingSolids.front() : TopoDS_Shape{ribPart};
+    };
+
+    const auto positiveRibShape =
+        finishRib(structured.positiveHalfBooleanHoles);
+    const std::string ribName = structured.name.empty()
+        ? "Rib " + std::to_string(structuredIndex + 1) : structured.name;
+    const bool hasHalfSpecificHoles =
+        structured.uniqueHalfPartVariants ||
+        !structured.positiveHalfBooleanHoles.empty() ||
+        !structured.negativeHalfBooleanHoles.empty();
+    if (!hasHalfSpecificHoles) {
+      builtRibs[structuredIndex].push_back(
+          {positiveRibShape, ribName, true});
+    } else {
+      const std::string positiveName = structured.positiveHalfName.empty()
+          ? ribName + " Right" : structured.positiveHalfName;
+      const std::string negativeName = structured.negativeHalfName.empty()
+          ? ribName + " Left" : structured.negativeHalfName;
+      builtRibs[structuredIndex].push_back(
+          {positiveRibShape, positiveName, false});
+      gp_Trsf mirror;
+      mirror.SetMirror(
+          gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
+      const auto negativeRibShape =
+          finishRib(structured.negativeHalfBooleanHoles);
+      builtRibs[structuredIndex].push_back(
+          {BRepBuilderAPI_Transform{
+               negativeRibShape, mirror, true, true}.Shape(),
+           negativeName, false});
     }
-    std::vector<TopoDS_Shape> resultingSolids;
-    for (TopExp_Explorer solids{ribSolid, TopAbs_SOLID}; solids.More(); solids.Next())
-      resultingSolids.push_back(solids.Current());
-    if (resultingSolids.empty()) {
-      throw std::runtime_error("Structured rib " + std::to_string(structuredIndex + 1) +
-          " extrusion did not produce a valid capped solid (0 result solids)");
-    }
-    for (auto& solid : resultingSolids) {
-      if (!BRepCheck_Analyzer{solid, false}.IsValid())
-        throw std::runtime_error("Structured rib " + std::to_string(structuredIndex + 1) +
-            " contains an invalid solid after Boolean cuts");
-      addShape(solid, PreviewMaterial::Wood);
-    }
-  }
+  };
+  const std::size_t ribWorkerCount = ribGeometryWorkerCount(
+      ribsToBuild.size(), maximumRibWorkers);
+  std::atomic_size_t nextRib{0};
+  std::atomic_size_t completedRibs{0};
+  std::vector<std::future<void>> ribWorkers;
+  ribWorkers.reserve(ribWorkerCount);
+  for (std::size_t worker = 0; worker < ribWorkerCount; ++worker)
+    ribWorkers.push_back(std::async(std::launch::async, [&] {
+      for (;;) {
+        const std::size_t ribIndex = nextRib.fetch_add(1);
+        if (ribIndex >= ribsToBuild.size()) return;
+        buildRib(ribIndex);
+        const std::size_t completed = ++completedRibs;
+        if (progress)
+          progress(2 + static_cast<int>(
+              36 * completed / ribsToBuild.size()),
+              ribStageMessage + " (" + std::to_string(completed) + "/" +
+                  std::to_string(ribsToBuild.size()) + " complete)");
+      }
+    }));
+  for (auto& worker : ribWorkers) worker.get();
+  for (const auto& ribParts : builtRibs)
+    for (const auto& ribPart : ribParts)
+      addShape(ribPart.shape, PartMaterial::Wood,
+               ribPart.mirrorInAssembly, ribPart.name);
   if (timings) timings->ribsMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(40, "Building leading and trailing edge stock");
   for (const auto& member : structuredWing.profiledMembers) {
     if (member.profiles.size() != structuredWing.ribs.size())
       throw std::runtime_error("Edge stock profiles do not match the rib stations");
     auto ranges = member.activeRanges;
     if (ranges.empty()) ranges.emplace_back(0, member.profiles.size() - 1);
+    const bool splineTrailingEdge =
+        member.name.starts_with("TE") ||
+        member.name.find("trailing edge") != std::string::npos;
     for (const auto [first, last] : ranges) {
       BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
       loft.CheckCompatibility(false);
       const auto addProfile = [&](const std::size_t i, const double yOffset) {
-        BRepBuilderAPI_MakePolygon polygon;
-        for (const auto& point : member.profiles[i])
-          polygon.Add(transformLocal(structuredWing.ribs[i].rib, point, yOffset));
-        polygon.Close();
-        if (!polygon.IsDone()) throw std::runtime_error("Unable to construct edge stock profile");
-        loft.AddWire(polygon.Wire());
+        if (splineTrailingEdge) {
+          const auto& profile = member.profiles[i];
+          const auto trailing = std::max_element(
+              profile.begin(), profile.end(),
+              [](const domain::Point2& left, const domain::Point2& right) {
+                return left.x < right.x;
+              });
+          const std::size_t trailingIndex = static_cast<std::size_t>(
+              std::distance(profile.begin(), trailing));
+          loft.AddWire(makeSplineProfileWire(
+              structuredWing.ribs[i].rib, profile, trailingIndex,
+              yOffset, "trailing-edge"));
+          return;
+        }
+        const auto& profile = member.profiles[i];
+        const auto leading = std::min_element(
+            profile.begin(), profile.end(),
+            [](const domain::Point2& left, const domain::Point2& right) {
+              return left.x < right.x;
+            });
+        const std::size_t leadingIndex = static_cast<std::size_t>(
+            std::distance(profile.begin(), leading));
+        loft.AddWire(makeSplineProfileWire(
+            structuredWing.ribs[i].rib, profile, leadingIndex,
+            yOffset, "leading-edge"));
       };
       // LE/TE stock is straight over each uninterrupted range. Using profiles
       // at every rib split the ruled loft into thousands of small faces and
@@ -375,12 +772,14 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           ribEndOffset(structuredWing.ribs[last].rib, ribThickness));
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft the panel edge stock");
-      addShape(loft.Shape(), PreviewMaterial::Wood);
+      addPartShape(member.name, loft.Shape(), PartMaterial::Wood);
     }
   }
   if (timings) timings->profiledStockMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(50, "Building controls, spoilers, and rails");
   const domain::ControlSurfacePart* sharedFlap = nullptr;
   const domain::ControlSurfacePart* sharedAileron = nullptr;
   for (const auto& flap : structuredWing.controlSurfaces) {
@@ -398,21 +797,21 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     loft.CheckCompatibility(false);
     const auto addControlProfile = [&](const std::size_t localIndex, const double yOffset) {
       const std::size_t ribIndex = control.startRibIndex + localIndex;
-      BRepBuilderAPI_MakePolygon polygon;
-      for (const auto& point : control.profiles[localIndex])
-        polygon.Add(transformLocal(structuredWing.ribs[ribIndex].rib, point, yOffset));
-      polygon.Close();
-      if (!polygon.IsDone()) throw std::runtime_error("Unable to construct control-surface profile");
-      loft.AddWire(polygon.Wire());
+      const auto& profile = control.profiles[localIndex];
+      const auto trailing = std::max_element(
+          profile.begin(), profile.end(),
+          [](const domain::Point2& left, const domain::Point2& right) {
+            return left.x < right.x;
+          });
+      const std::size_t trailingIndex = static_cast<std::size_t>(
+          std::distance(profile.begin(), trailing));
+      loft.AddWire(makeSplineProfileWire(
+          structuredWing.ribs[ribIndex].rib, profile, trailingIndex,
+          yOffset, "control-surface"));
     };
     addControlProfile(0,
         ribEndOffset(structuredWing.ribs[control.startRibIndex].rib,
                      ribThickness) + control.gap);
-    for (std::size_t local = 1; local + 1 < control.profiles.size(); ++local) {
-      const auto& rib = structuredWing.ribs[control.startRibIndex + local].rib;
-      addControlProfile(local, ribStartOffset(rib, ribThickness));
-      addControlProfile(local, ribEndOffset(rib, ribThickness));
-    }
     const auto& stopRib = structuredWing.ribs[control.stopRibIndex].rib;
     addControlProfile(control.profiles.size() - 1,
         control.extendThroughStopRib
@@ -420,7 +819,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             : ribStartOffset(stopRib, ribThickness) - control.gap);
     loft.Build();
     if (!loft.IsDone()) throw std::runtime_error("Unable to loft the control surface");
-    addShape(loft.Shape(), PreviewMaterial::Wood);
+    addPartShape(control.name, loft.Shape(), PartMaterial::Wood);
 
     if (&control == sharedFlap || &control == sharedAileron) continue;
     const auto hingeStart = transformLocal(
@@ -435,9 +834,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
                            ribThickness)
             : ribStartOffset(structuredWing.ribs[control.stopRibIndex].rib,
                              ribThickness));
-    addShape(makeRectangularSegment(
+    addPartShape(control.name + " hinge post", makeRectangularSegment(
         hingeStart, hingeEnd, control.hingePostWidth, control.hingePostHeight),
-        PreviewMaterial::Wood);
+        PartMaterial::Wood);
   }
   if (sharedFlap != nullptr && sharedAileron != nullptr) {
     const auto hingeStart = transformLocal(
@@ -455,25 +854,347 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             : ribStartOffset(
                   structuredWing.ribs[sharedAileron->stopRibIndex].rib,
                   ribThickness));
-    addShape(makeRectangularSegment(
+    addPartShape("Flap/Aileron hinge post", makeRectangularSegment(
         hingeStart, hingeEnd, sharedFlap->hingePostWidth,
-        sharedFlap->hingePostHeight), PreviewMaterial::Wood);
+        sharedFlap->hingePostHeight), PartMaterial::Wood);
   }
   if (timings) timings->controlsMs = elapsedMs(stageStart);
 
+  const auto buildMemberShape = [&](const domain::SpanMember& member) {
+    if (member.kind != domain::SpanMemberKind::Tube &&
+        member.kind != domain::SpanMemberKind::Rod)
+      return makeRectangularSpanMember(structuredWing, member, ribThickness);
+    const auto start = transformLocal(
+        structuredWing.ribs.front().rib, member.centers.front());
+    const auto end = transformLocal(
+        structuredWing.ribs.back().rib, member.centers.back());
+    gp_Pnt extendedStart = start;
+    gp_Pnt extendedEnd = end;
+    const gp_Vec axis{start, end};
+    const gp_Vec extension = axis * (ribThickness * 0.5 / std::abs(axis.Y()));
+    extendedStart.Translate(-extension);
+    extendedEnd.Translate(extension);
+    return makeTubeSegment(extendedStart, extendedEnd, member.width,
+        member.kind == domain::SpanMemberKind::Tube ? member.innerDiameter : 0.0);
+  };
+  struct SpoilerShape { std::string name; TopoDS_Shape shape; bool mirror{true}; };
+  std::vector<SpoilerShape> spoilerShapes;
+  const auto loftSpoilerProfiles = [&](const domain::SpoilerPart& part,
+      const std::vector<std::array<domain::Point2, 4>>& profiles,
+      const double startExtra, const double endExtra) {
+    BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+    loft.CheckCompatibility(false);
+    const auto addProfile = [&](const std::size_t local, const double offset) {
+      BRepBuilderAPI_MakePolygon polygon;
+      const std::size_t ribIndex = part.startRibIndex + local;
+      for (const auto& point : profiles[local])
+        polygon.Add(transformLocal(structuredWing.ribs[ribIndex].rib, point, offset));
+      polygon.Close();
+      loft.AddWire(polygon.Wire());
+    };
+    addProfile(0, part.spansCenter ? 0.0 :
+        ribEndOffset(structuredWing.ribs[part.startRibIndex].rib,
+                     ribThickness) + startExtra);
+    addProfile(profiles.size() - 1,
+        ribStartOffset(structuredWing.ribs[part.endRibIndex].rib,
+                       ribThickness) - endExtra);
+    loft.Build();
+    if (!loft.IsDone()) throw std::runtime_error("Unable to loft spoiler assembly part");
+    return loft.Shape();
+  };
+  for (const auto& spoiler : structuredWing.spoilers) {
+    const auto cutSpoilerLighteningHoles = [&](
+        TopoDS_Shape shape,
+        const std::vector<std::array<domain::Point2, 4>>& profiles,
+        const double endGap) {
+      if (spoiler.lighteningHoleOutlines.empty()) return shape;
+      if (profiles.size() < 2 || spoiler.dxfOutline.size() < 2)
+        throw std::runtime_error(
+            "Unable to locate spoiler lightening holes");
+      gp_Trsf mirror;
+      mirror.SetMirror(
+          gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
+      const std::size_t lastLocal = profiles.size() - 1;
+      const auto topEdgePoint = [&](const std::size_t local,
+                                    const double offset,
+                                    const double chordFraction,
+                                    const bool mirrored) {
+        const auto& profile = profiles[local];
+        const domain::Point2 localPoint{
+            profile[3].x +
+                chordFraction * (profile[2].x - profile[3].x),
+            profile[3].y +
+                chordFraction * (profile[2].y - profile[3].y)};
+        auto modelPoint = transformLocal(
+            structuredWing.ribs[spoiler.startRibIndex + local].rib,
+            localPoint, offset);
+        if (mirrored) modelPoint.Transform(mirror);
+        return modelPoint;
+      };
+      const double rootOffset = spoiler.spansCenter ? 0.0 :
+          ribEndOffset(
+              structuredWing.ribs[spoiler.startRibIndex].rib,
+              ribThickness) + endGap;
+      const double endOffset = ribStartOffset(
+          structuredWing.ribs[spoiler.endRibIndex].rib,
+          ribThickness) - endGap;
+      const double exportedSpan =
+          spoiler.dxfOutline[1].x - spoiler.dxfOutline[0].x;
+      const double halfExportedSpan = exportedSpan * 0.5;
+      for (const auto& hole : spoiler.lighteningHoleOutlines) {
+        if (hole.size() < 3) continue;
+        double minimumX = hole.front().x;
+        double maximumX = hole.front().x;
+        double minimumY = hole.front().y;
+        double maximumY = hole.front().y;
+        for (const auto point : hole) {
+          minimumX = std::min(minimumX, point.x);
+          maximumX = std::max(maximumX, point.x);
+          minimumY = std::min(minimumY, point.y);
+          maximumY = std::max(maximumY, point.y);
+        }
+        const double centerX = 0.5 * (minimumX + maximumX);
+        const double centerY = 0.5 * (minimumY + maximumY);
+        const double radius = 0.25 *
+            ((maximumX - minimumX) + (maximumY - minimumY));
+        const double chordFraction = std::clamp(
+            centerY / std::max(1.0e-8, spoiler.width), 0.0, 1.0);
+        bool mirroredSegment = false;
+        double along = exportedSpan > 1.0e-8
+            ? centerX / exportedSpan : 0.0;
+        if (spoiler.spansCenter) {
+          mirroredSegment = centerX < halfExportedSpan;
+          along = halfExportedSpan > 1.0e-8
+              ? std::abs(centerX - halfExportedSpan) / halfExportedSpan
+              : 0.0;
+        }
+        along = std::clamp(along, 0.0, 1.0);
+        const auto rootCenter = topEdgePoint(
+            0, rootOffset, chordFraction, false);
+        const auto endCenter = topEdgePoint(
+            lastLocal, endOffset, chordFraction, mirroredSegment);
+        gp_Pnt center{
+            rootCenter.X() + along * (endCenter.X() - rootCenter.X()),
+            rootCenter.Y() + along * (endCenter.Y() - rootCenter.Y()),
+            rootCenter.Z() + along * (endCenter.Z() - rootCenter.Z())};
+        const auto rootLeft = topEdgePoint(
+            0, rootOffset, 0.0, false);
+        const auto rootRight = topEdgePoint(
+            0, rootOffset, 1.0, false);
+        const auto endLeft = topEdgePoint(
+            lastLocal, endOffset, 0.0, mirroredSegment);
+        const auto endRight = topEdgePoint(
+            lastLocal, endOffset, 1.0, mirroredSegment);
+        const gp_Vec rootChord{rootLeft, rootRight};
+        const gp_Vec endChord{endLeft, endRight};
+        const gp_Vec chordDirection{
+            rootChord.X() + along * (endChord.X() - rootChord.X()),
+            rootChord.Y() + along * (endChord.Y() - rootChord.Y()),
+            rootChord.Z() + along * (endChord.Z() - rootChord.Z())};
+        gp_Vec spanDirection{rootCenter, endCenter};
+        gp_Vec normal = spanDirection.Crossed(chordDirection);
+        if (normal.Magnitude() <= Precision::Confusion())
+          throw std::runtime_error(
+              "Unable to determine a spoiler lightening-hole axis");
+        normal.Normalize();
+        const double cutterHalfLength = spoiler.thickness + 2.0;
+        gp_Pnt cutterOrigin = center;
+        cutterOrigin.Translate(normal * -cutterHalfLength);
+        BRepPrimAPI_MakeCylinder cutter{
+            gp_Ax2{cutterOrigin, gp_Dir{normal}}, radius,
+            2.0 * cutterHalfLength};
+        const auto cutterShape = cutter.Shape();
+        if (cutterShape.IsNull())
+          throw std::runtime_error(
+              "Unable to construct a spoiler lightening-hole cutter");
+        BRepAlgoAPI_Cut cut{shape, cutterShape};
+        cut.SetRunParallel(true);
+        cut.Build();
+        if (!cut.IsDone())
+          throw std::runtime_error(
+              "Unable to cut a spoiler lightening hole");
+        shape = cut.Shape();
+        TopExp_Explorer solids{shape, TopAbs_SOLID};
+        if (!solids.More())
+          throw std::runtime_error(
+              "A lightening hole removed the spoiler solid");
+        const auto singleSolid = solids.Current();
+        solids.Next();
+        if (!solids.More()) shape = singleSolid;
+      }
+      BRepTools::Clean(shape);
+      return shape;
+    };
+    const auto addLongPart = [&](const std::string& name,
+        const std::vector<std::array<domain::Point2, 4>>& profiles,
+        const double endGap) {
+      if (!spoiler.spansCenter) {
+        auto half = loftSpoilerProfiles(spoiler, profiles, endGap, endGap);
+        if (name == "Spoiler")
+          half = cutSpoilerLighteningHoles(half, profiles, endGap);
+        spoilerShapes.push_back({name, half, true});
+        return;
+      }
+      gp_Trsf mirror;
+      mirror.SetMirror(gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
+      const auto profileWire = [&](const std::size_t local,
+                                   const double offset,
+                                   const bool mirrored) {
+        BRepBuilderAPI_MakePolygon polygon;
+        const std::size_t ribIndex = spoiler.startRibIndex + local;
+        for (const auto& point : profiles[local]) {
+          auto modelPoint = transformLocal(
+              structuredWing.ribs[ribIndex].rib, point, offset);
+          if (mirrored) modelPoint.Transform(mirror);
+          polygon.Add(modelPoint);
+        }
+        polygon.Close();
+        if (!polygon.IsDone())
+          throw std::runtime_error("Unable to construct center-spanning spoiler profile");
+        return polygon.Wire();
+      };
+      const auto profileOffset = [&](const std::size_t local) {
+        if (local == 0) return 0.0;
+        if (local + 1 == profiles.size())
+          return ribStartOffset(
+              structuredWing.ribs[spoiler.endRibIndex].rib, ribThickness) -
+              endGap;
+        return 0.0;
+      };
+      BRepOffsetAPI_ThruSections fullLoft{
+          true, true, Precision::Confusion()};
+      fullLoft.CheckCompatibility(false);
+      const std::size_t endProfile = profiles.size() - 1;
+      fullLoft.AddWire(
+          profileWire(endProfile, profileOffset(endProfile), true));
+      fullLoft.AddWire(profileWire(0, 0.0, false));
+      fullLoft.AddWire(
+          profileWire(endProfile, profileOffset(endProfile), false));
+      fullLoft.Build();
+      if (!fullLoft.IsDone())
+        throw std::runtime_error("Unable to loft center-spanning spoiler assembly part");
+      auto fullShape = fullLoft.Shape();
+      if (name == "Spoiler")
+        fullShape =
+            cutSpoilerLighteningHoles(fullShape, profiles, endGap);
+      spoilerShapes.push_back({name, fullShape, false});
+    };
+    addLongPart("Spoiler Frame Rail 1", spoiler.forwardRailProfiles, 0.0);
+    addLongPart("Spoiler", spoiler.spoilerProfiles, spoiler.gap);
+    addLongPart("Spoiler Frame Rail 2", spoiler.aftRailProfiles, 0.0);
+    for (std::size_t end = 0; end < spoiler.supportProfiles.size(); ++end) {
+      if (spoiler.spansCenter && end == 0) continue;
+      const std::size_t ribIndex = end == 0 ? spoiler.startRibIndex : spoiler.endRibIndex;
+      const auto& fullProfile = spoiler.supportProfiles[end];
+      std::array<domain::Point2, 4> support = fullProfile;
+      support[2].y -= spoiler.thickness;
+      support[3].y -= spoiler.thickness;
+      BRepBuilderAPI_MakePolygon polygon;
+      const double offset = end == 0
+          ? ribEndOffset(structuredWing.ribs[ribIndex].rib, ribThickness)
+          : ribStartOffset(structuredWing.ribs[ribIndex].rib, ribThickness) - spoiler.frameRailWidth;
+      for (const auto& point : support)
+        polygon.Add(transformLocal(structuredWing.ribs[ribIndex].rib, point, offset));
+      polygon.Close();
+      BRepBuilderAPI_MakeFace face{polygon.Wire()};
+      const double plane = structuredWing.ribs[ribIndex].rib.ribPlaneAngleDegrees *
+          std::numbers::pi / 180.0;
+      const gp_Vec direction{0.0, std::cos(plane) * spoiler.frameRailWidth,
+                            std::sin(plane) * spoiler.frameRailWidth};
+      spoilerShapes.push_back({"Spoiler Support Rail " + std::to_string(end + 1),
+          BRepPrimAPI_MakePrism{face.Face(), direction}.Shape(),
+          !(spoiler.spansCenter && end == 0)});
+    }
+  }
+  struct SheetingCutter {
+    int verticalLocation{};
+    std::string name;
+    TopoDS_Shape shape;
+  };
+  std::vector<SheetingCutter> sheetingCutters;
+  for (const auto& member : structuredWing.members) {
+    if (member.cutsSheeting)
+      sheetingCutters.push_back(
+          {member.verticalLocation, member.name, buildMemberShape(member)});
+  }
+  for (const auto& spoiler : structuredWing.spoilers) {
+    std::vector<std::array<domain::Point2, 4>> assemblyProfiles;
+    assemblyProfiles.reserve(spoiler.forwardRailProfiles.size());
+    for (std::size_t i = 0; i < spoiler.forwardRailProfiles.size(); ++i) {
+      auto profile = std::array<domain::Point2, 4>{
+          spoiler.forwardRailProfiles[i][0], spoiler.aftRailProfiles[i][1],
+          spoiler.aftRailProfiles[i][2], spoiler.forwardRailProfiles[i][3]};
+      // Avoid a coplanar Boolean against the sheeting's outer face. The small
+      // overcut is wholly outside the finished spoiler assembly.
+      profile[0].y -= 0.2; profile[1].y -= 0.2;
+      profile[2].y += 0.2; profile[3].y += 0.2;
+      assemblyProfiles.push_back(profile);
+    }
+    sheetingCutters.push_back({0, "Spoiler assembly",
+        loftSpoilerProfiles(spoiler, assemblyProfiles, 0.0, 0.0)});
+  }
+  const auto cutSheeting = [&](const std::string& name, TopoDS_Shape shape) {
+    const int verticalLocation = name.find("top sheeting") != std::string::npos ? 0 :
+        name.find("bottom sheeting") != std::string::npos ? 1 : 2;
+    if (verticalLocation == 2) return shape;
+    for (const auto& cutter : sheetingCutters) {
+      if (cutter.verticalLocation != verticalLocation) continue;
+      BRepAlgoAPI_Cut cut{shape, cutter.shape};
+      cut.SetRunParallel(true);
+      cut.Build();
+      if (!cut.IsDone())
+        throw std::runtime_error("Unable to cut " + name + " around " + cutter.name);
+      shape = cut.Shape();
+    }
+    return shape;
+  };
+
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(65, "Lofting wing sheeting");
   for (const auto& sheet : structuredWing.sheeting) {
     if (sheet.profiles.size() != sheet.stopRibIndex + 1)
       throw std::runtime_error("Sheeting profiles do not match their rib stations");
     const auto addProfile = [&](BRepOffsetAPI_ThruSections& loft,
                                 const std::vector<domain::Point2>& profile,
                                 const std::size_t i, const double yOffset) {
-      BRepBuilderAPI_MakePolygon polygon;
-      for (const auto& point : profile)
-        polygon.Add(transformLocal(structuredWing.ribs[i].rib, point, yOffset));
-      polygon.Close();
-      if (!polygon.IsDone()) throw std::runtime_error("Unable to construct a sheeting profile");
-      loft.AddWire(polygon.Wire());
+      if (profile.size() < 6 || profile.size() % 2 != 0)
+        throw std::runtime_error(
+            "Sheeting profile cannot be divided into outer and inner contours");
+      const std::size_t contourSize = profile.size() / 2;
+      const auto splineEdge = [&](const std::size_t begin,
+                                  const std::size_t end) {
+        const auto points =
+            occ::handle<NCollection_HArray1<gp_Pnt>>{
+                new NCollection_HArray1<gp_Pnt>{
+                    1, static_cast<int>(end - begin + 1)}};
+        for (std::size_t point = begin; point <= end; ++point)
+          points->SetValue(
+              static_cast<int>(point - begin + 1),
+              transformLocal(
+                  structuredWing.ribs[i].rib, profile[point], yOffset));
+        GeomAPI_Interpolate interpolation{
+            points, false, Precision::Confusion()};
+        interpolation.Perform();
+        return BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge();
+      };
+      const auto outerEnd = transformLocal(
+          structuredWing.ribs[i].rib, profile[contourSize - 1], yOffset);
+      const auto innerStart = transformLocal(
+          structuredWing.ribs[i].rib, profile[contourSize], yOffset);
+      const auto innerEnd = transformLocal(
+          structuredWing.ribs[i].rib, profile.back(), yOffset);
+      const auto outerStart = transformLocal(
+          structuredWing.ribs[i].rib, profile.front(), yOffset);
+      BRepBuilderAPI_MakeWire wire;
+      wire.Add(splineEdge(0, contourSize - 1));
+      wire.Add(BRepBuilderAPI_MakeEdge{outerEnd, innerStart}.Edge());
+      wire.Add(splineEdge(contourSize, profile.size() - 1));
+      wire.Add(BRepBuilderAPI_MakeEdge{innerEnd, outerStart}.Edge());
+      if (!wire.IsDone())
+        throw std::runtime_error(
+            "Unable to construct a spline sheeting profile");
+      loft.AddWire(wire.Wire());
     };
     const auto addSegment = [&](const std::vector<domain::Point2>& firstProfile,
                                 const std::size_t firstRib, const double firstOffset,
@@ -485,7 +1206,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       addProfile(loft, secondProfile, secondRib, secondOffset);
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft a wing sheeting segment");
-      addShape(loft.Shape(), PreviewMaterial::Wood);
+      addPartShape(sheet.name, cutSheeting(sheet.name, loft.Shape()), PartMaterial::Wood);
     };
     if (!sheet.controlBays.empty()) {
       if (sheet.controlBays.size() != sheet.stopRibIndex ||
@@ -519,42 +1240,29 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       }
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft wing sheeting");
-      addShape(loft.Shape(), PreviewMaterial::Wood);
+      addPartShape(sheet.name, cutSheeting(sheet.name, loft.Shape()), PartMaterial::Wood);
     }
   }
   if (timings) timings->sheetingMs = elapsedMs(stageStart);
 
+  for (const auto& spoiler : spoilerShapes)
+    addPartShape(spoiler.name, spoiler.shape, PartMaterial::Wood, spoiler.mirror);
+
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(75, "Building spars and span members");
   for (const auto& member : structuredWing.members) {
-    if (member.kind == domain::SpanMemberKind::Tube ||
-        member.kind == domain::SpanMemberKind::Rod) {
-      const auto start = transformLocal(structuredWing.ribs.front().rib, member.centers.front());
-      const auto end = transformLocal(structuredWing.ribs.back().rib, member.centers.back());
-      gp_Pnt extendedStart = start;
-      gp_Pnt extendedEnd = end;
-      const gp_Vec axis{start, end};
-      const gp_Vec extension = axis * (ribThickness * 0.5 / std::abs(axis.Y()));
-      extendedStart.Translate(-extension);
-      extendedEnd.Translate(extension);
-      addShape(makeTubeSegment(extendedStart, extendedEnd, member.width,
-          member.kind == domain::SpanMemberKind::Tube ? member.innerDiameter : 0.0),
-          PreviewMaterial::CarbonFiber);
-      continue;
-    }
-    // Wood spars and turbulators are continuous straight stock within a panel.
-    // A separate prism in every rib bay duplicated six faces per bay and made
-    // final triangulation needlessly expensive. The boundary centers define
-    // the same panel-length member with one rectangular prism.
-    const auto start = transformLocal(
-        structuredWing.ribs.front().rib, member.centers.front());
-    const auto end = transformLocal(
-        structuredWing.ribs.back().rib, member.centers.back());
-    addShape(makeRectangularSegment(start, end, member.width, member.height),
-        PreviewMaterial::Wood);
+    const bool carbonFiber = member.carbonFiber ||
+        member.kind == domain::SpanMemberKind::Tube ||
+        member.kind == domain::SpanMemberKind::Rod;
+    addPartShape(member.name, buildMemberShape(member),
+        carbonFiber ? PartMaterial::CarbonFiber : PartMaterial::Wood);
   }
   if (timings) timings->membersMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(82, "Building shear webs");
   for (const auto& web : structuredWing.shearWebs) {
     const std::size_t i = web.bayIndex - 1;
     const auto& rootRib = structuredWing.ribs[i].rib;
@@ -574,10 +1282,10 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       // plane. Keeping the source face on the centerline makes the symmetry
       // explicit and avoids accumulating a one-sided offset.
       const double halfThickness = web.thickness * 0.5;
-      addShape(BRepPrimAPI_MakePrism{
-          face.Face(), gp_Vec{halfThickness, 0.0, 0.0}}.Shape(), PreviewMaterial::Wood);
-      addShape(BRepPrimAPI_MakePrism{
-          face.Face(), gp_Vec{-halfThickness, 0.0, 0.0}}.Shape(), PreviewMaterial::Wood);
+      addPartShape(web.name, BRepPrimAPI_MakePrism{
+          face.Face(), gp_Vec{halfThickness, 0.0, 0.0}}.Shape(), PartMaterial::Wood);
+      addPartShape(web.name, BRepPrimAPI_MakePrism{
+          face.Face(), gp_Vec{-halfThickness, 0.0, 0.0}}.Shape(), PartMaterial::Wood);
     };
     addTriangle(bottom0, bottom1, top1);
     addTriangle(bottom0, top1, top0);
@@ -585,8 +1293,39 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (timings) timings->shearWebsMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(87, "Building joiners and checking collisions");
   for (const auto& joiner : structuredWing.joiners) {
     if (joiner.kind == domain::SpanMemberKind::Rectangular) {
+      if (!joiner.innerRectangularProfiles.empty()) {
+        BRepOffsetAPI_ThruSections fullLoft{true, true, Precision::Confusion()};
+        fullLoft.CheckCompatibility(false);
+        const auto addGlobalProfile = [&](const std::array<domain::Point3, 4>& profile) {
+          BRepBuilderAPI_MakePolygon polygon;
+          for (const auto& point : profile) polygon.Add({point.x, point.y, point.z});
+          polygon.Close();
+          if (!polygon.IsDone())
+            throw std::runtime_error("Unable to construct the full wood joiner profile");
+          fullLoft.AddWire(polygon.Wire());
+        };
+        for (const auto& profile : joiner.innerRectangularProfiles)
+          addGlobalProfile(profile);
+        std::array<domain::Point3, 4> outerSecond{};
+        const auto& secondRib = structuredWing.ribs[joiner.stopRibIndex].rib;
+        const double secondOffset = ribEndOffset(secondRib, ribThickness);
+        for (std::size_t corner = 0; corner < outerSecond.size(); ++corner) {
+          const auto point = transformLocal(secondRib,
+              joiner.rectangularProfiles[joiner.stopRibIndex][corner], secondOffset);
+          outerSecond[corner] = {point.X(), point.Y(), point.Z()};
+        }
+        addGlobalProfile(outerSecond);
+        fullLoft.Build();
+        if (!fullLoft.IsDone())
+          throw std::runtime_error("Unable to loft the full wood joiner");
+        addPartShape(joiner.name, fullLoft.Shape(), PartMaterial::Wood,
+            joiner.mirrorInAssembly);
+        continue;
+      }
       BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
       loft.CheckCompatibility(false);
       const auto addProfile = [&](const std::size_t i, const double yOffset) {
@@ -605,31 +1344,17 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft center spar wood joiner");
       const auto outerHalf = loft.Shape();
-      addShape(outerHalf, PreviewMaterial::Wood);
-      if (!joiner.innerRectangularProfiles.empty()) {
-        BRepOffsetAPI_ThruSections innerLoft{true, true, Precision::Confusion()};
-        innerLoft.CheckCompatibility(false);
-        for (const auto& profile : joiner.innerRectangularProfiles) {
-          BRepBuilderAPI_MakePolygon polygon;
-          for (const auto& point : profile) polygon.Add({point.x, point.y, point.z});
-          polygon.Close();
-          if (!polygon.IsDone())
-            throw std::runtime_error("Unable to construct the inner wood joiner profile");
-          innerLoft.AddWire(polygon.Wire());
-        }
-        innerLoft.Build();
-        if (!innerLoft.IsDone())
-          throw std::runtime_error("Unable to loft the inner wood joiner half");
-        addShape(innerLoft.Shape(), PreviewMaterial::Wood);
-      } else if (joiner.spansJoint) {
+      addPartShape(joiner.name, outerHalf, PartMaterial::Wood,
+          joiner.mirrorInAssembly);
+      if (joiner.spansJoint) {
         const auto rootPoint = transformLocal(structuredWing.ribs.front().rib,
             joiner.rectangularProfiles.front()[0]);
         const double angle = joiner.mirrorPlaneAngleDegrees *
             std::numbers::pi / 180.0;
         gp_Trsf mirror;
         mirror.SetMirror(gp_Ax2{rootPoint, gp_Dir{0.0, std::cos(angle), std::sin(angle)}});
-        addShape(BRepBuilderAPI_Transform{outerHalf, mirror, true}.Shape(),
-            PreviewMaterial::Wood);
+        addPartShape(joiner.name, BRepBuilderAPI_Transform{outerHalf, mirror, true}.Shape(),
+            PartMaterial::Wood);
       }
       continue;
     }
@@ -640,9 +1365,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         ? gp_Pnt{joiner.outerEndpoint.x, joiner.outerEndpoint.y, joiner.outerEndpoint.z}
         : transformLocal(structuredWing.ribs[joiner.stopRibIndex].rib, joiner.centers.back());
     if (joiner.hasExplicitEndpoints) {
-      addShape(makeTubeSegment(start, end, joiner.outerDiameter,
+      addPartShape(joiner.name, makeTubeSegment(start, end, joiner.outerDiameter,
           joiner.kind == domain::SpanMemberKind::Tube ? joiner.innerDiameter : 0.0),
-          materialForName(joiner.name));
+          materialForName(joiner.name), joiner.mirrorInAssembly);
       continue;
     }
     const gp_Vec axis{start, end};
@@ -654,13 +1379,53 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     } else {
       start.Translate(-extension);
     }
-    addShape(makeTubeSegment(start, end, joiner.outerDiameter,
+    addPartShape(joiner.name, makeTubeSegment(start, end, joiner.outerDiameter,
         joiner.kind == domain::SpanMemberKind::Tube ? joiner.innerDiameter : 0.0),
         materialForName(joiner.name));
+  }
+
+  const auto isWiringCollisionTarget = [&](const std::string& name) {
+    return isSparMember(name) || name == "CF tube" || name == "CF rod" ||
+        isWoodJoiner(name) || isCheckedJoiner(name) ||
+        name.find("joiner") != std::string::npos ||
+        name.find("Joiner") != std::string::npos ||
+        name.starts_with("Alignment Pin");
+  };
+  for (const auto& opening : structuredWing.wiringHoles) {
+    if (opening.ribIndex >= structuredWing.ribs.size() || opening.outline.size() < 3)
+      throw std::runtime_error("Wiring Hole references an invalid rib");
+    const auto& rib = structuredWing.ribs[opening.ribIndex].rib;
+    const double planeAngle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+    const gp_Vec ribNormal{0.0, std::cos(planeAngle), std::sin(planeAngle)};
+    BRepBuilderAPI_MakePolygon polygon;
+    for (const auto& point : opening.outline)
+      polygon.Add(transformLocal(rib, point, ribStartOffset(rib, ribThickness) - 1.0));
+    polygon.Close();
+    BRepBuilderAPI_MakeFace face{polygon.Wire()};
+    BRepPrimAPI_MakePrism prism{face.Face(), ribNormal * (ribThickness + 2.0)};
+    const auto cutter = prism.Shape();
+    Bnd_Box cutterBounds;
+    BRepBndLib::Add(cutter, cutterBounds);
+    for (const auto& part : nonRibShapes) {
+      if (!isWiringCollisionTarget(part.name) || cutterBounds.IsOut(part.bounds)) continue;
+      BRepAlgoAPI_Common common{cutter, part.shape};
+      common.SetRunParallel(true);
+      common.Build();
+      if (!common.IsDone())
+        throw std::runtime_error("Unable to check collision between " + opening.name +
+            " and " + part.name);
+      GProp_GProps properties;
+      BRepGProp::VolumeProperties(common.Shape(), properties);
+      if (properties.Mass() > 1.0e-3)
+        throw std::invalid_argument("Geometric collision between " + opening.name +
+            " and " + part.name);
+    }
   }
   if (timings) timings->joinersMs = elapsedMs(stageStart);
 
   stageStart = std::chrono::steady_clock::now();
+  if (progress)
+    progress(95, "Meshing completed panel geometry");
   // AIS automatic triangulation is disabled in the viewport. Mesh the complete
   // compound once on the worker. This includes ribs, lofted sheeting, spars,
   // joiners, controls, and edge stock in one parallel meshing operation.
@@ -668,6 +1433,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (!displayMesh.IsDone())
     throw std::runtime_error("Unable to mesh the complete panel for display");
   if (timings) timings->displayMeshMs = elapsedMs(stageStart);
+  if (progress)
+    progress(100, "Panel geometry complete");
   return result;
 }
 
@@ -726,6 +1493,13 @@ MaterialShapeSet assembleMirroredMaterialPreview(
   builder.MakeCompound(assembly.wood);
   builder.MakeCompound(assembly.carbonFiber);
   builder.MakeCompound(assembly.aluminum);
+  builder.MakeCompound(assembly.steel);
+  builder.MakeCompound(assembly.fiberglass);
+  builder.MakeCompound(assembly.unmirroredWood);
+  builder.MakeCompound(assembly.unmirroredCarbonFiber);
+  builder.MakeCompound(assembly.unmirroredAluminum);
+  builder.MakeCompound(assembly.unmirroredSteel);
+  builder.MakeCompound(assembly.unmirroredFiberglass);
   gp_Trsf mirror;
   mirror.SetMirror(gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
   const auto addMirrored = [&](TopoDS_Compound& target, const TopoDS_Compound& panel) {
@@ -733,10 +1507,46 @@ MaterialShapeSet assembleMirroredMaterialPreview(
     builder.Add(target, panel);
     builder.Add(target, BRepBuilderAPI_Transform{panel, mirror, true, true}.Shape());
   };
-  for (const auto& panel : panelShapes) {
+  for (std::size_t panelIndex = 0; panelIndex < panelShapes.size(); ++panelIndex) {
+    const auto& panel = panelShapes[panelIndex];
     addMirrored(assembly.wood, panel.wood);
     addMirrored(assembly.carbonFiber, panel.carbonFiber);
     addMirrored(assembly.aluminum, panel.aluminum);
+    addMirrored(assembly.steel, panel.steel);
+    addMirrored(assembly.fiberglass, panel.fiberglass);
+    if (!panel.unmirroredWood.IsNull()) builder.Add(assembly.wood, panel.unmirroredWood);
+    if (!panel.unmirroredCarbonFiber.IsNull())
+      builder.Add(assembly.carbonFiber, panel.unmirroredCarbonFiber);
+    if (!panel.unmirroredAluminum.IsNull())
+      builder.Add(assembly.aluminum, panel.unmirroredAluminum);
+    if (!panel.unmirroredSteel.IsNull())
+      builder.Add(assembly.steel, panel.unmirroredSteel);
+    if (!panel.unmirroredFiberglass.IsNull())
+      builder.Add(assembly.fiberglass, panel.unmirroredFiberglass);
+    for (const auto& part : panel.parts) {
+      if (part.mirrorInAssembly) {
+        assembly.parts.push_back({
+            "Right Panel " + std::to_string(panelIndex + 1) + " - " + part.name,
+            part.shape, part.material, false});
+        assembly.parts.push_back({
+            "Left Panel " + std::to_string(panelIndex + 1) + " - " + part.name,
+            BRepBuilderAPI_Transform{part.shape, mirror, true, true}.Shape(),
+            part.material, false});
+      } else if (part.name.ends_with(" Right")) {
+        assembly.parts.push_back({
+            "Right Panel " + std::to_string(panelIndex + 1) + " - " +
+                part.name,
+            part.shape, part.material, false});
+      } else if (part.name.ends_with(" Left")) {
+        assembly.parts.push_back({
+            "Left Panel " + std::to_string(panelIndex + 1) + " - " +
+                part.name,
+            part.shape, part.material, false});
+      } else {
+        assembly.parts.push_back({"Center - " + part.name,
+            part.shape, part.material, false});
+      }
+    }
   }
   return assembly;
 }

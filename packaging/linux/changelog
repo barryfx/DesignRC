@@ -1,3 +1,9 @@
+designrc (1.0) noble; urgency=medium
+
+  * DesignRC 1.0 release.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Mon, 27 Jul 2026 12:00:00 -0400
+
 designrc (0.9.0) noble; urgency=medium
 
   * Initial Ubuntu 24.04 x86-64 package.

@@ -6,7 +6,7 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $releaseDir = Join-Path $projectRoot 'build\release\Release'
 $sourceDir = Join-Path $releaseDir 'source'
-$sourceArchive = Join-Path $sourceDir 'DesignRC-0.9.0-source.zip'
+$sourceArchive = Join-Path $sourceDir 'DesignRC-1.0-source.zip'
 $iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 
 if (-not (Test-Path -LiteralPath $iscc)) {

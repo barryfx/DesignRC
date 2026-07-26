@@ -2,6 +2,7 @@
 
 #include "domain/WingDesign.h"
 #include "domain/WingStructure.h"
+#include "geometry/OcctRibBuilder.h"
 #include "gui/WingPanelEditor.h"
 
 #include <QMainWindow>
@@ -23,6 +24,9 @@ namespace designrc::gui {
 
 class OcctViewport;
 class PlanViewport;
+enum class CameraView;
+
+int runJoinerBackendRegression();
 
 class MainWindow final : public QMainWindow {
 public:
@@ -33,11 +37,14 @@ protected:
 
 private:
   void buildMenus();
+  void setCameraView(CameraView cameraView);
   void rebuildPanelTabs(const std::vector<WingPanelData>& panels);
   void changePanelCount(int count);
+  void updateMetrics();
   void markPreviewPending();
   void generatePlan();
   void exportPlanPdf();
+  void exportStep();
   void invalidatePlan();
   void regeneratePreview();
   void regeneratePreviewSynchronous();
@@ -69,6 +76,8 @@ private:
   QPushButton* updateButton_{};
   QPushButton* generatePlanButton_{};
   QPushButton* exportPlanButton_{};
+  QPushButton* exportPartsButton_{};
+  QPushButton* exportStepButton_{};
   QPushButton* cancelUpdateButton_{};
   QProgressBar* updateProgress_{};
   QThread* updateThread_{};
@@ -80,8 +89,10 @@ private:
   std::vector<double> currentRibThicknesses_;
   std::vector<WingPanelData> currentPlanParameters_;
   std::vector<double> currentDihedralAngles_;
+  geometry::MaterialShapeSet currentMaterialShapes_;
   QString currentFile_;
   DisplayUnit globalUnit_{DisplayUnit::Millimeters};
+  std::size_t workerThreadCount_{1};
   bool changingPanelCount_{false};
   bool projectModified_{false};
   std::uint64_t designRevision_{0};

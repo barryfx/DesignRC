@@ -1,0 +1,32 @@
+	Spar Parameters GUI
+
+(design legend:  <> = default value,  () = comment, o = radio button, x = check box)
+( (if...) display only if true)
+
+--------------- Start Spar GUI Panel ----------------
+    Add Spar (Button)        Delete Spar (Button)  (Add adds a new Spar the bottom of the list.  Delete removes checked spars)
+
+x Spar 1     (only 1 spar is initially created by default)
+     Chord Location <25%> (spinner inc/dec by 1%) (Range 0%-90%)
+     Vertical Location o Top  o Bottom  <o> Mid
+     Material  
+            o Wood  <o> CF  o Aluminum
+               (if Wood) Height <3/16 in or 5mm> (spinner)  Width <3/8in or 9mm> (spinner)
+               (if CF or Aluminum) Type <o> Tube  o Rod  o Strip
+                    (if Tube) OD <6mm>  ID <5mm>
+                    (if Rod) OD <6mm>
+                    (if Strip) Width <6mm>  Thickness <1mm>
+
+x Spar 2
+     (Same options as Spar 1)
+
+...
+
+x Spar N
+     (Same options as Spar 1)
+
+------------------------------ (Divider)
+
+x  Shear Webs (display if 2 Wood spars Created with vertical locations top and bottom at same Chord Location)
+     (if Checked) Thickness <1/8in or 3mm> (spinner)
+--------------- End Spar GUI Panel ----------------

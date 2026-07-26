@@ -19,6 +19,11 @@
 namespace designrc::gui {
 namespace {
 
+constexpr double kAnnotationTextHeightMm = 2.625;
+constexpr double kGeneralTextHeightMm = 2.625;
+constexpr double kRibLabelTextHeightMm = 2.25;
+constexpr double kTitleBlockTextHeightMm = 3.5;
+
 constexpr QColor kOutlineColor{62, 52, 45};
 constexpr QColor kRibColor{112, 84, 62};
 constexpr QColor kWoodFill{212, 189, 165, 105};
@@ -166,7 +171,8 @@ void addArrowHead(TechnicalDrawingDocument& document, const QPointF& tip,
 
 void addLeader(TechnicalDrawingDocument& document, const QPointF& textPosition,
                const QPointF& target, const QString& text) {
-  const TechnicalDrawingText label{textPosition, text, 3.5, 0.0};
+  const TechnicalDrawingText label{
+      textPosition, text, kAnnotationTextHeightMm, 0.0};
   const QRectF textBounds = drawingTextBounds(label);
   const bool targetBelowText = target.y() >= textBounds.center().y();
   const QPointF start{textBounds.center().x(),
@@ -186,7 +192,8 @@ void addDimension(TechnicalDrawingDocument& document, const QPointF& first,
   addPolyline(document, {first, second}, kOutlineColor, 0.25);
   addArrowHead(document, first, second);
   addArrowHead(document, second, first);
-  document.texts.push_back({textPosition, text, 3.5, textRotation});
+  document.texts.push_back({
+      textPosition, text, kGeneralTextHeightMm, textRotation});
 }
 
 std::pair<double, double> profileDimensions(const std::vector<domain::Point2>& profile) {
@@ -251,6 +258,16 @@ double panelSpanAtRibFace(const PanelStations& panel, const std::size_t ribIndex
   const double projectedOffset = materialOffset *
       (std::cos(plane) * dy + std::sin(plane) * dz) / length;
   return panel.span[ribIndex] + projectedOffset;
+}
+
+double flattenedSpanForRib(const PanelStations& panel,
+                           const domain::RibDefinition& rib) {
+  if (panel.wing == nullptr || panel.wing->ribs.empty())
+    return 0.0;
+  const auto& root = panel.wing->ribs.front().rib;
+  return panel.span.front() +
+      std::hypot(rib.spanPosition - root.spanPosition,
+                 rib.dihedralHeight - root.dihedralHeight);
 }
 
 PlanLayout calculateLayout(const std::vector<domain::StructuredWing>& wings) {
@@ -481,6 +498,119 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
                 QColor{212, 189, 165, 65});
   }
 
+  for (const auto& spoiler : wing.spoilers) {
+    const auto drawPart = [&](const std::vector<std::array<domain::Point2, 4>>& profiles,
+                              const bool endGap) {
+      if (profiles.size() < 2) return;
+      std::vector<BandStation> stations;
+      stations.reserve(profiles.size());
+      for (std::size_t local = 0; local < profiles.size(); ++local) {
+        const std::size_t ribIndex = spoiler.startRibIndex + local;
+        const std::vector<domain::Point2> outline(
+            profiles[local].begin(), profiles[local].end());
+        const auto [low, high] = profileBounds(
+            outline, wing.ribs[ribIndex].rib.leadingEdgeOffset);
+        double span = panel.span[ribIndex];
+        if (local == 0) {
+          const double startFactor = wing.ribs[ribIndex].rib.ribThicknessStartFactor +
+              (spoiler.spansCenter ? 0.0 : 1.0);
+          span = panelSpanAtRibFace(
+              panel, ribIndex, startFactor * ribThickness);
+          if (!spoiler.spansCenter && endGap) span += spoiler.gap;
+        }
+        else if (local + 1 == profiles.size())
+          span = panelSpanAtRibFace(panel, ribIndex,
+              wing.ribs[ribIndex].rib.ribThicknessStartFactor * ribThickness) -
+              (endGap ? spoiler.gap : 0.0);
+        stations.push_back({span, low, high});
+      }
+      addStationBand(stations, kWoodFill);
+    };
+    drawPart(spoiler.forwardRailProfiles, false);
+    drawPart(spoiler.spoilerProfiles, true);
+    if (!spoiler.lighteningHoleOutlines.empty() &&
+        spoiler.spoilerProfiles.size() >= 2 &&
+        spoiler.dxfOutline.size() >= 2) {
+      const auto profileLow = [&](const std::size_t local) {
+        const std::size_t ribIndex = spoiler.startRibIndex + local;
+        const std::vector<domain::Point2> outline(
+            spoiler.spoilerProfiles[local].begin(),
+            spoiler.spoilerProfiles[local].end());
+        return profileBounds(
+            outline, wing.ribs[ribIndex].rib.leadingEdgeOffset).first;
+      };
+      const auto& startRib = wing.ribs[spoiler.startRibIndex].rib;
+      const auto& endRib = wing.ribs[spoiler.endRibIndex].rib;
+      double startSpan = panelSpanAtRibFace(
+          panel, spoiler.startRibIndex,
+          (startRib.ribThicknessStartFactor +
+           (spoiler.spansCenter ? 0.0 : 1.0)) * ribThickness);
+      if (!spoiler.spansCenter) startSpan += spoiler.gap;
+      const double endSpan = panelSpanAtRibFace(
+          panel, spoiler.endRibIndex,
+          endRib.ribThicknessStartFactor * ribThickness) - spoiler.gap;
+      const double startLow = profileLow(0);
+      const double endLow =
+          profileLow(spoiler.spoilerProfiles.size() - 1);
+      const double exportedSpan =
+          spoiler.dxfOutline[1].x - spoiler.dxfOutline[0].x;
+      const double halfExportedSpan = exportedSpan * 0.5;
+      for (const auto& hole : spoiler.lighteningHoleOutlines) {
+        if (hole.empty()) continue;
+        const auto [minimumX, maximumX] = std::minmax_element(
+            hole.begin(), hole.end(),
+            [](const domain::Point2 left, const domain::Point2 right) {
+              return left.x < right.x;
+            });
+        if (spoiler.spansCenter) {
+          if (mirrored && maximumX->x > halfExportedSpan + 1.0e-8)
+            continue;
+          if (!mirrored && minimumX->x < halfExportedSpan - 1.0e-8)
+            continue;
+        }
+        std::vector<QPointF> mapped;
+        mapped.reserve(hole.size());
+        for (const auto point : hole) {
+          double along = exportedSpan > 1.0e-8
+              ? point.x / exportedSpan : 0.0;
+          if (spoiler.spansCenter) {
+            along = halfExportedSpan > 1.0e-8
+                ? (mirrored ? (halfExportedSpan - point.x)
+                            : (point.x - halfExportedSpan)) /
+                      halfExportedSpan
+                : 0.0;
+          }
+          along = std::clamp(along, 0.0, 1.0);
+          const double span =
+              startSpan + along * (endSpan - startSpan);
+          const double chord =
+              startLow + along * (endLow - startLow) + point.y;
+          mapped.push_back(
+              drawingPoint(layout, mirrored, row, span, chord));
+        }
+        addPolyline(document, mapped, kOutlineColor, 0.20, true,
+                    QColor{255, 255, 255, 255});
+      }
+    }
+    drawPart(spoiler.aftRailProfiles, false);
+    for (std::size_t support = 0; support < spoiler.supportProfiles.size(); ++support) {
+      if (spoiler.spansCenter && support == 0) continue;
+      const std::size_t ribIndex = support == 0 ? spoiler.startRibIndex : spoiler.endRibIndex;
+      const std::vector<domain::Point2> outline(
+          spoiler.supportProfiles[support].begin(),
+          spoiler.supportProfiles[support].end());
+      const auto [low, high] = profileBounds(
+          outline, wing.ribs[ribIndex].rib.leadingEdgeOffset);
+      const auto& rib = wing.ribs[ribIndex].rib;
+      const double ribFace = panelSpanAtRibFace(panel, ribIndex,
+          (rib.ribThicknessStartFactor + (support == 0 ? 1.0 : 0.0)) *
+              ribThickness);
+      const double bayEnd = ribFace + (support == 0 ? 1.0 : -1.0) *
+          spoiler.frameRailWidth;
+      addStationBand({{ribFace, low, high}, {bayEnd, low, high}}, kWoodFill);
+    }
+  }
+
   for (const auto& web : wing.shearWebs) {
     if (web.bayIndex == 0 || web.bayIndex >= ribCount ||
         web.stationCorners.size() != 4)
@@ -672,6 +802,34 @@ void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLay
                      rib.leadingEdgeOffset + maximumX)},
         kRibColor, 0.20, true, kWoodFill);
   }
+  for (const auto& structured : wing.riblets) {
+    const auto& rib = structured.rib;
+    double minimumX = 0.0;
+    double maximumX = rib.chord;
+    if (!structured.outerOutline.empty()) {
+      minimumX = std::numeric_limits<double>::max();
+      maximumX = std::numeric_limits<double>::lowest();
+      for (const auto& point : structured.outerOutline) {
+        minimumX = std::min(minimumX, point.x);
+        maximumX = std::max(maximumX, point.x);
+      }
+    }
+    const double station = flattenedSpanForRib(panel, rib);
+    const double startSpan =
+        station + rib.ribThicknessStartFactor * ribThickness;
+    const double endSpan =
+        station + (rib.ribThicknessStartFactor + 1.0) * ribThickness;
+    addPolyline(document, {
+        drawingPoint(layout, mirrored, row, startSpan,
+                     rib.leadingEdgeOffset + minimumX),
+        drawingPoint(layout, mirrored, row, endSpan,
+                     rib.leadingEdgeOffset + minimumX),
+        drawingPoint(layout, mirrored, row, endSpan,
+                     rib.leadingEdgeOffset + maximumX),
+        drawingPoint(layout, mirrored, row, startSpan,
+                     rib.leadingEdgeOffset + maximumX)},
+        kRibColor, 0.20, true, kWoodFill);
+  }
   const auto& root = wing.ribs.front().rib;
   const auto& tip = wing.ribs.back().rib;
   addPolyline(document, {
@@ -727,6 +885,10 @@ double addRootRibSection(TechnicalDrawingDocument& document,
   for (const auto& cutout : root.booleanCutouts)
     addMappedProfile(cutout, cutawayFill);
   for (const auto& hole : root.booleanHoles) addMappedProfile(hole, cutawayFill);
+  for (const auto& hole : root.positiveHalfBooleanHoles)
+    addMappedProfile(hole, cutawayFill);
+  for (const auto& opening : root.internalCutouts)
+    addMappedProfile(opening, cutawayFill);
 
   const auto rectangleProfile = [](const domain::Point2 center,
                                    const double width, const double height) {
@@ -808,14 +970,16 @@ double addRootRibSection(TechnicalDrawingDocument& document,
     }
   }
 
-  const QString ribName = root.name.empty()
-      ? QString{"R1"} : QString::fromStdString(root.name);
+  const QString ribName = root.positiveHalfName.empty()
+      ? (root.name.empty() ? QString{"R1"} : QString::fromStdString(root.name))
+      : QString::fromStdString(root.positiveHalfName);
   const QString label = ribName + " CUTAWAY";
   document.texts.push_back({
       {sectionLeft, layout.upperRow + root.rib.leadingEdgeOffset -
                         layout.chordMinimum - 18.0},
-      label, 3.5, 0.0});
-  return std::max(mappedRight, sectionLeft + drawingTextWidth(label, 3.5));
+      label, kGeneralTextHeightMm, 0.0});
+  return std::max(mappedRight,
+      sectionLeft + drawingTextWidth(label, kGeneralTextHeightMm));
 }
 
 struct CalloutPlacer {
@@ -823,6 +987,7 @@ struct CalloutPlacer {
     QPointF target;
     QString text;
     bool forceBelow{};
+    bool forceAbove{};
   };
 
   TechnicalDrawingDocument& document;
@@ -834,8 +999,8 @@ struct CalloutPlacer {
   double rightMost{};
 
   void add(const QPointF& lowerWingTarget, const QString& text,
-           const bool forceBelow = false) {
-    pending.push_back({lowerWingTarget, text, forceBelow});
+           const bool forceBelow = false, const bool forceAbove = false) {
+    pending.push_back({lowerWingTarget, text, forceBelow, forceAbove});
   }
 
   void finish() {
@@ -847,6 +1012,8 @@ struct CalloutPlacer {
     for (std::size_t index = 0; index < pending.size(); ++index) {
       if (pending[index].forceBelow)
         lowerIndices.push_back(index);
+      else if (pending[index].forceAbove)
+        upperIndices.push_back(index);
       else
         (alternatingIndex++ % 2 == 0 ? upperIndices : lowerIndices).push_back(index);
     }
@@ -864,7 +1031,8 @@ struct CalloutPlacer {
       widths.reserve(indices.size());
       double totalWidth = 0.0;
       for (const auto index : indices) {
-        widths.push_back(drawingTextWidth(pending[index].text, 3.5));
+        widths.push_back(drawingTextWidth(
+            pending[index].text, kAnnotationTextHeightMm));
         totalWidth += widths.back();
       }
       constexpr double minimumGap = 24.0;
@@ -954,7 +1122,8 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
     addDimension(document, {firstSpan, panelDimensionY},
         {lastSpan, panelDimensionY},
         {firstSpan, firstLeading}, {lastSpan, lastLeading},
-        {(firstSpan + lastSpan - drawingTextWidth(label, 3.5)) * 0.5,
+        {(firstSpan + lastSpan -
+             drawingTextWidth(label, kGeneralTextHeightMm)) * 0.5,
          panelDimensionY + 4.0}, label);
   }
 
@@ -967,9 +1136,6 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
         ? ribThicknesses[panelIndex] : 0.0;
     const WingPanelData* parameters = panelIndex < panelParameters.size()
         ? &panelParameters[panelIndex] : nullptr;
-    const QString panelSuffix = layout.panels.size() > 1
-        ? QString{" (Panel %1)"}.arg(panelIndex + 1) : QString{};
-
     if (parameters != nullptr && !wing.ribs.empty()) {
       const QChar degree{0x00b0};
       const QString dihedralText = QString{"DIHEDRAL %1: %2%3"}
@@ -980,9 +1146,10 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       const double panelRootTrailing =
           panelRootRib.leadingEdgeOffset + panelRootRib.chord;
       document.texts.push_back({
-          {panel.span.front() - drawingTextWidth(dihedralText, 3.5) * 0.5,
+          {panel.span.front() -
+               drawingTextWidth(dihedralText, kGeneralTextHeightMm) * 0.5,
            layout.lowerRow + panelRootTrailing - layout.chordMinimum + 9.0},
-          dihedralText, 3.5, 0.0});
+          dihedralText, kGeneralTextHeightMm, 0.0});
 
       const QString twistText = QString{"TIP TWIST %1: %2%3"}
           .arg(panelIndex + 1)
@@ -990,10 +1157,11 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
           .arg(degree);
       const auto& panelTipRib = wing.ribs.back().rib;
       document.texts.push_back({
-          {panel.span.back() - drawingTextWidth(twistText, 3.5) * 0.5,
+          {panel.span.back() -
+               drawingTextWidth(twistText, kGeneralTextHeightMm) * 0.5,
            layout.lowerRow + panelTipRib.leadingEdgeOffset -
                layout.chordMinimum - 20.0},
-          twistText, 3.5, 0.0});
+          twistText, kGeneralTextHeightMm, 0.0});
     }
 
     for (std::size_t ribIndex = 0; ribIndex < wing.ribs.size(); ++ribIndex) {
@@ -1005,15 +1173,46 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       double labelOffset = ribThickness * 0.65;
       if (isPanelTipRib) {
         const QString ribName = QString::fromStdString(structured.name);
-        const TechnicalDrawingText sample{{0.0, 0.0}, ribName, 3.0, -90.0};
+        const TechnicalDrawingText sample{
+            {0.0, 0.0}, ribName, kRibLabelTextHeightMm, -90.0};
         constexpr double labelGap = 2.0;
         const double ribInnerEdge =
             structured.rib.ribThicknessStartFactor * ribThickness;
         labelOffset = ribInnerEdge - drawingTextBounds(sample).width() - labelGap;
       }
+      const QString positiveName = QString::fromStdString(
+          structured.positiveHalfName.empty()
+              ? structured.name : structured.positiveHalfName);
       document.texts.push_back({drawingPoint(layout, false, layout.lowerRow,
           panel.span[ribIndex] + labelOffset, chordPosition),
-          QString::fromStdString(structured.name), 3.0, -90.0});
+          positiveName, kRibLabelTextHeightMm, -90.0});
+      if (!structured.negativeHalfName.empty()) {
+        document.texts.push_back({drawingPoint(layout, true, layout.upperRow,
+            panel.span[ribIndex] + labelOffset, chordPosition),
+            QString::fromStdString(structured.negativeHalfName),
+            kRibLabelTextHeightMm, 90.0});
+      }
+    }
+    for (const auto& riblet : wing.riblets) {
+      if (riblet.name.empty()) continue;
+      double minimumX = 0.0;
+      double maximumX = riblet.rib.chord;
+      if (!riblet.outerOutline.empty()) {
+        minimumX = std::numeric_limits<double>::max();
+        maximumX = std::numeric_limits<double>::lowest();
+        for (const auto point : riblet.outerOutline) {
+          minimumX = std::min(minimumX, point.x);
+          maximumX = std::max(maximumX, point.x);
+        }
+      }
+      const double station = flattenedSpanForRib(panel, riblet.rib);
+      document.texts.push_back({drawingPoint(
+          layout, false, layout.lowerRow,
+          station + ribThickness * 0.15,
+          riblet.rib.leadingEdgeOffset +
+              0.5 * (minimumX + maximumX)),
+          QString::fromStdString(riblet.name),
+          kRibLabelTextHeightMm, -90.0});
     }
     if (!wing.ribs.empty() && ribThickness > 0.0) {
       const std::size_t middle = wing.ribs.size() / 2;
@@ -1023,18 +1222,81 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       callouts.add(
           drawingPoint(layout, false, layout.lowerRow, panel.span[middle],
                        rib.leadingEdgeOffset + rib.chord * 0.56),
-          QString{"Ribs %1-%2%3\n%4"}
-              .arg(firstName, lastName, panelSuffix,
+          QString{"Ribs %1-%2\n%3"}
+              .arg(firstName, lastName,
                    formatParameterLength(
                        ribThickness, parameters, "ribThickness", useInches)));
     }
 
+    for (const auto& spoiler : wing.spoilers) {
+      if (spoiler.spoilerProfiles.empty()) continue;
+      const std::size_t local = spoiler.spoilerProfiles.size() / 2;
+      const std::size_t ribIndex = spoiler.startRibIndex + local;
+      const auto& profile = spoiler.spoilerProfiles[local];
+      const std::size_t nextRibIndex = std::min(ribIndex + 1, spoiler.endRibIndex);
+      const double targetSpan = 0.5 * (panel.span[ribIndex] + panel.span[nextRibIndex]);
+      const double spoilerChord = wing.ribs[ribIndex].rib.leadingEdgeOffset +
+          0.5 * (profile[0].x + profile[1].x);
+      const auto& frameProfile = spoiler.forwardRailProfiles[local];
+      const double frameChord = wing.ribs[ribIndex].rib.leadingEdgeOffset +
+          0.5 * (frameProfile[0].x + frameProfile[1].x);
+      const QPointF spoilerTarget = drawingPoint(
+          layout, false, layout.lowerRow, targetSpan, spoilerChord);
+      const QPointF frameTarget = drawingPoint(
+          layout, false, layout.lowerRow, targetSpan, frameChord);
+      const double span = spoiler.dxfOutline.size() >= 2
+          ? std::abs(spoiler.dxfOutline[1].x - spoiler.dxfOutline[0].x) : 0.0;
+      callouts.add(spoilerTarget, "Spoiler\n" +
+          formatLength(span, useInches) + " x " +
+          formatParameterLength(spoiler.width, parameters, "spoilerWidth", useInches) +
+          " x " + formatParameterLength(spoiler.thickness, parameters,
+                                          "spoilerThickness", useInches));
+      callouts.add(frameTarget, "Frame Rails\n" +
+          formatLength(span + 2.0 * spoiler.gap, useInches) + " x " +
+          formatParameterLength(spoiler.frameRailWidth, parameters,
+                                "spoilerFrameRailWidth", useInches) + " x " +
+          formatParameterLength(spoiler.thickness, parameters,
+                                "spoilerThickness", useInches));
+      const double assemblyLength = spoiler.width + 2.0 * spoiler.frameRailWidth +
+          2.0 * spoiler.gap;
+      const std::size_t supportRib = spoiler.endRibIndex;
+      const auto& supportProfile = spoiler.supportProfiles.back();
+      const double supportChord = wing.ribs[supportRib].rib.leadingEdgeOffset +
+          0.5 * (supportProfile[0].x + supportProfile[1].x);
+      const auto& supportRibData = wing.ribs[supportRib].rib;
+      const double supportFace = panelSpanAtRibFace(panel, supportRib,
+          supportRibData.ribThicknessStartFactor * ribThickness);
+      const QPointF supportTarget = drawingPoint(layout, false, layout.lowerRow,
+          supportFace - spoiler.frameRailWidth * 0.5, supportChord);
+      callouts.add(supportTarget, "Support Rails\n" +
+          formatLength(assemblyLength, useInches) + " x " +
+          formatParameterLength(spoiler.frameRailWidth, parameters,
+                                "spoilerFrameRailWidth", useInches) + " x " +
+          formatParameterLength(spoiler.supportRailHeight, parameters,
+                                "spoilerSupportRailHeight", useInches));
+    }
+
     const auto memberTarget = [&](const domain::SpanMember& member) {
-      const std::size_t station = std::min(member.centers.size(), wing.ribs.size()) / 2;
+      const std::size_t count =
+          std::min(member.centers.size(), wing.ribs.size());
+      const auto lowerName = QString::fromStdString(member.name).toLower();
+      if (lowerName.contains("spar") && count >= 2) {
+        const std::size_t first = std::min(count / 2, count - 2);
+        const std::size_t second = first + 1;
+        const double chordFirst = wing.ribs[first].rib.leadingEdgeOffset +
+            member.centers[first].x;
+        const double chordSecond = wing.ribs[second].rib.leadingEdgeOffset +
+            member.centers[second].x;
+        return drawingPoint(layout, false, layout.lowerRow,
+            0.5 * (panel.span[first] + panel.span[second]),
+            0.5 * (chordFirst + chordSecond));
+      }
+      const std::size_t station = count / 2;
       const std::size_t index = std::min(station, wing.ribs.size() - 1);
       const double chord = wing.ribs[index].rib.leadingEdgeOffset +
           member.centers[index].x;
-      return drawingPoint(layout, false, layout.lowerRow, panel.span[index], chord);
+      return drawingPoint(
+          layout, false, layout.lowerRow, panel.span[index], chord);
     };
     const auto findMember = [&](const std::string& name) -> const domain::SpanMember* {
       const auto found = std::find_if(wing.members.begin(), wing.members.end(),
@@ -1062,7 +1324,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
                 "bottomSparHeight", parameters, useInches);
       }
       callouts.add(memberTarget(reference),
-          "Top and Bottom Spars" + panelSuffix + "\n" + dimensions);
+          "Top and Bottom Spars\n" + dimensions);
     }
 
     const auto* topRear = findMember("Top 60% rear spar");
@@ -1070,7 +1332,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
     if (topRear != nullptr || bottomRear != nullptr) {
       const auto& reference = topRear != nullptr ? *topRear : *bottomRear;
       callouts.add(memberTarget(reference),
-          "Top and Bottom\n60% Rear Spars" + panelSuffix + "\n" +
+          "Top and Bottom\n60% Rear Spars\n" +
               formatParameterSize(reference.width,
                   topRear != nullptr ? "topRearSparWidth" : "bottomRearSparWidth",
                   reference.height,
@@ -1113,7 +1375,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
             : formatParameterSize(member.width, widthKey, member.height,
                                   heightKey, parameters, useInches);
       }
-      QString memberLabel = QString::fromStdString(member.name) + panelSuffix;
+      QString memberLabel = QString::fromStdString(member.name);
       if (isLeadingEdge) {
         memberLabel += member.kind == domain::SpanMemberKind::Tube
             ? "\nCF Tube" : "\nCF Rod";
@@ -1170,8 +1432,8 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       }
       const QPointF target = drawingPoint(
           layout, false, layout.lowerRow, targetSpan, targetChord);
-      const QString label = QString::fromStdString(member.name) + panelSuffix +
-          "\n" + formatParameterSize(dimensions.first,
+      const QString label = QString::fromStdString(member.name) + "\n" +
+          formatParameterSize(dimensions.first,
               isTrailingEdge ? "trailingEdgeWidth" : "leadingEdgeWidth",
               dimensions.second,
               isTrailingEdge ? "trailingEdgeHeight" : "leadingEdgeHeight",
@@ -1205,7 +1467,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       callouts.add(
           drawingPoint(layout, false, layout.lowerRow, panel.span[ribIndex],
                        (bounds.first + bounds.second) * 0.5),
-          QString::fromStdString(control.name) + panelSuffix + "\n" +
+          QString::fromStdString(control.name) + "\n" +
               formatParameterSize(dimensions.first,
                   isAileron ? "aileronWidth" : "flapWidth",
                   dimensions.second,
@@ -1251,7 +1513,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       callouts.add(
           drawingPoint(layout, false, layout.lowerRow, panel.span[ribIndex],
                        (bounds.first + bounds.second) * 0.5),
-          QString::fromStdString(sheeting.name) + panelSuffix + "\n" +
+          QString::fromStdString(sheeting.name) + "\n" +
               sheetingDimensions);
     }
 
@@ -1265,9 +1527,9 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       callouts.add(
           drawingPoint(layout, false, layout.lowerRow,
                        (panel.span[root] + panel.span[tip]) * 0.5, chord),
-          QString{"%1-%2%3\n%4"}
+          QString{"%1-%2\n%3"}
               .arg(QString::fromStdString(wing.shearWebs.front().name),
-                   QString::fromStdString(wing.shearWebs.back().name), panelSuffix,
+                   QString::fromStdString(wing.shearWebs.back().name),
                    formatParameterLength(
                        web.thickness, parameters, "shearWebWidth", useInches)));
     }
@@ -1311,15 +1573,11 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
             (firstSpan + lastSpan) * 0.5, (firstChord + lastChord) * 0.5);
         dimensions = formatParameterLength(
             joiner.outerDiameter, parameters, "shearWebWidth", useInches);
-      } else if (!joiner.centers.empty()) {
-        const std::size_t count = std::min(joiner.centers.size(), wing.ribs.size());
-        const std::size_t last = count - 1;
-        double firstSpan = panel.span.front();
-        double firstChord = wing.ribs.front().rib.leadingEdgeOffset +
-            joiner.centers.front().x;
-        double lastSpan = panel.span[last];
-        double lastChord = wing.ribs[last].rib.leadingEdgeOffset +
-            joiner.centers[last].x;
+      } else if (joiner.hasExplicitEndpoints || !joiner.centers.empty()) {
+        double firstSpan;
+        double firstChord;
+        double lastSpan;
+        double lastChord;
         if (joiner.hasExplicitEndpoints) {
           const auto& innerPanel = panelIndex == 0
               ? panel : layout.panels[panelIndex - 1];
@@ -1328,6 +1586,16 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
           firstChord = joiner.innerEndpoint.x;
           lastSpan = flattenedSpanForModelPoint(panel, joiner.outerEndpoint);
           lastChord = joiner.outerEndpoint.x;
+        } else {
+          const std::size_t count = std::min(
+              joiner.centers.size(), wing.ribs.size());
+          const std::size_t last = count - 1;
+          firstSpan = panel.span.front();
+          firstChord = wing.ribs.front().rib.leadingEdgeOffset +
+              joiner.centers.front().x;
+          lastSpan = panel.span[last];
+          lastChord = wing.ribs[last].rib.leadingEdgeOffset +
+              joiner.centers[last].x;
         }
         target = drawingPoint(layout, false, layout.lowerRow,
             (firstSpan + lastSpan) * 0.5, (firstChord + lastChord) * 0.5);
@@ -1344,23 +1612,29 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
       } else {
         continue;
       }
-      QString joinerLabel = QString::fromStdString(joiner.name);
+      QString joinerLabel = QString::fromStdString(
+          joiner.annotationName.empty() ? joiner.name : joiner.annotationName);
       const bool hasPartNumber = joiner.kind == domain::SpanMemberKind::Rectangular &&
           joinerLabel.size() > 1 && joinerLabel.front() == QChar{'J'} &&
           std::all_of(joinerLabel.cbegin() + 1, joinerLabel.cend(),
                       [](const QChar character) { return character.isDigit(); });
       if (hasPartNumber)
         joinerLabel += " joiner";
-      else if (joinerLabel.compare("Aluminum tube joiner behind mid spar",
-                              Qt::CaseInsensitive) == 0)
-        joinerLabel = "Aluminum tube joiner";
-      else if (joinerLabel.compare("CF tube joiner behind mid spar",
-                                   Qt::CaseInsensitive) == 0)
-        joinerLabel = "CF tube\njoiner behind\nmid spar";
-      else if (joinerLabel.compare("CF rod joiner behind mid spar",
-                                   Qt::CaseInsensitive) == 0)
-        joinerLabel = "CF rod\njoiner behind\nmid spar";
-      callouts.add(target, joinerLabel + panelSuffix + "\n" + dimensions);
+      const int behindLocation = joinerLabel.indexOf(
+          " behind ", 0, Qt::CaseInsensitive);
+      const int chordLocation = joinerLabel.indexOf(
+          " at ", 0, Qt::CaseInsensitive);
+      const int location = behindLocation >= 0 ? behindLocation : chordLocation;
+      if (location >= 0) joinerLabel.truncate(location);
+      const QString annotation = joinerLabel + "\n" + dimensions;
+      if (joiner.annotateOnBothPlanHalves) {
+        callouts.add(target, annotation, false, true);
+        callouts.add(target, annotation, true, false);
+      } else if (joiner.annotateOnMirroredPlanHalf) {
+        callouts.add(target, annotation, true, false);
+      } else {
+        callouts.add(target, annotation);
+      }
     }
   }
   callouts.finish();
@@ -1463,13 +1737,13 @@ TechnicalDrawingDocument buildFlattenedWingPlan(
       QString{"WING AREA: %1 %2    ASPECT RATIO: %3"}
           .arg(displayedArea, 0, 'f', 2).arg(areaUnit)
           .arg(aspectRatio, 0, 'f', 2),
-      3.5, 0.0});
+      kGeneralTextHeightMm, 0.0});
 
   constexpr double titleRowHeight = 16.0;
   constexpr double titleBlockHeight = titleRowHeight * 3.0;
   const QString projectEntry = "PROJECT: " + projectFileName;
   QFont titleFont{"Arial"};
-  titleFont.setPointSizeF(3.5 * 72.0 / 25.4);
+  titleFont.setPointSizeF(kTitleBlockTextHeightMm * 72.0 / 25.4);
   const QFontMetricsF titleMetrics{titleFont};
   const double requestedTitleWidth = std::max(
       125.0, titleMetrics.horizontalAdvance(projectEntry) + 8.0);
@@ -1487,12 +1761,12 @@ TechnicalDrawingDocument buildFlattenedWingPlan(
   }
   const double textX = titleLeft + 3.0;
   document.texts.push_back({{textX, titleTop + 2.0},
-                            projectEntry, 3.5, 0.0});
+                            projectEntry, kTitleBlockTextHeightMm, 0.0});
   document.texts.push_back({{textX, titleTop + titleRowHeight + 2.0},
-                            "SCALE: 1:1", 3.5, 0.0});
+                            "SCALE: 1:1", kTitleBlockTextHeightMm, 0.0});
   document.texts.push_back({{textX, titleTop + titleRowHeight * 2.0 + 2.0},
                             "DATE: " + QDate::currentDate().toString("yyyy-MM-dd"),
-                            3.5, 0.0});
+                            kTitleBlockTextHeightMm, 0.0});
   return document;
 }
 

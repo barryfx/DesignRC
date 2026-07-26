@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 0.9.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 
@@ -16,7 +16,48 @@ if(NOT DEFINED OpenCASCADE_DIR)
 endif()
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets)
-find_package(OpenCASCADE CONFIG REQUIRED)
+find_package(OpenCASCADE CONFIG REQUIRED COMPONENTS
+  FoundationClasses
+  ModelingData
+  ModelingAlgorithms
+  Visualization
+  ApplicationFramework
+  DataExchange
+)
+
+set(DESIGNRC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${DESIGNRC_GENERATED_INCLUDE_DIR}")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/resources/dxf/r2000_template.dxf"
+     DESIGNRC_R2000_TEMPLATE_CONTENT)
+set(DESIGNRC_R2000_HEADER
+    "${DESIGNRC_GENERATED_INCLUDE_DIR}/R2000Template.h")
+file(WRITE "${DESIGNRC_R2000_HEADER}"
+  "#pragma once\n\n#include <string_view>\n\n"
+  "namespace designrc::domain::detail {\n"
+  "inline constexpr char r2000TemplateData[] =\n")
+string(LENGTH "${DESIGNRC_R2000_TEMPLATE_CONTENT}"
+       DESIGNRC_R2000_TEMPLATE_LENGTH)
+set(DESIGNRC_R2000_TEMPLATE_OFFSET 0)
+while(DESIGNRC_R2000_TEMPLATE_OFFSET LESS DESIGNRC_R2000_TEMPLATE_LENGTH)
+  math(EXPR DESIGNRC_R2000_REMAINING
+       "${DESIGNRC_R2000_TEMPLATE_LENGTH}-${DESIGNRC_R2000_TEMPLATE_OFFSET}")
+  if(DESIGNRC_R2000_REMAINING GREATER 12000)
+    set(DESIGNRC_R2000_CHUNK_LENGTH 12000)
+  else()
+    set(DESIGNRC_R2000_CHUNK_LENGTH "${DESIGNRC_R2000_REMAINING}")
+  endif()
+  string(SUBSTRING "${DESIGNRC_R2000_TEMPLATE_CONTENT}"
+         "${DESIGNRC_R2000_TEMPLATE_OFFSET}"
+         "${DESIGNRC_R2000_CHUNK_LENGTH}" DESIGNRC_R2000_TEMPLATE_CHUNK)
+  file(APPEND "${DESIGNRC_R2000_HEADER}"
+       "R\"DESIGNRC_DXF(${DESIGNRC_R2000_TEMPLATE_CHUNK})DESIGNRC_DXF\"\n")
+  math(EXPR DESIGNRC_R2000_TEMPLATE_OFFSET
+       "${DESIGNRC_R2000_TEMPLATE_OFFSET}+${DESIGNRC_R2000_CHUNK_LENGTH}")
+endwhile()
+file(APPEND "${DESIGNRC_R2000_HEADER}"
+  ";\ninline constexpr std::string_view r2000Template{r2000TemplateData, "
+  "sizeof(r2000TemplateData) - 1};\n"
+  "} // namespace designrc::domain::detail\n")
 
 add_library(designrc_domain
   src/domain/AirfoilProfile.cpp
@@ -29,13 +70,19 @@ add_library(designrc_domain
   src/domain/WingStructure.cpp
   src/domain/WingStructure.h
 )
-target_include_directories(designrc_domain PUBLIC src)
+target_include_directories(designrc_domain
+  PUBLIC src
+  PRIVATE "${DESIGNRC_GENERATED_INCLUDE_DIR}"
+)
 target_compile_features(designrc_domain PUBLIC cxx_std_20)
 
 add_executable(designrc WIN32
+  resources/designrc.qrc
   src/main.cpp
   src/geometry/OcctRibBuilder.cpp
   src/geometry/OcctRibBuilder.h
+  src/geometry/StepExporter.cpp
+  src/geometry/StepExporter.h
   src/gui/MainWindow.cpp
   src/gui/MainWindow.h
   src/gui/WingPanelEditor.cpp
@@ -44,20 +91,31 @@ add_executable(designrc WIN32
   src/gui/OcctViewport.h
   src/gui/PlanViewport.cpp
   src/gui/PlanViewport.h
+  src/gui/PartPdfExporter.cpp
+  src/gui/PartPdfExporter.h
   src/gui/TechnicalDrawing.cpp
   src/gui/TechnicalDrawing.h
 )
-set_target_properties(designrc PROPERTIES AUTOMOC ON)
+set_target_properties(designrc PROPERTIES
+  AUTOMOC ON
+  AUTORCC ON
+)
+if(WIN32)
+  target_sources(designrc PRIVATE
+    resources/graphics/designrc.rc
+  )
+endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="July 19, 2026"
+  DESIGNRC_RELEASE_DATE="July 27, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
   Qt6::Widgets
   TKernel TKMath TKService TKV3d TKOpenGl TKG2d TKG3d
   TKBRep TKTopAlgo TKPrim TKBO TKOffset TKMesh TKShHealing
+  TKDESTEP TKXCAF
 )
 
 if(UNIX AND NOT APPLE)
@@ -169,6 +227,8 @@ if(DESIGNRC_BUILD_TESTS)
     tests/GuiDefaultsTests.cpp
     src/gui/PlanViewport.cpp
     src/gui/PlanViewport.h
+    src/gui/PartPdfExporter.cpp
+    src/gui/PartPdfExporter.h
     src/gui/TechnicalDrawing.cpp
     src/gui/TechnicalDrawing.h
     src/gui/WingPanelEditor.cpp
@@ -196,6 +256,22 @@ if(DESIGNRC_BUILD_TESTS)
       "LINKER:--disable-new-dtags")
   endif()
   add_test(NAME designrc_geometry_tests COMMAND designrc_geometry_tests)
+  add_executable(designrc_step_export_tests
+    tests/StepExporterTests.cpp
+    src/geometry/StepExporter.cpp
+    src/geometry/StepExporter.h
+  )
+  target_include_directories(designrc_step_export_tests PRIVATE
+    src ${OpenCASCADE_INCLUDE_DIR})
+  target_link_libraries(designrc_step_export_tests PRIVATE
+    TKernel TKMath TKBRep TKPrim TKDESTEP TKXCAF)
+  add_test(NAME designrc_step_export_tests COMMAND designrc_step_export_tests)
+  add_test(NAME designrc_joiner_backend_tests
+    COMMAND designrc --joiner-backend-regression)
+  if(NOT WIN32)
+    set_tests_properties(designrc_joiner_backend_tests PROPERTIES
+      ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+  endif()
 endif()
 
 if(UNIX AND NOT APPLE)

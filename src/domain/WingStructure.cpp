@@ -1,10 +1,16 @@
 #include "domain/WingStructure.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <future>
+#include <iterator>
+#include <limits>
 #include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
+#include <thread>
 #include <utility>
 
 namespace designrc::domain {
@@ -138,6 +144,38 @@ std::vector<Point2> sheetingProfile(const std::vector<Point2>& surface,
   return profile;
 }
 
+std::optional<Point2> aftCircleSurfaceIntersection(
+    const std::vector<Point2>& surface, const Point2 center,
+    const double radius) {
+  std::optional<Point2> aftIntersection;
+  for (std::size_t index = 0; index + 1 < surface.size(); ++index) {
+    const auto& start = surface[index];
+    const auto& end = surface[index + 1];
+    const double dx = end.x - start.x;
+    const double dy = end.y - start.y;
+    const double offsetX = start.x - center.x;
+    const double offsetY = start.y - center.y;
+    const double a = dx * dx + dy * dy;
+    if (a <= 1.0e-16) continue;
+    const double b = 2.0 * (offsetX * dx + offsetY * dy);
+    const double c = offsetX * offsetX + offsetY * offsetY -
+                     radius * radius;
+    const double discriminant = b * b - 4.0 * a * c;
+    if (discriminant < -1.0e-10) continue;
+    const double root = std::sqrt(std::max(0.0, discriminant));
+    for (const double t : {(-b - root) / (2.0 * a),
+                           (-b + root) / (2.0 * a)}) {
+      if (t < -1.0e-8 || t > 1.0 + 1.0e-8) continue;
+      const double clampedT = std::clamp(t, 0.0, 1.0);
+      const Point2 candidate{
+          start.x + clampedT * dx, start.y + clampedT * dy};
+      if (!aftIntersection || candidate.x > aftIntersection->x)
+        aftIntersection = candidate;
+    }
+  }
+  return aftIntersection;
+}
+
 std::vector<Point2> applySurfaceRecesses(const std::vector<Point2>& surface,
                                          std::vector<SurfaceRecess> recesses,
                                          const bool top) {
@@ -213,6 +251,24 @@ std::vector<Point2> applyNotches(const std::vector<Point2>& surface,
   return result;
 }
 
+std::vector<Point2> applySlopedTopNotch(const std::vector<Point2>& surface,
+                                        const double left, const double right,
+                                        const double leftFloor,
+                                        const double rightFloor) {
+  if (right <= left || left < surface.front().x || right > surface.back().x)
+    return surface;
+  std::vector<Point2> result;
+  for (const auto& point : surface)
+    if (point.x < left - 1.0e-8) result.push_back(point);
+  result.push_back({left, interpolateY(surface, left)});
+  result.push_back({left, leftFloor});
+  result.push_back({right, rightFloor});
+  result.push_back({right, interpolateY(surface, right)});
+  for (const auto& point : surface)
+    if (point.x > right + 1.0e-8) result.push_back(point);
+  return result;
+}
+
 std::vector<Point2> circle(const Point2 center, const double diameter) {
   constexpr std::size_t samples = 48;
   std::vector<Point2> points;
@@ -223,6 +279,215 @@ std::vector<Point2> circle(const Point2 center, const double diameter) {
                       center.y + std::sin(angle) * diameter * 0.5});
   }
   return points;
+}
+
+double distanceToSegment(const Point2 point, const Point2 first,
+                         const Point2 second) {
+  const double dx = second.x - first.x;
+  const double dy = second.y - first.y;
+  const double lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared <= 1.0e-16)
+    return std::hypot(point.x - first.x, point.y - first.y);
+  const double projection = std::clamp(
+      ((point.x - first.x) * dx + (point.y - first.y) * dy) /
+          lengthSquared,
+      0.0, 1.0);
+  return std::hypot(
+      point.x - (first.x + projection * dx),
+      point.y - (first.y + projection * dy));
+}
+
+double distanceToPolygon(const Point2 point,
+                         const std::vector<Point2>& polygon) {
+  if (polygon.size() < 2)
+    return std::numeric_limits<double>::infinity();
+  double distance = std::numeric_limits<double>::infinity();
+  for (std::size_t index = 0; index < polygon.size(); ++index)
+    distance = std::min(distance, distanceToSegment(
+        point, polygon[index], polygon[(index + 1) % polygon.size()]));
+  return distance;
+}
+
+bool pointInPolygon(const Point2 point, const std::vector<Point2>& polygon) {
+  if (polygon.size() < 3) return false;
+  bool inside = false;
+  for (std::size_t current = 0, previous = polygon.size() - 1;
+       current < polygon.size(); previous = current++) {
+    const auto& a = polygon[current];
+    const auto& b = polygon[previous];
+    if (((a.y > point.y) != (b.y > point.y)) &&
+        point.x < (b.x - a.x) * (point.y - a.y) /
+                          (b.y - a.y) +
+                      a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+
+std::vector<std::vector<Point2>> ribLighteningHoleLayout(
+    const StructuredRib& rib, const double borderDistance,
+    const double holeDistance) {
+  const auto& boundary = rib.partOutline.empty()
+      ? rib.outerOutline : rib.partOutline;
+  if (boundary.size() < 3) return {};
+  std::vector<std::vector<Point2>> exclusions = rib.holes;
+  exclusions.insert(exclusions.end(), rib.booleanCutouts.begin(),
+                    rib.booleanCutouts.end());
+  exclusions.insert(exclusions.end(), rib.booleanHoles.begin(),
+                    rib.booleanHoles.end());
+  exclusions.insert(exclusions.end(),
+                    rib.positiveHalfBooleanHoles.begin(),
+                    rib.positiveHalfBooleanHoles.end());
+  exclusions.insert(exclusions.end(),
+                    rib.negativeHalfBooleanHoles.begin(),
+                    rib.negativeHalfBooleanHoles.end());
+  exclusions.insert(exclusions.end(), rib.internalCutouts.begin(),
+                    rib.internalCutouts.end());
+
+  const auto [minimumX, maximumX] = std::minmax_element(
+      boundary.begin(), boundary.end(),
+      [](const Point2 left, const Point2 right) {
+        return left.x < right.x;
+      });
+  const auto [minimumY, maximumY] = std::minmax_element(
+      boundary.begin(), boundary.end(),
+      [](const Point2 left, const Point2 right) {
+        return left.y < right.y;
+      });
+  const auto availableRadius = [&](const Point2 point) {
+    if (!pointInPolygon(point, boundary))
+      return -std::numeric_limits<double>::infinity();
+    double radius = distanceToPolygon(point, boundary) - borderDistance;
+    for (const auto& exclusion : exclusions) {
+      if (pointInPolygon(point, exclusion))
+        return -std::numeric_limits<double>::infinity();
+      radius = std::min(
+          radius, distanceToPolygon(point, exclusion) - holeDistance);
+    }
+    return radius;
+  };
+
+  const double initialStep = std::clamp(borderDistance / 4.0, 0.5, 2.0);
+  constexpr double minimumRadius = 1.0;
+  std::vector<std::vector<Point2>> holes;
+  const auto bestAtChord = [&](const double x) {
+    Point2 best{x, 0.0};
+    double bestRadius = -std::numeric_limits<double>::infinity();
+    for (double y = minimumY->y + borderDistance;
+         y <= maximumY->y - borderDistance + 1.0e-8;
+         y += initialStep) {
+      const Point2 candidate{x, y};
+      const double radius = availableRadius(candidate);
+      if (radius > bestRadius) {
+        best = candidate;
+        bestRadius = radius;
+      }
+    }
+    double refinementStep = initialStep * 0.5;
+    for (int refinement = 0; refinement < 5; ++refinement) {
+      Point2 refinedBest = best;
+      double refinedRadius = bestRadius;
+      for (int yOffset = -2; yOffset <= 2; ++yOffset) {
+        const Point2 candidate{
+            x, best.y + yOffset * refinementStep};
+        const double radius = availableRadius(candidate);
+        if (radius > refinedRadius) {
+          refinedBest = candidate;
+          refinedRadius = radius;
+        }
+      }
+      best = refinedBest;
+      bestRadius = refinedRadius;
+      refinementStep *= 0.5;
+    }
+    return std::pair{best, bestRadius};
+  };
+
+  double chordCursor = minimumX->x + borderDistance + minimumRadius;
+  const double chordLimit =
+      maximumX->x - borderDistance - minimumRadius;
+  while (chordCursor <= chordLimit + 1.0e-8) {
+    Point2 best{};
+    double bestRadius = -std::numeric_limits<double>::infinity();
+    bool found = false;
+    for (double x = chordCursor; x <= chordLimit + 1.0e-8;
+         x += initialStep) {
+      auto [candidate, radius] = bestAtChord(x);
+      if (radius + 1.0e-8 < minimumRadius) continue;
+      best = candidate;
+      bestRadius = radius;
+      found = true;
+      break;
+    }
+    if (!found) break;
+
+    // Grow the circle locally without allowing it to jump ahead and leave
+    // an unused chordwise pocket. This preserves deliberate LE-to-TE coverage
+    // while still adapting every diameter to the local airfoil depth.
+    double xStep = initialStep * 0.5;
+    for (int refinement = 0; refinement < 5; ++refinement) {
+      for (int xOffset = -1; xOffset <= 1; ++xOffset) {
+        const double x = best.x + xOffset * xStep;
+        if (x < chordCursor || x > chordLimit) continue;
+        auto [candidate, radius] = bestAtChord(x);
+        if (radius > bestRadius) {
+          best = candidate;
+          bestRadius = radius;
+        }
+      }
+      xStep *= 0.5;
+    }
+    auto hole = circle(best, bestRadius * 2.0);
+    exclusions.push_back(hole);
+    holes.push_back(std::move(hole));
+    chordCursor =
+        best.x + bestRadius + holeDistance + minimumRadius;
+  }
+  return holes;
+}
+
+std::vector<std::vector<Point2>> spoilerLighteningHoleLayout(
+    const double span, const double width, const double borderDistance,
+    const double circleDistance, const bool spansCenter) {
+  const double diameter = width - 2.0 * borderDistance;
+  if (span <= 0.0 || diameter <= 0.0)
+    throw std::invalid_argument(
+        "Spoiler dimensions do not leave room for lightening holes");
+  std::vector<std::vector<Point2>> holes;
+  const auto addSegment = [&](const double start, const double end) {
+    const double length = end - start;
+    const double usableLength = length - 2.0 * borderDistance;
+    if (usableLength + 1.0e-8 < diameter)
+      throw std::invalid_argument(
+          "Spoiler span does not leave room for a lightening hole at the "
+          "specified Min Border Distance");
+    const std::size_t count = std::max<std::size_t>(1,
+        static_cast<std::size_t>(std::floor(
+            (usableLength + circleDistance) /
+                (diameter + circleDistance) +
+            1.0e-10)));
+    const double radius = diameter * 0.5;
+    if (count == 1) {
+      holes.push_back(circle({0.5 * (start + end), width * 0.5}, diameter));
+      return;
+    }
+    const double firstCenter = start + borderDistance + radius;
+    const double lastCenter = end - borderDistance - radius;
+    const double step = (lastCenter - firstCenter) /
+        static_cast<double>(count - 1);
+    for (std::size_t index = 0; index < count; ++index)
+      holes.push_back(circle(
+          {firstCenter + step * static_cast<double>(index), width * 0.5},
+          diameter));
+  };
+  if (spansCenter) {
+    const double center = span * 0.5;
+    addSegment(0.0, center);
+    addSegment(center, span);
+  } else {
+    addSegment(0.0, span);
+  }
+  return holes;
 }
 
 std::vector<Point2> rectangle(const std::array<Point2, 4>& corners) {
@@ -293,53 +558,161 @@ std::vector<Point2> angledMemberCenters(const std::vector<RibDefinition>& ribs,
   return centers;
 }
 
-bool circularHoleFits(const RibDefinition& rib, const Point2 center, const double diameter) {
-  const auto [upper, lower] = localSurfaces(rib);
-  const double radius = diameter * 0.5;
-  constexpr int samples = 64;
-  for (int i = 0; i < samples; ++i) {
-    const double angle = 2.0 * std::numbers::pi * static_cast<double>(i) / samples;
-    const double x = center.x + radius * std::cos(angle);
-    const double y = center.y + radius * std::sin(angle);
-    if (x <= 0.0 || x >= rib.chord ||
-        y <= interpolateY(lower, x) + 1.0e-5 ||
-        y >= interpolateY(upper, x) - 1.0e-5)
-      return false;
-  }
-  return true;
-}
-
-Point2 fittedLeadingEdgeCenter(const RibDefinition& rib, const double diameter,
-                               const double additionalSetback = 0.0) {
-  const double radius = diameter * 0.5;
-  const double limit = std::min(rib.chord - radius, rib.chord * 0.35);
-  for (double x = radius + 0.05 + additionalSetback; x <= limit; x += 0.1) {
-    const auto center = camberCenter(rib, x);
-    if (circularHoleFits(rib, center, diameter)) return center;
-  }
-  throw std::invalid_argument("The selected CF leading-edge diameter does not fit inside the airfoil");
-}
-
-std::vector<Point2> straightFittedLeadingEdgeCenters(
+std::vector<Point2> straightExposedLeadingEdgeCenters(
     const std::vector<RibDefinition>& ribs, const double diameter) {
-  for (double setback = 0.0; setback <= ribs.back().chord * 0.2; setback += 0.25) {
-    std::vector<Point2> nominal;
-    nominal.reserve(ribs.size());
-    for (const auto& rib : ribs)
-      nominal.push_back(fittedLeadingEdgeCenter(rib, diameter, setback));
-    auto centers = straightMemberCenters(ribs, nominal);
-    bool allFit = true;
-    for (std::size_t i = 0; i < ribs.size(); ++i)
-      if (!circularHoleFits(ribs[i], centers[i], diameter)) { allFit = false; break; }
-    if (allFit) return centers;
+  const double radius = diameter * 0.5;
+  constexpr double exposure = 0.1;
+  const double centerX = std::max(0.001, radius - exposure);
+  std::vector<Point2> nominal;
+  nominal.reserve(ribs.size());
+  for (const auto& rib : ribs)
+    nominal.push_back(camberCenter(rib, centerX));
+  return straightMemberCenters(ribs, nominal);
+}
+
+struct FinishedRibOutline {
+  std::vector<Point2> points;
+  std::vector<RibOutlineSegment> segments;
+};
+
+std::vector<RibOutlineSegment> makeOpenRibOutlineSegments(
+    const std::vector<Point2>& points) {
+  if (points.size() < 2) return {};
+  const std::size_t edgeCount = points.size() - 1;
+  const auto isVertical = [&](const std::size_t edge) {
+    return std::abs(points[edge].x - points[edge + 1].x) < 1.0e-8 &&
+        std::hypot(points[edge].x - points[edge + 1].x,
+                   points[edge].y - points[edge + 1].y) > 1.0e-8;
+  };
+  std::vector<bool> straight(edgeCount, false);
+  for (std::size_t edge = 0; edge < edgeCount; ++edge)
+    straight[edge] = isVertical(edge);
+  for (std::size_t edge = 1; edge + 1 < edgeCount; ++edge)
+    if (isVertical(edge - 1) && isVertical(edge + 1))
+      straight[edge] = true;
+  std::vector<RibOutlineSegment> result;
+  std::vector<Point2> splinePoints;
+  const auto flushSpline = [&] {
+    if (splinePoints.size() >= 2) {
+      const bool spline = splinePoints.size() >= 3;
+      result.push_back({std::move(splinePoints), spline});
+    }
+    splinePoints.clear();
+  };
+  for (std::size_t edge = 0; edge < edgeCount; ++edge) {
+    if (straight[edge]) {
+      flushSpline();
+      result.push_back({{points[edge], points[edge + 1]}, false});
+    } else {
+      if (splinePoints.empty()) splinePoints.push_back(points[edge]);
+      splinePoints.push_back(points[edge + 1]);
+    }
   }
-  throw std::invalid_argument("A straight CF leading edge cannot fit through every rib");
+  flushSpline();
+  return result;
+}
+
+FinishedRibOutline exposedLeadingEdgeOutline(
+    const std::vector<Point2>& outline, const Point2 center,
+    const double radius) {
+  if (outline.size() < 3 || radius <= 0.0)
+    return {outline, makeRibOutlineSegments(outline)};
+  const auto inside = [&](const Point2 point) {
+    return std::hypot(point.x - center.x, point.y - center.y) <
+        radius - 1.0e-8;
+  };
+  const auto intersection = [&](const Point2 first, const Point2 second) {
+    const double dx = second.x - first.x;
+    const double dy = second.y - first.y;
+    const double fx = first.x - center.x;
+    const double fy = first.y - center.y;
+    const double a = dx * dx + dy * dy;
+    const double b = 2.0 * (fx * dx + fy * dy);
+    const double c = fx * fx + fy * fy - radius * radius;
+    const double discriminant = std::max(0.0, b * b - 4.0 * a * c);
+    const double root = std::sqrt(discriminant);
+    const double firstT = (-b - root) / (2.0 * a);
+    const double secondT = (-b + root) / (2.0 * a);
+    const double t = firstT >= -1.0e-8 && firstT <= 1.0 + 1.0e-8
+        ? firstT : secondT;
+    return Point2{first.x + std::clamp(t, 0.0, 1.0) * dx,
+                  first.y + std::clamp(t, 0.0, 1.0) * dy};
+  };
+  std::optional<std::size_t> entryEdge;
+  std::optional<std::size_t> exitEdge;
+  Point2 upperIntersection;
+  Point2 lowerIntersection;
+  for (std::size_t index = 0; index + 1 < outline.size(); ++index) {
+    const auto first = outline[index];
+    const auto second = outline[index + 1];
+    const bool firstInside = inside(first);
+    const bool secondInside = inside(second);
+    if (!entryEdge && !firstInside && secondInside) {
+      entryEdge = index;
+      upperIntersection = intersection(first, second);
+    }
+    if (entryEdge && firstInside && !secondInside) {
+      exitEdge = index;
+      lowerIntersection = intersection(first, second);
+    }
+  }
+  if (!entryEdge || !exitEdge || *exitEdge <= *entryEdge)
+    return {outline, makeRibOutlineSegments(outline)};
+
+  // Sheeting recess walls can cross the exposed-LE circle several times.
+  // Retaining the first temporary exit leaves those manufactured steps inside
+  // the circular cradle, and a spline fitted through them produces a hook at
+  // the lower tip of the notch. Remove the complete run from the first entry
+  // through the final exit instead.
+  std::vector<Point2> before(
+      outline.begin(),
+      outline.begin() + static_cast<std::ptrdiff_t>(*entryEdge + 1));
+  before.push_back(upperIntersection);
+  std::vector<Point2> after{lowerIntersection};
+  after.insert(after.end(),
+      outline.begin() + static_cast<std::ptrdiff_t>(*exitEdge + 1),
+      outline.end());
+  std::vector<Point2> result = before;
+  double upperAngle = std::atan2(
+      upperIntersection.y - center.y, upperIntersection.x - center.x);
+  double lowerAngle = std::atan2(
+      lowerIntersection.y - center.y, lowerIntersection.x - center.x);
+  while (lowerAngle > upperAngle) lowerAngle -= 2.0 * std::numbers::pi;
+  constexpr int arcSegments = 24;
+  std::vector<Point2> arc{upperIntersection};
+  for (int sample = 1; sample < arcSegments; ++sample) {
+    const double t = static_cast<double>(sample) / arcSegments;
+    const double angle = upperAngle + (lowerAngle - upperAngle) * t;
+    const Point2 point{
+        center.x + radius * std::cos(angle),
+        center.y + radius * std::sin(angle)};
+    result.push_back(point);
+    arc.push_back(point);
+  }
+  arc.push_back(lowerIntersection);
+  result.insert(result.end(), after.begin(), after.end());
+  std::vector<RibOutlineSegment> segments;
+  auto beforeSegments = makeOpenRibOutlineSegments(before);
+  segments.insert(segments.end(),
+      std::make_move_iterator(beforeSegments.begin()),
+      std::make_move_iterator(beforeSegments.end()));
+  segments.push_back({std::move(arc), true});
+  auto afterSegments = makeOpenRibOutlineSegments(after);
+  segments.insert(segments.end(),
+      std::make_move_iterator(afterSegments.begin()),
+      std::make_move_iterator(afterSegments.end()));
+  if (std::hypot(result.back().x - result.front().x,
+                 result.back().y - result.front().y) > 1.0e-8)
+    segments.push_back({{result.back(), result.front()}, false});
+  return {std::move(result), std::move(segments)};
 }
 
 void addRectMember(StructuredWing& wing, const std::string& name, const double fraction,
                    const bool top, const double width, const double height,
                    const SpanMemberKind kind = SpanMemberKind::Rectangular) {
   SpanMember member{name, kind, width, height, 0.0, {}};
+  member.verticalLocation = top ? 0 : 1;
+  member.cutsSheeting = kind == SpanMemberKind::Rectangular;
   member.centers.reserve(wing.ribs.size());
   for (const auto& structured : wing.ribs)
     member.centers.push_back(surfaceCenter(structured.rib, fraction, top, height));
@@ -348,8 +721,95 @@ void addRectMember(StructuredWing& wing, const std::string& name, const double f
 
 } // namespace
 
+std::vector<RibOutlineSegment> makeRibOutlineSegments(
+    const std::vector<Point2>& closedOutline) {
+  if (closedOutline.size() < 3) return {};
+  const std::size_t count = closedOutline.size();
+  const auto isVerticalEdge = [&](const std::size_t edge) {
+    const auto& first = closedOutline[edge];
+    const auto& second = closedOutline[(edge + 1) % count];
+    return std::abs(first.x - second.x) < 1.0e-8 &&
+        std::hypot(first.x - second.x, first.y - second.y) > 1.0e-8;
+  };
+  std::vector<bool> straight(count, false);
+  for (std::size_t edge = 0; edge < count; ++edge)
+    straight[edge] = isVerticalEdge(edge);
+  // The implicit final edge closes the lower trailing-edge point back to the
+  // upper trailing-edge point. It is a manufactured closure even when a DAT
+  // file gives the two points slightly different X coordinates.
+  if (std::hypot(closedOutline.back().x - closedOutline.front().x,
+                 closedOutline.back().y - closedOutline.front().y) > 1.0e-8)
+    straight.back() = true;
+  // A notch or recess floor is bounded by the two vertical manufactured
+  // edges. Keep that floor straight while allowing the adjoining DAT-derived
+  // airfoil runs to remain smooth.
+  for (std::size_t edge = 0; edge < count; ++edge) {
+    const std::size_t previous = (edge + count - 1) % count;
+    const std::size_t next = (edge + 1) % count;
+    if (isVerticalEdge(previous) && isVerticalEdge(next))
+      straight[edge] = true;
+  }
+  const auto separator = std::find(straight.begin(), straight.end(), true);
+  std::vector<RibOutlineSegment> result;
+  if (separator == straight.end()) {
+    result.push_back({closedOutline, true});
+  } else {
+    const std::size_t separatorEdge = static_cast<std::size_t>(
+        std::distance(straight.begin(), separator));
+    std::vector<Point2> splinePoints;
+    const auto flushSpline = [&] {
+      if (splinePoints.size() >= 2) {
+        const bool spline = splinePoints.size() >= 3;
+        result.push_back({std::move(splinePoints), spline});
+      }
+      splinePoints.clear();
+    };
+    for (std::size_t step = 0; step < count; ++step) {
+      const std::size_t edge = (separatorEdge + 1 + step) % count;
+      const auto& first = closedOutline[edge];
+      const auto& second = closedOutline[(edge + 1) % count];
+      if (straight[edge]) {
+        flushSpline();
+        result.push_back({{first, second}, false});
+      } else {
+        if (splinePoints.empty()) splinePoints.push_back(first);
+        splinePoints.push_back(second);
+      }
+    }
+    flushSpline();
+  }
+  std::vector<RibOutlineSegment> splitAtLeadingEdge;
+  splitAtLeadingEdge.reserve(result.size() + 1);
+  for (auto& segment : result) {
+    if (!segment.spline) {
+      splitAtLeadingEdge.push_back(std::move(segment));
+      continue;
+    }
+    const auto leading = std::min_element(
+        segment.points.begin(), segment.points.end(),
+        [](const Point2& left, const Point2& right) {
+          return left.x < right.x;
+        });
+    const std::size_t leadingIndex = static_cast<std::size_t>(
+        std::distance(segment.points.begin(), leading));
+    if (leadingIndex < 2 || leadingIndex + 2 >= segment.points.size()) {
+      splitAtLeadingEdge.push_back(std::move(segment));
+      continue;
+    }
+    std::vector<Point2> upper{
+        segment.points.begin(),
+        segment.points.begin() + static_cast<std::ptrdiff_t>(leadingIndex + 1)};
+    std::vector<Point2> lower{
+        segment.points.begin() + static_cast<std::ptrdiff_t>(leadingIndex),
+        segment.points.end()};
+    splitAtLeadingEdge.push_back({std::move(upper), true});
+    splitAtLeadingEdge.push_back({std::move(lower), true});
+  }
+  return splitAtLeadingEdge;
+}
+
 StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
-                                  const StructureParameters& p) {
+                                   const StructureParameters& p) {
   if (ribs.size() < 2) throw std::invalid_argument("Wing structure requires at least two ribs");
   StructuredWing wing;
   wing.ribs.reserve(ribs.size());
@@ -358,6 +818,47 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   const double trailingEdgeSlotDepth = std::max(0.0,
       std::min(p.trailingEdgeSlotDepth, p.trailingEdgeWidth));
   std::vector<ControlSurfacePart> controlParts;
+  SpoilerPart spoiler;
+  const bool buildSpoiler = p.spoilers;
+  if (p.wiringHoles) {
+    if (p.wiringHoleStartRib < 1 ||
+        p.wiringHoleEndRib > static_cast<int>(ribs.size()) ||
+        p.wiringHoleStartRib > p.wiringHoleEndRib)
+      throw std::invalid_argument("Wiring Hole rib range must be within the panel");
+    if (p.wiringHoleChordLocationPercent < 0 ||
+        p.wiringHoleChordLocationPercent > 100 ||
+        p.wiringHoleWidth <= 0.0 || p.wiringHoleHeight <= 0.0)
+      throw std::invalid_argument("Wiring Hole location and dimensions are invalid");
+  }
+  if (buildSpoiler) {
+    if (ribs.size() < 4)
+      throw std::invalid_argument("Spoilers require at least four ribs");
+    if (p.spoilerStartRib < 1 || p.spoilerEndRib > static_cast<int>(ribs.size()) ||
+        p.spoilerEndRib < p.spoilerStartRib + 3)
+      throw std::invalid_argument("Spoiler End Rib must be at least Start Rib + 3 and within the panel");
+    if (p.spoilerStartRib < 2 &&
+        std::abs(p.joinerDihedralDegrees) > 1.0e-8)
+      throw std::invalid_argument(
+          "Dihedral must be 0 degrees for a center spoiler");
+    if (p.spoilerWidth <= 0.0 || p.spoilerThickness <= 0.0 ||
+        p.spoilerFrameRailWidth <= 0.0 || p.spoilerSupportRailHeight <= 0.0)
+      throw std::invalid_argument("Spoiler and rail dimensions must be greater than zero");
+    if (p.spoilerLighteningHoles &&
+        (p.spoilerMinimumWoodMargin <= 0.0 ||
+         p.spoilerMinimumCircleDistance < 0.0 ||
+         p.spoilerWidth <= 2.0 * p.spoilerMinimumWoodMargin))
+      throw std::invalid_argument(
+          "Spoiler Min Border Distance must leave room for a lightening hole");
+    spoiler.startRibIndex = static_cast<std::size_t>(p.spoilerStartRib - 1);
+    spoiler.endRibIndex = static_cast<std::size_t>(p.spoilerEndRib - 1);
+    spoiler.chordLocationPercent = p.spoilerChordLocationPercent;
+    spoiler.width = p.spoilerWidth;
+    spoiler.thickness = p.spoilerThickness;
+    spoiler.frameRailWidth = p.spoilerFrameRailWidth;
+    spoiler.supportRailHeight = p.spoilerSupportRailHeight;
+    spoiler.minimumWoodMargin = p.spoilerMinimumWoodMargin;
+    spoiler.spansCenter = spoiler.startRibIndex == 0;
+  }
   const auto addControl = [&](const bool enabled, const std::string& name,
                               const double width, const double hingeWidth,
                               const double hingeHeight, const int startRib,
@@ -405,10 +906,30 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     for (const auto& rib : ribs) nominal.push_back(camberCenter(rib, 0.25 * rib.chord));
     carbonSparCenters = straightMemberCenters(ribs, nominal);
   }
+  std::vector<std::vector<Point2>> sparCenters;
+  sparCenters.reserve(p.spars.size());
+  for (const auto& spar : p.spars) {
+    const double fraction = std::clamp(spar.chordLocationPercent, 0, 90) / 100.0;
+    const bool rectangular = spar.material == 0 || spar.type == 2;
+    const double height = spar.material == 0 ? spar.woodHeight :
+        rectangular ? spar.stripThickness : spar.type == 0 ? spar.tubeOd : spar.rodOd;
+    std::vector<Point2> centers;
+    centers.reserve(ribs.size());
+    for (const auto& rib : ribs) {
+      if (spar.verticalLocation == 0)
+        centers.push_back(surfaceCenter(rib, fraction, true, height));
+      else if (spar.verticalLocation == 1)
+        centers.push_back(surfaceCenter(rib, fraction, false, height));
+      else
+        centers.push_back(camberCenter(rib, fraction * rib.chord));
+    }
+    if (!rectangular) centers = straightMemberCenters(ribs, centers);
+    sparCenters.push_back(std::move(centers));
+  }
   std::vector<Point2> carbonLeadingEdgeCenters;
   if (p.leadingEdgeType == 3 || p.leadingEdgeType == 4) {
     const double diameter = p.leadingEdgeType == 3 ? p.leadingEdgeTubeOd : p.leadingEdgeRodOd;
-    carbonLeadingEdgeCenters = straightFittedLeadingEdgeCenters(ribs, diameter);
+    carbonLeadingEdgeCenters = straightExposedLeadingEdgeCenters(ribs, diameter);
   }
   const std::size_t rib2Index = std::min<std::size_t>(p.rib1aPresent ? 2 : 1, ribs.size() - 1);
   const auto addCircularJoiner = [&](const bool enabled, const int type,
@@ -449,6 +970,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     joiner.mirrorPlaneAngleDegrees = p.joinerMirrorAngleDegrees;
     joiner.axisAngleDegrees = p.circularJoinerAxisAngleDegrees;
     joiner.spansJoint = p.circularJoinerSpansJoint;
+    joiner.annotateOnBothPlanHalves = p.circularJoinerSpansJoint;
     wing.joiners.push_back(std::move(joiner));
   };
   addCircularJoiner(p.behindSparJoiner, p.behindSparJoinerType, 0.30,
@@ -468,6 +990,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     joiner.outerDiameter = std::max(0.1, p.shearWebThickness);
     joiner.stopRibIndex = rib2Index;
     joiner.mirrorPlaneAngleDegrees = p.joinerMirrorAngleDegrees;
+    joiner.annotateOnBothPlanHalves = true;
     double rootBottomZ = 0.0;
     double rootTopZ = 0.0;
     for (std::size_t i = 0; i <= rib2Index; ++i) {
@@ -531,6 +1054,41 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   for (std::size_t ribIndex = 0; ribIndex < ribs.size(); ++ribIndex) {
     const auto& rib = ribs[ribIndex];
     const auto [upper, lower] = localSurfaces(rib);
+    double spoilerLeft = 0.0;
+    double spoilerRight = 0.0;
+    double spoilerTopLeft = 0.0;
+    double spoilerTopRight = 0.0;
+    if (buildSpoiler && ribIndex >= spoiler.startRibIndex && ribIndex <= spoiler.endRibIndex) {
+      spoilerLeft = std::clamp(p.spoilerChordLocationPercent / 100.0 * rib.chord,
+                               0.001, rib.chord - 0.001);
+      spoilerRight = spoilerLeft + 2.0 * p.spoilerFrameRailWidth +
+          2.0 * spoiler.gap + p.spoilerWidth;
+      if (spoilerRight >= rib.chord - 0.001)
+        throw std::invalid_argument("Spoiler assembly extends beyond the trailing edge at rib " +
+                                    std::to_string(ribIndex + 1));
+      spoilerTopLeft = interpolateY(upper, spoilerLeft);
+      spoilerTopRight = interpolateY(upper, spoilerRight);
+      const auto topAt = [&](const double x) {
+        const double t = (x - spoilerLeft) / (spoilerRight - spoilerLeft);
+        return spoilerTopLeft + t * (spoilerTopRight - spoilerTopLeft);
+      };
+      const auto profile = [&](const double left, const double right,
+                               const double height) {
+        return std::array<Point2, 4>{{{left, topAt(left) - height},
+            {right, topAt(right) - height}, {right, topAt(right)},
+            {left, topAt(left)}}};
+      };
+      const double spoilerStart = spoilerLeft + p.spoilerFrameRailWidth + spoiler.gap;
+      spoiler.forwardRailProfiles.push_back(profile(
+          spoilerLeft, spoilerLeft + p.spoilerFrameRailWidth, p.spoilerThickness));
+      spoiler.spoilerProfiles.push_back(profile(
+          spoilerStart, spoilerStart + p.spoilerWidth, p.spoilerThickness));
+      spoiler.aftRailProfiles.push_back(profile(
+          spoilerRight - p.spoilerFrameRailWidth, spoilerRight, p.spoilerThickness));
+      if (ribIndex == spoiler.startRibIndex || ribIndex == spoiler.endRibIndex)
+        spoiler.supportProfiles.push_back(profile(
+            spoilerLeft, spoilerRight, p.spoilerThickness + p.spoilerSupportRailHeight));
+    }
     const bool solidLeadingEdge = p.leadingEdgeType == 2;
     const bool solidTrailingEdge = p.trailingEdgeType == 2;
     const double minimumX = solidLeadingEdge
@@ -596,17 +1154,57 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     const double bottomWoodWidth = p.bottomSpar ? p.bottomSparWidth :
         p.topSpar ? p.topSparWidth : 0.0;
     const double sparCenter = 0.25 * rib.chord;
-    const double topLeEnd = p.carbonSpar != 0 ? sparCenter : sparCenter - topWoodWidth * 0.5;
-    const double topTeStart = p.carbonSpar != 0 ? sparCenter : sparCenter + topWoodWidth * 0.5;
-    const double bottomLeEnd = p.carbonSpar != 0 ? sparCenter : sparCenter - bottomWoodWidth * 0.5;
-    const double bottomTeStart = p.carbonSpar != 0 ? sparCenter : sparCenter + bottomWoodWidth * 0.5;
+    double topLeEnd = p.carbonSpar != 0 ? sparCenter : sparCenter - topWoodWidth * 0.5;
+    double topTeStart = p.carbonSpar != 0 ? sparCenter : sparCenter + topWoodWidth * 0.5;
+    double bottomLeEnd = p.carbonSpar != 0 ? sparCenter : sparCenter - bottomWoodWidth * 0.5;
+    double bottomTeStart = p.carbonSpar != 0 ? sparCenter : sparCenter + bottomWoodWidth * 0.5;
+    const auto applyNewSparSheetingBoundary = [&](const int verticalLocation,
+                                                   double& leEnd,
+                                                   double& teStart) {
+      std::size_t selected = p.spars.size();
+      int closestToLegacyLocation = 101;
+      for (std::size_t index = 0; index < p.spars.size(); ++index) {
+        const auto& spar = p.spars[index];
+        if (spar.verticalLocation != verticalLocation) continue;
+        const int distance = std::abs(spar.chordLocationPercent - 25);
+        if (distance < closestToLegacyLocation) {
+          selected = index;
+          closestToLegacyLocation = distance;
+        }
+      }
+      if (selected == p.spars.size()) return;
+      const auto& spar = p.spars[selected];
+      const double width = spar.material == 0 ? spar.woodWidth :
+          spar.type == 2 ? spar.stripWidth : spar.type == 0 ? spar.tubeOd : spar.rodOd;
+      const double centerX = sparCenters[selected][ribIndex].x;
+      leEnd = centerX - width * 0.5;
+      teStart = centerX + width * 0.5;
+    };
+    applyNewSparSheetingBoundary(0, topLeEnd, topTeStart);
+    applyNewSparSheetingBoundary(1, bottomLeEnd, bottomTeStart);
     const double leadingCarbonDiameter = p.leadingEdgeType == 3
         ? p.leadingEdgeTubeOd : p.leadingEdgeType == 4 ? p.leadingEdgeRodOd : 0.0;
-    constexpr double carbonSheetingClearance = 0.05;
-    const double sheetingMinimumX = (p.leadingEdgeType == 3 || p.leadingEdgeType == 4)
-        ? carbonLeadingEdgeCenters[ribIndex].x + leadingCarbonDiameter * 0.5 +
-              carbonSheetingClearance
-        : minimumX;
+    double topSheetingMinimumX = minimumX;
+    double bottomSheetingMinimumX = minimumX;
+    if (p.leadingEdgeType == 3 || p.leadingEdgeType == 4) {
+      // Extend the sheet recess just inside the carbon-LE notch. The circular
+      // rib notch is cut afterward, removing the overlap. This avoids an
+      // unreliable coincident edge while leaving no gap at the notch.
+      constexpr double carbonLeadingEdgeOvercut = 0.05;
+      const auto center = carbonLeadingEdgeCenters[ribIndex];
+      const double radius = leadingCarbonDiameter * 0.5;
+      const auto topIntersection =
+          aftCircleSurfaceIntersection(upper, center, radius);
+      const auto bottomIntersection =
+          aftCircleSurfaceIntersection(lower, center, radius);
+      if (!topIntersection || !bottomIntersection)
+        throw std::invalid_argument(
+            "Carbon leading edge does not intersect both rib surfaces at rib " +
+            std::to_string(ribIndex + 1));
+      topSheetingMinimumX = topIntersection->x - carbonLeadingEdgeOvercut;
+      bottomSheetingMinimumX =
+          bottomIntersection->x - carbonLeadingEdgeOvercut;
+    }
     std::vector<SurfaceRecess> upperRecesses;
     std::vector<SurfaceRecess> lowerRecesses;
     const auto addSheet = [&](SheetingPart& part, const bool enabled, const double thickness,
@@ -622,7 +1220,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     };
     if (p.leTopSheet && p.turbulators &&
         ribIndex <= leTopSheets.front().stopRibIndex) {
-      double stripStart = sheetingMinimumX;
+      double stripStart = topSheetingMinimumX;
       for (int i = 1; i <= turbulatorCount; ++i) {
         const double center = 0.25 * static_cast<double>(i) /
             static_cast<double>(turbulatorCount + 1) * rib.chord;
@@ -644,13 +1242,13 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           stripStart, topLeEnd, true, upperRecesses);
     } else {
       addSheet(leTopSheets.front(), p.leTopSheet, p.leTopSheetThickness, upper,
-               sheetingMinimumX, topLeEnd, true, upperRecesses);
+               topSheetingMinimumX, topLeEnd, true, upperRecesses);
     }
     addSheet(teTopSheet, p.teTopSheet, p.teTopSheetThickness, upper,
              topTeStart, std::min(fullSheetingMaximumX, retainedMaximumX),
              true, upperRecesses);
     addSheet(leBottomSheet, p.leBottomSheet, p.leBottomSheetThickness, lower,
-             sheetingMinimumX, bottomLeEnd, false, lowerRecesses);
+             bottomSheetingMinimumX, bottomLeEnd, false, lowerRecesses);
     addSheet(teBottomSheet, p.teBottomSheet, p.teBottomSheetThickness, lower,
              bottomTeStart, std::min(fullSheetingMaximumX, retainedMaximumX),
              false, lowerRecesses);
@@ -689,6 +1287,31 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         topNotches.push_back({fraction * rib.chord, p.turbulatorWidth, p.turbulatorHeight});
       }
     }
+    std::vector<std::vector<Point2>> sparBooleanCutouts;
+    std::vector<std::vector<Point2>> sparBooleanHoles;
+    for (std::size_t sparIndex = 0; sparIndex < p.spars.size(); ++sparIndex) {
+      const auto& spar = p.spars[sparIndex];
+      const auto center = sparCenters[sparIndex][ribIndex];
+      const bool rectangular = spar.material == 0 || spar.type == 2;
+      const double width = spar.material == 0 ? spar.woodWidth :
+          spar.type == 2 ? spar.stripWidth : spar.type == 0 ? spar.tubeOd : spar.rodOd;
+      const double height = spar.material == 0 ? spar.woodHeight :
+          spar.type == 2 ? spar.stripThickness : width;
+      if (rectangular && spar.verticalLocation == 0)
+        topNotches.push_back({center.x, width, height});
+      else if (rectangular && spar.verticalLocation == 1)
+        bottomNotches.push_back({center.x, width, height});
+      else if (rectangular) {
+        const double halfWidth = width * 0.5;
+        const double halfHeight = height * 0.5;
+        sparBooleanCutouts.push_back(rectangle({{{center.x - halfWidth, center.y - halfHeight},
+            {center.x + halfWidth, center.y - halfHeight},
+            {center.x + halfWidth, center.y + halfHeight},
+            {center.x - halfWidth, center.y + halfHeight}}}));
+      } else {
+        sparBooleanHoles.push_back(circle(center, width));
+      }
+    }
     for (const auto& topNotch : topNotches) {
       const double topLeft = topNotch.centerX - topNotch.width * 0.5;
       const double topRight = topNotch.centerX + topNotch.width * 0.5;
@@ -709,6 +1332,13 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       }
     }
     auto notchedUpper = applyNotches(retainedUpper, topNotches, true);
+    const bool spoilerInteriorRib = buildSpoiler &&
+        ((ribIndex > spoiler.startRibIndex && ribIndex < spoiler.endRibIndex) ||
+         (spoiler.spansCenter && ribIndex == 0));
+    if (spoilerInteriorRib)
+      notchedUpper = applySlopedTopNotch(notchedUpper, spoilerLeft, spoilerRight,
+          spoilerTopLeft - p.spoilerThickness,
+          spoilerTopRight - p.spoilerThickness);
     auto notchedLower = applyNotches(retainedLower, bottomNotches, false);
     std::vector<Point2> outline;
     outline.reserve(notchedUpper.size() + notchedLower.size() - 1);
@@ -723,17 +1353,52 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       outline.pop_back();
 
     StructuredRib structured{rib, std::move(outline), {}, {}, {}};
+    structured.outlineSegments = makeRibOutlineSegments(structured.outerOutline);
+    structured.booleanCutouts.insert(structured.booleanCutouts.end(),
+        sparBooleanCutouts.begin(), sparBooleanCutouts.end());
+    structured.booleanHoles.insert(structured.booleanHoles.end(),
+        sparBooleanHoles.begin(), sparBooleanHoles.end());
     if (p.carbonSpar != 0) {
       const double diameter = p.carbonSpar == 1 ? p.cfTubeOd : p.cfRodOd;
       structured.holes.push_back(circle(carbonSparCenters[ribIndex], diameter));
     }
     if (p.leadingEdgeType == 3 || p.leadingEdgeType == 4) {
       const double diameter = p.leadingEdgeType == 3 ? p.leadingEdgeTubeOd : p.leadingEdgeRodOd;
-      const auto leadingHole = circle(carbonLeadingEdgeCenters[ribIndex], diameter);
-      // The sheeting boundary is kept aft of the carbon member, so the hole is
-      // fully contained by the rib face and can be included in the extrusion.
-      // This is substantially more reliable than a near-tangent solid cut.
-      structured.holes.push_back(leadingHole);
+      // Form the exposed carbon-LE cradle from the completed recessed outline
+      // so the sheeting cut reaches the circular notch without a separate,
+      // tangent Boolean operation.
+      auto finishedOutline = exposedLeadingEdgeOutline(
+          structured.outerOutline, carbonLeadingEdgeCenters[ribIndex],
+          diameter * 0.5);
+      structured.outerOutline = finishedOutline.points;
+      structured.outlineSegments = finishedOutline.segments;
+      structured.partOutline = std::move(finishedOutline.points);
+      structured.partOutlineSegments = std::move(finishedOutline.segments);
+    }
+    if (p.wiringHoles &&
+        ribIndex + 1 >= static_cast<std::size_t>(p.wiringHoleStartRib) &&
+        ribIndex + 1 <= static_cast<std::size_t>(p.wiringHoleEndRib)) {
+      const double left = p.wiringHoleChordLocationPercent / 100.0 * rib.chord;
+      const double right = left + p.wiringHoleWidth;
+      const double centerX = (left + right) * 0.5;
+      const double centerY = camberCenter(rib, centerX).y;
+      const double bottom = centerY - p.wiringHoleHeight * 0.5;
+      const double top = centerY + p.wiringHoleHeight * 0.5;
+      if (left <= 0.0 || right >= rib.chord ||
+          bottom <= std::max(interpolateY(lower, left), interpolateY(lower, right)) ||
+          top >= std::min(interpolateY(upper, left), interpolateY(upper, right))) {
+        throw std::invalid_argument("Wiring Hole does not fit inside rib " +
+            std::to_string(ribIndex + 1));
+      }
+      auto opening = rectangle({{{left, bottom}, {right, bottom},
+                                  {right, top}, {left, top}}});
+      structured.internalCutouts.push_back(opening);
+      const std::string ribName = p.rib1aPresent && ribIndex == 1
+          ? "R1a"
+          : "R" + std::to_string(ribIndex + 1 -
+                (p.rib1aPresent && ribIndex > 1 ? 1 : 0));
+      wing.wiringHoles.push_back(
+          {"Wiring Hole " + ribName, ribIndex, std::move(opening)});
     }
     for (const auto& joiner : wing.joiners) {
       if (ribIndex > joiner.stopRibIndex) continue;
@@ -755,6 +1420,25 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       }
     }
     wing.ribs.push_back(std::move(structured));
+  }
+
+  if (buildSpoiler) {
+    const auto& start = ribs[spoiler.startRibIndex];
+    const auto& end = ribs[spoiler.endRibIndex];
+    double span = std::hypot(end.spanPosition - start.spanPosition,
+                             end.dihedralHeight - start.dihedralHeight);
+    span -= p.ribThickness + 2.0 * spoiler.gap;
+    if (spoiler.spansCenter)
+      span = 2.0 * std::hypot(end.spanPosition, end.dihedralHeight) -
+          p.ribThickness - 2.0 * spoiler.gap;
+    span = std::max(0.001, span);
+    spoiler.dxfOutline = {{0.0, 0.0}, {span, 0.0},
+                          {span, spoiler.width}, {0.0, spoiler.width}};
+    if (p.spoilerLighteningHoles)
+      spoiler.lighteningHoleOutlines = spoilerLighteningHoleLayout(
+          span, spoiler.width, p.spoilerMinimumWoodMargin,
+          p.spoilerMinimumCircleDistance, spoiler.spansCenter);
+    wing.spoilers.push_back(std::move(spoiler));
   }
 
   if (p.leTopSheet) {
@@ -885,6 +1569,25 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   if (!trailingStock.profiles.empty()) wing.profiledMembers.push_back(std::move(trailingStock));
   wing.controlSurfaces = std::move(controlParts);
 
+  for (std::size_t sparIndex = 0; sparIndex < p.spars.size(); ++sparIndex) {
+    const auto& spar = p.spars[sparIndex];
+    SpanMember member;
+    member.name = "Spar " + std::to_string(sparIndex + 1);
+    const bool rectangular = spar.material == 0 || spar.type == 2;
+    member.kind = rectangular ? SpanMemberKind::Rectangular :
+        spar.type == 0 ? SpanMemberKind::Tube : SpanMemberKind::Rod;
+    member.width = spar.material == 0 ? spar.woodWidth :
+        spar.type == 2 ? spar.stripWidth : spar.type == 0 ? spar.tubeOd : spar.rodOd;
+    member.height = spar.material == 0 ? spar.woodHeight :
+        spar.type == 2 ? spar.stripThickness : member.width;
+    member.innerDiameter = spar.material != 0 && spar.type == 0 ? spar.tubeId : 0.0;
+    member.centers = sparCenters[sparIndex];
+    member.carbonFiber = spar.material != 0;
+    member.verticalLocation = spar.verticalLocation;
+    member.cutsSheeting = spar.verticalLocation == 0 || spar.verticalLocation == 1;
+    wing.members.push_back(std::move(member));
+  }
+
   if (p.topSpar) addRectMember(wing, "Top spar", 0.25, true, p.topSparWidth, p.topSparHeight);
   if (p.bottomSpar) addRectMember(wing, "Bottom spar", 0.25, false, p.bottomSparWidth, p.bottomSparHeight);
   if (p.topRearSpar) addRectMember(wing, "Top 60% rear spar", 0.60, true, p.topRearSparWidth, p.topRearSparHeight);
@@ -917,7 +1620,12 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     wing.members.push_back(std::move(member));
   }
 
-  if (p.shearWebs && p.topSpar && p.bottomSpar) {
+  const auto addShearWebSet = [&](const std::vector<Point2>& topCenters,
+                                  const std::vector<Point2>& bottomCenters,
+                                  const double topHeight,
+                                  const double bottomHeight,
+                                  const double thickness,
+                                  const std::string& namePrefix) {
     for (std::size_t i = 0; i + 1 < wing.ribs.size(); ++i) {
       const bool occupiedByWoodJoiner = std::any_of(
           wing.joiners.begin(), wing.joiners.end(), [i](const JoinerPart& joiner) {
@@ -925,10 +1633,14 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                    i < joiner.stopRibIndex;
           });
       if (occupiedByWoodJoiner) continue;
-      auto top0 = surfaceCenter(wing.ribs[i].rib, 0.25, true, p.topSparHeight);
-      auto bottom0 = surfaceCenter(wing.ribs[i].rib, 0.25, false, p.bottomSparHeight);
-      auto top1 = surfaceCenter(wing.ribs[i + 1].rib, 0.25, true, p.topSparHeight);
-      auto bottom1 = surfaceCenter(wing.ribs[i + 1].rib, 0.25, false, p.bottomSparHeight);
+      auto top0 = topCenters[i];
+      auto bottom0 = bottomCenters[i];
+      auto top1 = topCenters[i + 1];
+      auto bottom1 = bottomCenters[i + 1];
+      top0.y -= topHeight * 0.5;
+      top1.y -= topHeight * 0.5;
+      bottom0.y += bottomHeight * 0.5;
+      bottom1.y += bottomHeight * 0.5;
       // Webs extend from the centerline of the bottom spar to the centerline
       // of the top spar at both rib stations.
       const auto& rootRib = wing.ribs[i].rib;
@@ -954,16 +1666,273 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           tipRib.ribThicknessStartFactor * p.ribThickness);
       const double clearBay = std::max(0.0, centerBay + tipStart - rootEnd);
       ShearWebPart web;
-      web.name = "SW" + std::to_string(i + 1);
+      web.name = namePrefix + std::to_string(i + 1);
       web.bayIndex = i + 1;
-      web.thickness = p.shearWebThickness;
+      web.thickness = thickness;
       web.outline = {{0.0, 0.0}, {clearBay, bottom1.y - bottom0.y},
                      {clearBay, top1.y - bottom0.y}, {0.0, top0.y - bottom0.y}};
       web.stationCorners = {bottom0, bottom1, top1, top0};
       wing.shearWebs.push_back(std::move(web));
     }
+  };
+  if (p.shearWebs && p.topSpar && p.bottomSpar) {
+    std::vector<Point2> topCenters;
+    std::vector<Point2> bottomCenters;
+    for (const auto& rib : ribs) {
+      topCenters.push_back(surfaceCenter(rib, 0.25, true, p.topSparHeight));
+      bottomCenters.push_back(surfaceCenter(rib, 0.25, false, p.bottomSparHeight));
+    }
+    addShearWebSet(topCenters, bottomCenters, p.topSparHeight,
+        p.bottomSparHeight, p.shearWebThickness, "SW");
+  }
+  if (p.sparShearWebs) {
+    for (std::size_t top = 0; top < p.spars.size(); ++top) {
+      if (p.spars[top].material != 0 || p.spars[top].verticalLocation != 0) continue;
+      for (std::size_t bottom = 0; bottom < p.spars.size(); ++bottom) {
+        if (p.spars[bottom].material != 0 || p.spars[bottom].verticalLocation != 1 ||
+            p.spars[top].chordLocationPercent != p.spars[bottom].chordLocationPercent)
+          continue;
+        addShearWebSet(sparCenters[top], sparCenters[bottom],
+            p.spars[top].woodHeight, p.spars[bottom].woodHeight,
+            p.sparShearWebThickness,
+            "Spar " + std::to_string(top + 1) + "/Spar " +
+                std::to_string(bottom + 1) + " shear web ");
+      }
+    }
   }
   return wing;
+}
+
+void addRiblets(StructuredWing& wing,
+                const StructureParameters& parameters) {
+  if (!parameters.riblets) return;
+  if (parameters.leadingEdgeType != 3 &&
+      parameters.leadingEdgeType != 4)
+    throw std::invalid_argument("Riblets require a CF leading edge");
+  if (parameters.ribletsPerBay < 1 || parameters.ribletsPerBay > 5)
+    throw std::invalid_argument("Riblets per Bay must be from 1 through 5");
+  if (parameters.ribletStartRib < 1 ||
+      parameters.ribletEndRib > static_cast<int>(wing.ribs.size()) ||
+      parameters.ribletStartRib >= parameters.ribletEndRib)
+    throw std::invalid_argument(
+        "Riblet Start Rib must be before End Rib and within the panel");
+
+  std::optional<std::size_t> selectedSpar;
+  int selectedDistance = std::numeric_limits<int>::max();
+  for (std::size_t index = 0; index < parameters.spars.size(); ++index) {
+    const auto& spar = parameters.spars[index];
+    if (spar.material != 1 || spar.verticalLocation != 2 ||
+        spar.chordLocationPercent < 20 ||
+        spar.chordLocationPercent > 40)
+      continue;
+    const int distance = std::abs(spar.chordLocationPercent - 30);
+    if (distance < selectedDistance) {
+      selectedSpar = index;
+      selectedDistance = distance;
+    }
+  }
+  const bool legacySpar = !selectedSpar && parameters.spars.empty() &&
+      parameters.carbonSpar != 0;
+  if (!selectedSpar && !legacySpar)
+    throw std::invalid_argument(
+        "Riblets require a CF mid-location spar from 20% through 40% chord");
+
+  const double sparFraction = legacySpar ? 0.25 :
+      parameters.spars[*selectedSpar].chordLocationPercent / 100.0;
+  const bool sparIsRectangular = !legacySpar &&
+      parameters.spars[*selectedSpar].type == 2;
+  const double sparWidth = legacySpar
+      ? (parameters.carbonSpar == 1
+          ? parameters.cfTubeOd : parameters.cfRodOd)
+      : (sparIsRectangular
+          ? parameters.spars[*selectedSpar].stripWidth
+          : parameters.spars[*selectedSpar].type == 0
+              ? parameters.spars[*selectedSpar].tubeOd
+              : parameters.spars[*selectedSpar].rodOd);
+  const double sparHeight = sparIsRectangular
+      ? parameters.spars[*selectedSpar].stripThickness : sparWidth;
+  const double leadingDiameter = parameters.leadingEdgeType == 3
+      ? parameters.leadingEdgeTubeOd : parameters.leadingEdgeRodOd;
+
+  std::vector<RibDefinition> fullRibs;
+  fullRibs.reserve(wing.ribs.size());
+  for (const auto& rib : wing.ribs) fullRibs.push_back(rib.rib);
+  std::vector<Point2> nominalSparCenters;
+  nominalSparCenters.reserve(fullRibs.size());
+  for (const auto& rib : fullRibs)
+    nominalSparCenters.push_back(
+        camberCenter(rib, sparFraction * rib.chord));
+  const auto sparCenters =
+      straightMemberCenters(fullRibs, nominalSparCenters);
+  const auto leadingCenters =
+      straightExposedLeadingEdgeCenters(fullRibs, leadingDiameter);
+
+  const std::size_t firstBay =
+      static_cast<std::size_t>(parameters.ribletStartRib - 1);
+  const std::size_t lastBoundary =
+      static_cast<std::size_t>(parameters.ribletEndRib - 1);
+  wing.riblets.reserve(
+      wing.riblets.size() +
+      (lastBoundary - firstBay) *
+          static_cast<std::size_t>(parameters.ribletsPerBay));
+  const auto mix = [](const double first, const double second,
+                      const double t) {
+    return first + (second - first) * t;
+  };
+  for (std::size_t bay = firstBay; bay < lastBoundary; ++bay) {
+    const auto& inner = wing.ribs[bay];
+    const auto& outer = wing.ribs[bay + 1];
+    for (int ordinal = 1; ordinal <= parameters.ribletsPerBay; ++ordinal) {
+      const double t = static_cast<double>(ordinal) /
+          static_cast<double>(parameters.ribletsPerBay + 1);
+      RibDefinition rib{
+          mix(inner.rib.spanPosition, outer.rib.spanPosition, t),
+          mix(inner.rib.chord, outer.rib.chord, t),
+          mix(inner.rib.leadingEdgeOffset, outer.rib.leadingEdgeOffset, t),
+          mix(inner.rib.dihedralHeight, outer.rib.dihedralHeight, t),
+          mix(inner.rib.twistDegrees, outer.rib.twistDegrees, t),
+          mix(inner.rib.ribPlaneAngleDegrees,
+              outer.rib.ribPlaneAngleDegrees, t),
+          -0.5,
+          AirfoilProfile::interpolate(
+              inner.rib.profile, outer.rib.profile, t)};
+      const auto [upper, lower] = localSurfaces(rib);
+      const Point2 sparModel{
+          mix(modelPlanePoint(inner.rib, sparCenters[bay]).x,
+              modelPlanePoint(outer.rib, sparCenters[bay + 1]).x, t),
+          mix(modelPlanePoint(inner.rib, sparCenters[bay]).y,
+              modelPlanePoint(outer.rib, sparCenters[bay + 1]).y, t)};
+      const Point2 sparCenter = localPlanePoint(rib, sparModel);
+      const double cutoffX = std::clamp(
+          sparCenter.x, 0.001, rib.chord - 0.001);
+      const auto retainedUpper = clippedSurface(upper, 0.0, cutoffX);
+      const auto retainedLower = clippedSurface(lower, 0.0, cutoffX);
+      const Point2 top = retainedUpper.back();
+      const Point2 bottom = retainedLower.back();
+      const Point2 arcCenter{
+          cutoffX, 0.5 * (top.y + bottom.y)};
+      const double arcRadius = 0.5 * (top.y - bottom.y);
+      if (arcRadius <= sparWidth * 0.5 + 0.05)
+        throw std::invalid_argument(
+            "The selected CF spar leaves insufficient riblet depth in " +
+            inner.name);
+
+      std::vector<Point2> outline;
+      outline.reserve(retainedUpper.size() + retainedLower.size() + 25);
+      for (auto point = retainedUpper.rbegin();
+           point != retainedUpper.rend(); ++point)
+        outline.push_back(*point);
+      auto lowerPoint = retainedLower.begin();
+      if (std::hypot(outline.back().x - lowerPoint->x,
+                     outline.back().y - lowerPoint->y) < 1.0e-8)
+        ++lowerPoint;
+      outline.insert(outline.end(), lowerPoint, retainedLower.end());
+      constexpr int arcSamples = 24;
+      for (int sample = 1; sample < arcSamples; ++sample) {
+        const double angle = -0.5 * std::numbers::pi +
+            std::numbers::pi * static_cast<double>(sample) / arcSamples;
+        outline.push_back(
+            {arcCenter.x + arcRadius * std::cos(angle),
+             arcCenter.y + arcRadius * std::sin(angle)});
+      }
+
+      StructuredRib riblet{std::move(rib), std::move(outline), {}, {}, {}};
+      riblet.outlineSegments =
+          makeRibOutlineSegments(riblet.outerOutline);
+      if (sparIsRectangular) {
+        const double halfWidth = sparWidth * 0.5;
+        const double halfHeight = sparHeight * 0.5;
+        riblet.booleanCutouts.push_back(rectangle({{{
+            sparCenter.x - halfWidth, sparCenter.y - halfHeight},
+            {sparCenter.x + halfWidth, sparCenter.y - halfHeight},
+            {sparCenter.x + halfWidth, sparCenter.y + halfHeight},
+            {sparCenter.x - halfWidth, sparCenter.y + halfHeight}}}));
+      } else {
+        riblet.booleanHoles.push_back(circle(sparCenter, sparWidth));
+      }
+      const Point2 leadingModel{
+          mix(modelPlanePoint(inner.rib, leadingCenters[bay]).x,
+              modelPlanePoint(outer.rib, leadingCenters[bay + 1]).x, t),
+          mix(modelPlanePoint(inner.rib, leadingCenters[bay]).y,
+              modelPlanePoint(outer.rib, leadingCenters[bay + 1]).y, t)};
+      const auto leadingCenter = localPlanePoint(riblet.rib, leadingModel);
+      auto finishedOutline = exposedLeadingEdgeOutline(
+          riblet.outerOutline, leadingCenter, leadingDiameter * 0.5);
+      riblet.outerOutline = finishedOutline.points;
+      riblet.outlineSegments = finishedOutline.segments;
+      riblet.partOutline = finishedOutline.points;
+      riblet.partOutlineSegments = finishedOutline.segments;
+      riblet.name = inner.name +
+          static_cast<char>('a' + ordinal - 1);
+      wing.riblets.push_back(std::move(riblet));
+    }
+  }
+}
+
+std::size_t ribLighteningHoleWorkerCount(
+    const std::size_t ribCount, const std::size_t maximumWorkers) {
+  if (ribCount == 0) return 0;
+  const unsigned logicalProcessors = std::thread::hardware_concurrency();
+  std::size_t available = logicalProcessors > 2
+      ? static_cast<std::size_t>(logicalProcessors - 2) : 1;
+  if (maximumWorkers > 0)
+    available = std::min(available, maximumWorkers);
+  return std::min(ribCount, available);
+}
+
+void addRibLighteningHoles(
+    StructuredWing& wing, const StructureParameters& parameters,
+    const RibLighteningProgressCallback& progress,
+    const std::size_t maximumWorkers) {
+  if (!parameters.ribLighteningHoles) return;
+  if (parameters.ribLighteningMinimumWoodMargin <= 0.0 ||
+      parameters.ribLighteningMinimumHoleDistance < 0.0)
+    throw std::invalid_argument(
+        "Rib lightening-hole distances must be valid positive dimensions");
+  if (parameters.ribLighteningStartRib < 1 ||
+      parameters.ribLighteningStopRib >
+          static_cast<int>(wing.ribs.size()) ||
+      parameters.ribLighteningStartRib >
+          parameters.ribLighteningStopRib)
+    throw std::invalid_argument(
+        "Rib lightening-hole range must be within the panel");
+
+  const std::size_t first =
+      static_cast<std::size_t>(parameters.ribLighteningStartRib - 1);
+  const std::size_t last =
+      static_cast<std::size_t>(parameters.ribLighteningStopRib);
+  const std::size_t fullRibCount = last - first;
+  const std::size_t count = fullRibCount + wing.riblets.size();
+  const std::size_t workers =
+      ribLighteningHoleWorkerCount(count, maximumWorkers);
+  const std::size_t chunkSize = (count + workers - 1) / workers;
+  std::vector<std::future<void>> tasks;
+  std::atomic_size_t completedRibs{0};
+  tasks.reserve(workers);
+  for (std::size_t worker = 0; worker < workers; ++worker) {
+    const std::size_t chunkFirst = worker * chunkSize;
+    const std::size_t chunkLast = std::min(count, chunkFirst + chunkSize);
+    if (chunkFirst >= chunkLast) break;
+    tasks.push_back(std::async(std::launch::async,
+        [&, chunkFirst, chunkLast] {
+          for (std::size_t jobIndex = chunkFirst;
+               jobIndex < chunkLast; ++jobIndex) {
+            auto& rib = jobIndex < fullRibCount
+                ? wing.ribs[first + jobIndex]
+                : wing.riblets[jobIndex - fullRibCount];
+            auto holes = ribLighteningHoleLayout(
+                rib, parameters.ribLighteningMinimumWoodMargin,
+                parameters.ribLighteningMinimumHoleDistance);
+            rib.internalCutouts.insert(
+                rib.internalCutouts.end(),
+                std::make_move_iterator(holes.begin()),
+                std::make_move_iterator(holes.end()));
+            const std::size_t completed = ++completedRibs;
+            if (progress) progress(completed, count);
+          }
+        }));
+  }
+  for (auto& task : tasks) task.get();
 }
 
 } // namespace designrc::domain

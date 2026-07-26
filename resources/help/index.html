@@ -3,39 +3,40 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC User Help</title>
+  <title>DesignRC 1.0 User Help</title>
   <style>
-    :root { color-scheme: light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body { margin:0; color:var(--ink); background:#e9e2da; font:16px/1.55 "Segoe UI", Arial, sans-serif; }
-    .page { max-width:1120px; margin:0 auto; min-height:100vh; background:var(--paper); box-shadow:0 0 28px #796b5b42; }
+    :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); background:#e9e2da; font:16px/1.55 "Segoe UI",Arial,sans-serif; }
+    .page { max-width:1180px; margin:0 auto; min-height:100vh; background:var(--paper); box-shadow:0 0 28px #796b5b42; }
     header { padding:42px 52px 32px; color:white; background:linear-gradient(125deg,#3e3027,#825237); }
     header h1 { margin:0 0 5px; font-size:2.35rem; letter-spacing:.02em; }
     header p { margin:0; color:#f2e5d8; font-size:1.08rem; }
-    .layout { display:grid; grid-template-columns:245px 1fr; }
+    .layout { display:grid; grid-template-columns:255px 1fr; }
     nav { padding:28px 22px; background:var(--panel); border-right:1px solid var(--line); }
-    nav strong { display:block; margin-bottom:10px; text-transform:uppercase; font-size:.78rem; letter-spacing:.12em; color:var(--muted); }
-    nav a { display:block; padding:5px 8px; color:var(--accent); text-decoration:none; border-radius:4px; }
+    nav strong { display:block; margin:0 0 10px; color:var(--muted); font-size:.78rem; letter-spacing:.12em; text-transform:uppercase; }
+    nav a { display:block; padding:4px 8px; color:var(--accent); text-decoration:none; border-radius:4px; }
     nav a:hover { background:#eadbcd; }
-    main { padding:34px 52px 70px; min-width:0; }
-    h2 { margin:38px 0 12px; padding-bottom:6px; border-bottom:2px solid var(--line); color:#603a24; }
+    main { min-width:0; padding:34px 52px 70px; }
+    h2 { margin:38px 0 12px; padding-bottom:6px; color:#603a24; border-bottom:2px solid var(--line); }
     h2:first-child { margin-top:0; }
     h3 { margin:25px 0 8px; color:#6d4328; }
     h4 { margin:18px 0 5px; }
     p { margin:7px 0 12px; }
-    ul, ol { margin:7px 0 16px; padding-left:24px; }
+    ul,ol { margin:7px 0 16px; padding-left:24px; }
     li { margin:5px 0; }
-    dl { display:grid; grid-template-columns:minmax(155px,220px) 1fr; gap:7px 18px; margin:10px 0 20px; }
-    dt { font-weight:650; color:#563822; }
+    dl { display:grid; grid-template-columns:minmax(165px,225px) 1fr; gap:7px 18px; margin:10px 0 20px; }
+    dt { color:#563822; font-weight:650; }
     dd { margin:0; }
-    .note { margin:16px 0; padding:12px 15px; border-left:4px solid #a3683e; background:#f8f1e9; }
-    kbd { padding:1px 6px; border:1px solid #b9aea4; border-bottom-width:2px; border-radius:4px; background:white; font:13px Consolas, monospace; }
+    .note { margin:16px 0; padding:12px 15px; background:#f8f1e9; border-left:4px solid #a3683e; }
+    .warning { border-left-color:#a43d32; background:#fff0ed; }
+    kbd { padding:1px 6px; background:white; border:1px solid #b9aea4; border-bottom-width:2px; border-radius:4px; font:13px Consolas,monospace; }
     code { color:#633b22; }
-    table { width:100%; border-collapse:collapse; margin:10px 0 22px; }
-    th, td { padding:8px 10px; text-align:left; vertical-align:top; border:1px solid var(--line); }
-    th { background:var(--panel); color:#563822; }
-    footer { padding:20px 52px; color:var(--muted); border-top:1px solid var(--line); background:#faf6f1; }
+    table { width:100%; margin:10px 0 22px; border-collapse:collapse; }
+    th,td { padding:8px 10px; text-align:left; vertical-align:top; border:1px solid var(--line); }
+    th { color:#563822; background:var(--panel); }
+    footer { padding:20px 52px; color:var(--muted); background:#faf6f1; border-top:1px solid var(--line); }
     @media (max-width:820px) { .layout{display:block} nav{border-right:0;border-bottom:1px solid var(--line)} main,header{padding-left:26px;padding-right:26px} dl{grid-template-columns:1fr} dt{margin-top:8px} }
     @media print { body{background:white}.page{max-width:none;box-shadow:none}.layout{display:block}nav{display:none}main{padding:20px 30px}h2{break-after:avoid}table,.note{break-inside:avoid} }
   </style>
@@ -43,228 +44,283 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC User Help</h1>
-    <p>Parametric RC wing design, structure, full-scale plans, and laser-cut part export</p>
+    <h1>DesignRC 1.0 User Help</h1>
+    <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
-      <a href="#workflow">Basic workflow</a>
-      <a href="#units">Units and entry</a>
-      <a href="#menus">Menus and projects</a>
-      <a href="#panels">Wing panels</a>
+      <a href="#overview">What DesignRC does</a>
+      <a href="#workspace">The main window</a>
+      <a href="#workflow">Recommended workflow</a>
+      <a href="#units">Units and value entry</a>
+      <a href="#projects">Menus and projects</a>
+      <a href="#panels">Multi-panel wings</a>
       <a href="#specs">Specs tab</a>
+      <a href="#ribs">Ribs tab</a>
       <a href="#spars">Spars tab</a>
+      <a href="#sheeting">Sheeting tab</a>
+      <a href="#joiners">Joiners tab</a>
       <a href="#lete">LE/TE tab</a>
       <a href="#controls">Ailerons/Flaps tab</a>
-      <a href="#joiners">Joiner tab</a>
-      <a href="#actions">Action buttons</a>
-      <a href="#viewport">3D navigation</a>
-      <a href="#plans">Plans and PDF</a>
-      <a href="#parts">DXF and SVG export</a>
+      <a href="#spoilers">Spoilers tab</a>
+      <a href="#generate">Generate Wing</a>
+      <a href="#viewport">3D View</a>
+      <a href="#plans">Plan View and PDF</a>
+      <a href="#parts">Parts export</a>
+      <a href="#step">STEP assembly export</a>
+      <a href="#defaults">User Defaults</a>
       <a href="#validation">Validation</a>
       <a href="#licenses">Licenses</a>
     </nav>
     <main>
-      <h2 id="workflow">Basic workflow</h2>
-      <ol>
-        <li>Choose the number of wing panels and enter each panel's parameters.</li>
-        <li>Import root and tip airfoil <code>.dat</code> files as needed.</li>
-        <li>Select the spars, sheeting, leading/trailing edges, controls, and joiners.</li>
-        <li>Press <strong>Update View</strong>. Parameter edits alone do not rebuild geometry.</li>
-        <li>Inspect the complete mirrored wing in <strong>3D View</strong>.</li>
-        <li>Press <strong>Generate Plan</strong> to create the flattened full-scale drawing.</li>
-        <li>Save the project, export the plan to PDF, or export selected cutting parts to DXF/SVG.</li>
-      </ol>
-      <div class="note"><strong>Wing convention:</strong> parameters describe one half-wing. DesignRC constructs that half from the center outward and mirrors it for the complete 3D preview and plan.</div>
-
-      <h2 id="units">Global Units and Global/mm/in</h2>
-      <h3>Global Units</h3>
-      <p>The global unit is the project's normal display and entry unit. It can be set to millimeters or inches in <strong>Edit &gt; Defaults</strong>. The setting determines how length controls marked <strong>Global</strong>, calculated metrics, and most plan annotations are shown. Internally, geometry remains dimensionally equivalent when the display unit changes.</p>
-      <h3>The Global, mm, and in selector</h3>
-      <p>Where unit overrides are available, the selector beside a length has three meanings:</p>
-      <dl>
-        <dt>Global</dt><dd>Use the current Global Units setting. Changing Global Units changes this field's display unit.</dd>
-        <dt>mm</dt><dd>Always display and edit this particular value in millimeters, regardless of Global Units.</dd>
-        <dt>in</dt><dd>Always display and edit this particular value in inches, regardless of Global Units.</dd>
-      </dl>
-      <p>Unit overrides belong to the parameter, so plan annotations derived from that parameter use the same unit.</p>
-      <h3>Entering inch measurements</h3>
+      <h2 id="overview">What DesignRC does</h2>
+      <p>DesignRC is a desktop CAD application for designing built-up radio-control airplane wings. You describe one half-wing with one or more connected panels. DesignRC interpolates the airfoil and planform, generates the internal structure and manufacturing geometry, then mirrors the result into a complete wing.</p>
       <ul>
-        <li>Spinner arrows move by exactly 1/32 inch and have no application-imposed upper limit.</li>
-        <li>Values exactly on the 1/32-inch grid display as reduced fractions, such as <code>5/32 in</code> or <code>1 3/4 in</code>.</li>
-        <li>A manually entered decimal is retained as a decimal unless it equals a multiple of 1/32 inch.</li>
-        <li>Fractional input is accepted in forms such as <code>3/16</code> and <code>1 1/2</code>.</li>
+        <li>Imports Selig-style root and tip airfoil <code>.dat</code> files.</li>
+        <li>Interpolates airfoil shape, chord, sweep, twist, and rib stations across each panel.</li>
+        <li>Builds solid ribs, riblets, spars, shear webs, sheeting, leading and trailing edges, control surfaces, hinge posts, spoilers, wiring holes, and fixed or removable joiners.</li>
+        <li>Displays a material-colored Open CASCADE solid assembly in an interactive 3D viewport.</li>
+        <li>Creates a flattened, annotated, full-scale technical plan of both wing halves.</li>
+        <li>Exports plans and laser-cut parts to vector PDF, parts to DXF/SVG/PDF, and the 3D assembly to STEP.</li>
+        <li>Saves editable projects as <code>.designrc</code> files.</li>
+      </ul>
+      <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
+
+      <h2 id="workspace">The main window</h2>
+      <dl>
+        <dt>Wing Actions toolbar</dt><dd>Contains <strong>Generate Wing</strong>, <strong>Generate Plan</strong>, <strong>Export Plan PDF</strong>, <strong>Export Parts</strong>, and <strong>Export STEP</strong>. Downstream actions remain disabled until their required geometry or plan exists.</dd>
+        <dt>Panel editor</dt><dd>The left side contains the number of wing panels, one editor tab per panel, and vertically arranged parameter pages.</dd>
+        <dt>3D View</dt><dd>The right-side solid-model viewport. It opens blank for a new project until <strong>Generate Wing</strong> is pressed.</dd>
+        <dt>Plan View</dt><dd>The flattened technical drawing. This tab is enabled after <strong>Generate Plan</strong>.</dd>
+        <dt>Metrics</dt><dd>Reports full wingspan, full wing area, aspect ratio, and taper ratio after successful generation.</dd>
+        <dt>Status bar</dt><dd>Shows navigation hints and generation progress. A progress bar and <strong>Cancel</strong> button appear while geometry is being built.</dd>
+      </dl>
+
+      <h2 id="workflow">Recommended workflow</h2>
+      <ol>
+        <li>Choose the number of connected half-wing panels.</li>
+        <li>Set each panel's span, chords, sweep, dihedral, twist, airfoils, and ribs.</li>
+        <li>Add spars, sheeting, edge stock, joiners, controls, spoilers, wiring holes, and optional lightening features.</li>
+        <li>Press <strong>Generate Wing</strong> to validate the design and build the complete 3D assembly.</li>
+        <li>Inspect the assembly with orbit, pan, zoom, Fit View, and the preset camera buttons.</li>
+        <li>Press <strong>Generate Plan</strong> to build the full-scale flattened drawing.</li>
+        <li>Save the project and export the plan, selected parts, or STEP assembly.</li>
+      </ol>
+      <p>Editing parameters marks the existing preview and plan as out of date. DesignRC does not automatically rebuild expensive geometry, allowing several related values to be changed first.</p>
+
+      <h2 id="units">Units and value entry</h2>
+      <p>The project-wide length unit is millimeters or inches. Geometry is stored internally in millimeters, so changing display units does not resize the wing.</p>
+      <h3>Global, mm, and in selectors</h3>
+      <p>The User Defaults dialog shows a selector beside every length:</p>
+      <dl>
+        <dt>Global</dt><dd>Use the current global length unit.</dd>
+        <dt>mm</dt><dd>Always display and edit this parameter in millimeters.</dd>
+        <dt>in</dt><dd>Always display and edit this parameter in inches.</dd>
+      </dl>
+      <p>Per-parameter unit overrides are saved and are also used for matching annotations.</p>
+      <h3>Entering measurements</h3>
+      <ul>
+        <li>Inch controls accept decimals, fractions such as <code>3/16</code>, and mixed values such as <code>1 1/2</code>.</li>
+        <li>Spinner arrows advance inch fields by 1/32 inch. Exact 1/32-inch values display as reduced fractions.</li>
+        <li>You may type an explicit suffix such as <code>12 mm</code>, <code>0.5 in</code>, or <code>1/4"</code>. The field converts the value and adopts that explicit unit override.</li>
+        <li>Angle fields are always displayed in degrees. Percent fields represent chordwise position.</li>
       </ul>
 
-      <h2 id="menus">Menus and project files</h2>
+      <h2 id="projects">Menus and project files</h2>
       <h3>File menu</h3>
       <table>
-        <tr><th>Option</th><th>Purpose</th><th>Shortcut</th></tr>
-        <tr><td>New</td><td>Starts a blank project using the installed/user defaults. The viewport stays blank until Update View is pressed.</td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
-        <tr><td>Open</td><td>Loads a <code>.designrc</code> project and regenerates its preview.</td><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td></tr>
-        <tr><td>Save</td><td>Saves to the current <code>.designrc</code> file, or asks for a name if it has not been saved.</td><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td></tr>
-        <tr><td>Save As</td><td>Saves a copy under another <code>.designrc</code> filename.</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td></tr>
-        <tr><td>Exit</td><td>Closes DesignRC. If parameters changed, a prompt offers Save, Discard, or Cancel.</td><td><kbd>Alt</kbd>+<kbd>F4</kbd></td></tr>
+        <tr><th>Command</th><th>Purpose</th><th>Shortcut</th></tr>
+        <tr><td>New</td><td>Starts a project from User Defaults. The 3D viewport stays blank until Generate Wing.</td><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td></tr>
+        <tr><td>Open</td><td>Loads a <code>.designrc</code> file and generates its current preview.</td><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td></tr>
+        <tr><td>Save</td><td>Saves the current editable project.</td><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td></tr>
+        <tr><td>Save As</td><td>Saves under a different filename.</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td></tr>
+        <tr><td>Exit</td><td>Closes DesignRC, prompting before discarding unsaved changes.</td><td><kbd>Alt</kbd>+<kbd>F4</kbd></td></tr>
       </table>
-      <h3>Edit menu</h3>
+      <h3>Edit, View, and Help</h3>
       <dl>
-        <dt>Copy / Paste</dt><dd>Uses standard clipboard operations in the currently focused text or numeric field.</dd>
-        <dt>Defaults</dt><dd>Sets the starting configuration for new projects. This help does not repeat all parameter fields; see the panel-tab descriptions below. Global Units controls the normal unit, while individual Global/mm/in selectors can override it.</dd>
-      </dl>
-      <h3>Help menu</h3>
-      <dl>
-        <dt>Help</dt><dd>Opens this installed HTML document in the system's default web browser. Shortcut: <kbd>F1</kbd>.</dd>
-        <dt>About</dt><dd>Shows the application name, version, and release date.</dd>
+        <dt>Copy / Paste</dt><dd>Standard clipboard operations for the focused text or numeric field.</dd>
+        <dt>Defaults</dt><dd>Opens User Defaults. Shortcut: <kbd>Ctrl</kbd>+<kbd>,</kbd>.</dd>
+        <dt>View</dt><dd>Switches the 3D camera to Reset, Top, Bottom, Front, Back, Left, or Right.</dd>
+        <dt>Help</dt><dd>Opens this local guide in the system browser. Shortcut: <kbd>F1</kbd>.</dd>
+        <dt>About</dt><dd>Shows the product description, version, release date, licensing, and installed license location.</dd>
       </dl>
 
-      <h2 id="panels">Wing panels</h2>
+      <h2 id="panels">Multi-panel wings</h2>
       <dl>
-        <dt>Number of Wing Panels</dt><dd>Sets how many successive panels make up one half-wing. Increasing or decreasing it adds or removes parameter tabs after confirmation.</dd>
-        <dt>Panel 1</dt><dd>The center panel. Its root is at the aircraft centerline and it alone can use Rib 1a.</dd>
-        <dt>Panels 2-N</dt><dd>Outer panels. Each panel automatically inherits the preceding panel's tip chord and tip airfoil as its root chord and root airfoil, so no separate root-chord option is shown.</dd>
+        <dt>Number of Wing Panels</dt><dd>Selects 1–12 connected panels in one half-wing. Changing the count adds or removes panel editors after confirmation where necessary.</dd>
+        <dt>Panel 1</dt><dd>The center panel. Its root chord and root airfoil are editable, and it can use Rib 1a and centerline-only features.</dd>
+        <dt>Panels 2–12</dt><dd>Each outer panel inherits the preceding panel's tip chord and tip airfoil as its root values.</dd>
       </dl>
-      <p>Panel geometry is flattened for plans but assembled with dihedral in 3D. Joint ribs bisect the angle between adjacent panels so their faces meet. Intermediate ribs are perpendicular to that panel's leading/trailing-edge direction.</p>
+      <p>Shared ribs are oriented to bisect the angle between adjoining panels. The 3D model includes dihedral, while the plan flattens the panels to true manufacturing length.</p>
 
       <h2 id="specs">Specs tab</h2>
       <h3>Airfoils</h3>
       <dl>
-        <dt>Import root .dat</dt><dd>Loads a normalized airfoil coordinate file for the panel root. For outer panels the root airfoil comes from the preceding panel.</dd>
-        <dt>Import tip .dat</dt><dd>Loads the airfoil at the panel tip. Ribs between root and tip interpolate between the two profiles.</dd>
+        <dt>Import root .dat</dt><dd>Loads the normalized root profile on Panel 1. Outer-panel roots are inherited.</dd>
+        <dt>Import tip .dat</dt><dd>Loads the panel-tip profile. Intermediate ribs morph between the root and tip profiles.</dd>
       </dl>
       <h3>Dimensions</h3>
       <dl>
-        <dt>Panel Span</dt><dd>The root-to-tip length of this flattened half-wing panel.</dd>
-        <dt>Root Chord</dt><dd>Root airfoil chord. It is editable only on Panel 1; outer panels inherit it.</dd>
-        <dt>Tip Chord</dt><dd>Chord at the panel's outer rib.</dd>
-        <dt>Tip Sweep</dt><dd>Fore/aft offset of the tip leading edge relative to the root leading edge.</dd>
-        <dt>Dihedral</dt><dd>The angular change associated with this panel. DesignRC assembles adjoining panels and bisects their joint angle at the shared ribs.</dd>
-        <dt>Tip Twist</dt><dd>Wash-in/wash-out applied progressively from zero at the root to the entered angle at the tip. Positive values rotate the trailing edge counter-clockwise; negative values rotate it clockwise.</dd>
-        <dt>Rib Thickness</dt><dd>Material thickness used to extrude the rib solids and to calculate rib faces and part endpoints.</dd>
-        <dt>Rib Count</dt><dd>Number of regularly positioned ribs in the panel, including its root and tip ribs.</dd>
-        <dt>Rib Spacing</dt><dd>Read-only center-to-center spacing calculated as Panel Span divided by Rib Count minus one.</dd>
+        <dt>Panel Span</dt><dd>Flattened root-to-tip length of this half-wing panel.</dd>
+        <dt>Root / Tip Chord</dt><dd>Airfoil chord at the panel ends. Root Chord is editable only on Panel 1.</dd>
+        <dt>Tip Sweep</dt><dd>Fore/aft displacement of the tip leading edge from the root leading edge.</dd>
+        <dt>Dihedral</dt><dd>Panel angle used when assembling adjoining panels in 3D.</dd>
+        <dt>Tip Twist</dt><dd>Progressive wash-in or wash-out from zero at the root to the entered tip angle.</dd>
+      </dl>
+
+      <h2 id="ribs">Ribs tab</h2>
+      <dl>
+        <dt>Rib Count</dt><dd>Number of regular rib stations including root and tip. The calculated center spacing is displayed below it.</dd>
+        <dt>Rib Thickness</dt><dd>Sheet thickness used for solid ribs, slots, rib faces, and member endpoints.</dd>
+        <dt>Add Rib 1a</dt><dd>Panel 1 only. Adds a center-section reinforcement rib midway between the first two regular stations; later rib labels adjust accordingly.</dd>
+        <dt>Lightening Holes</dt><dd>Creates optimized circular rib holes over the selected rib range while honoring minimum border and inter-hole distances. This can significantly increase generation time.</dd>
+        <dt>Riblets</dt><dd>Adds one or more partial ribs per bay over the selected range. Riblets require a carbon-fiber leading edge and a mid-position CF spar between 20% and 40% chord.</dd>
       </dl>
 
       <h2 id="spars">Spars tab</h2>
+      <p>Use <strong>Add Spar</strong> to create any number of spar definitions. Check spar headings and press <strong>Delete Checked</strong> to remove selected rows.</p>
       <dl>
-        <dt>Top Spar</dt><dd>Creates a rectangular wood spar on the upper airfoil surface at 25% chord. Height is vertical size; Width is chordwise size. Matching rib notches are cut.</dd>
-        <dt>Bottom Spar</dt><dd>Creates the corresponding rectangular wood spar on the lower surface at 25% chord and cuts its rib notches.</dd>
-        <dt>Shear Webs</dt><dd>Available when both top and bottom spars are selected. Creates laser-cut web parts between ribs and between the spar centers. Thickness is the sheet material thickness. Webs end at rib faces and are omitted where wood joiners occupy the bays.</dd>
-        <dt>CF Tube</dt><dd>Creates a carbon-fiber tube spar centered at 25% airfoil chord. OD cuts the rib hole and defines the outside; ID defines the bore.</dd>
-        <dt>CF Rod</dt><dd>Creates a solid carbon-fiber rod spar centered at 25% airfoil chord. OD defines both the rod and rib hole.</dd>
+        <dt>Chord Location</dt><dd>Position as a percentage of local airfoil chord.</dd>
+        <dt>Top / Bottom / Mid</dt><dd>Places the spar against the upper surface, against the lower surface, or through the airfoil interior.</dd>
+        <dt>Wood</dt><dd>Creates a rectangular spar using Height and Width and cuts matching rib notches.</dd>
+        <dt>CF Tube</dt><dd>Creates a carbon tube with OD and ID and cuts aligned rib holes.</dd>
+        <dt>CF Rod</dt><dd>Creates a solid carbon rod with the selected OD.</dd>
+        <dt>CF Strip</dt><dd>Creates rectangular carbon strip stock using Width and Thickness.</dd>
+        <dt>Shear Webs</dt><dd>Available when matching top and bottom wood spars share a chord location. Creates individual web parts between rib faces using the selected thickness.</dd>
       </dl>
-      <p>Rectangular top/bottom spars and the CF spar choices represent alternate 25%-chord spar systems. Choosing one system clears the other.</p>
-      <h3>Sheeting</h3>
+
+      <h2 id="sheeting">Sheeting tab</h2>
       <dl>
-        <dt>LE Top / Bottom Sheeting</dt><dd>Recesses the appropriate rib surface by the specified thickness and creates sheeting from the leading edge to the 25% spar. With a CF spar, sheeting ends at the spar center.</dd>
-        <dt>TE Top / Bottom Sheeting</dt><dd>Recesses the ribs and creates sheeting from the 25% spar to the trailing edge. With a CF spar, it starts at the spar center.</dd>
-        <dt>Stop Rib Number</dt><dd>The final rib covered by that sheet. The sheet begins at Rib 1 and extends to the outer face of the stop rib.</dd>
+        <dt>LE Top / Bottom Sheeting</dt><dd>Recesses the matching rib surface and builds curved sheeting between the leading-edge system and the applicable spar boundary.</dd>
+        <dt>TE Top / Bottom Sheeting</dt><dd>Builds recessed curved sheeting from the spar region toward the trailing-edge system.</dd>
+        <dt>Stop Rib Number</dt><dd>Last rib covered by a sheet that begins at the panel root.</dd>
+        <dt>Turbulators</dt><dd>Adds 1–4 longitudinal square-section strips. LE sheeting is divided around enabled turbulators.</dd>
       </dl>
-      <h3>Other longitudinal members</h3>
+
+      <h2 id="joiners">Joiners tab</h2>
+      <p>Choose whether the panel joint is <strong>Fixed</strong> or <strong>Removable</strong>. Changing panel type deletes incompatible joiner rows after confirmation.</p>
+      <h3>Fixed Panel</h3>
+      <p><strong>Add Fixed Joiner</strong> creates rows at an entered chord location. A fixed joiner may be:</p>
+      <ul>
+        <li>a one-piece V-shaped wood joiner aligned with matching upper and lower wood spars;</li>
+        <li>a carbon-fiber tube or rod; or</li>
+        <li>a steel rod.</li>
+      </ul>
+      <h3>Removable Panel</h3>
       <dl>
-        <dt>Turbulators</dt><dd>Creates the selected number of square-section strips evenly spaced between the leading edge and the 25% spar. Height and Width define each strip. If LE sheeting is also selected, it is cut to fit tightly around the turbulators.</dd>
-        <dt>Top 60% Rear Spar</dt><dd>Creates a rectangular upper spar at 60% airfoil chord and cuts matching rib notches.</dd>
-        <dt>Bottom 60% Rear Spar</dt><dd>Creates a rectangular lower spar at 60% airfoil chord and cuts matching rib notches.</dd>
+        <dt>Sleeve/Rod Joiner</dt><dd>Defines which side of the joint carries the sleeve and rod, their materials, diameters, and corresponding adjoining-panel parts.</dd>
+        <dt>Alignment Pin</dt><dd>Defines either a sleeve/pin arrangement or a pin/hole arrangement, including side, material, and diameter.</dd>
+        <dt>Delete Checked</dt><dd>Removes the selected fixed or removable rows.</dd>
       </dl>
+      <p>Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. At the wing center, a wood joiner passes through R1 and also R1a when that optional rib is present, then stops against the inner face of R2. At an outboard panel joint, it extends one rib bay into each panel, passes through only the two ribs at the joint, and stops against the inner faces of the next ribs. Each rib the wood joiner passes through is bisected into two manufacturing pieces. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint.</p>
 
       <h2 id="lete">LE/TE tab</h2>
       <h3>Leading edge</h3>
       <dl>
-        <dt>Block LE Stock</dt><dd>Makes a vertical cut near the leading edge, removes the rib noses, and creates a straight wood leading-edge member matching the removed region. Width is its chordwise depth; Height must accommodate the rib cut-edge height.</dd>
-        <dt>CF Tube LE</dt><dd>Cuts circular holes through the ribs and creates a uniform carbon tube for the full panel. OD defines the outside and hole diameter; ID defines the bore.</dd>
-        <dt>CF Rod LE</dt><dd>Cuts circular holes and creates a solid carbon rod. OD defines the rod and hole diameter.</dd>
+        <dt>Block LE Stock</dt><dd>Removes the rib noses at the selected width and lofts smooth wood stock from the airfoil profiles at the member ends. Height must accommodate every cut rib.</dd>
+        <dt>CF Tube LE</dt><dd>Creates an exposed carbon tube and circular rib cradles. OD defines the outside; ID defines the bore.</dd>
+        <dt>CF Rod LE</dt><dd>Creates a solid exposed carbon rod and matching rib cradles.</dd>
       </dl>
       <h3>Trailing edge</h3>
       <dl>
-        <dt>Sheet TE Stock</dt><dd>Makes a vertical rear cut and creates straight sheet trailing-edge stock matching the removed rib region. Width is chordwise depth and Height is stock height.</dd>
-        <dt>Slotted for Ribs</dt><dd>Adds rib slots to the sheet TE stock and extends the ribs into them. Slots are nominally 1/4 inch or 6 mm deep according to the design units. Slot outlines remain open where required for correct laser cutting.</dd>
+        <dt>Sheet TE Stock</dt><dd>Removes the rear rib profile and lofts smooth sheet stock matching the airfoil-derived top and bottom surfaces.</dd>
+        <dt>Slotted for Ribs</dt><dd>Extends ribs into open-ended slots in the trailing-edge stock for keyed assembly.</dd>
       </dl>
-      <p>LE and TE parts extend to the outer faces of the root and tip ribs. Update View stops with an error if the selected stock height cannot accommodate the corresponding rib cut edge.</p>
 
       <h2 id="controls">Ailerons/Flaps tab</h2>
-      <p>Selecting Ailerons or Flaps reveals its parameters and cuts the required control-surface region from the ribs and trailing-edge system.</p>
+      <p>Ailerons and flaps are separate, closed solids. Each is one smooth spline loft between the airfoil-derived profile at its start and the profile at its end; intermediate rib outlines are not imprinted on the control surface.</p>
       <dl>
-        <dt>Width</dt><dd>Chordwise depth of the control surface measured forward from the trailing edge.</dd>
-        <dt>Height</dt><dd>Vertical stock/body height used to form the control surface.</dd>
-        <dt>Start Rib / Stop Rib</dt><dd>Ribs bounding the control surface. The first rib gap in every panel remains a normal trailing-edge bay. Flaps must stop before the panel tip; ailerons may stop at the tip rib.</dd>
-        <dt>Hinge Post Width / Height</dt><dd>Cross-section of the fixed hinge post ahead of the control surface.</dd>
+        <dt>Width</dt><dd>Chordwise depth measured forward from the trailing edge.</dd>
+        <dt>Height</dt><dd>Nominal control body height setting.</dd>
+        <dt>Start / Stop Rib</dt><dd>Spanwise boundaries. Flaps stop before a panel tip; an aileron may extend through the tip rib.</dd>
+        <dt>Hinge Post Width / Height</dt><dd>Cross-section of the separate fixed hinge-post solid ahead of the movable control.</dd>
+        <dt>Wiring Holes</dt><dd>Adds rectangular wiring openings through the selected ribs using start/end ribs, chord location, width, and height.</dd>
       </dl>
       <ul>
-        <li>A clearance of 1/16 inch or 1.5 mm is maintained around the movable control surface.</li>
-        <li>If an aileron reaches the tip, its body and hinge post extend through the tip rib and that rib is cut to fit.</li>
-        <li>When both controls are used, Aileron Start Rib cannot be less than Flap Stop Rib.</li>
-        <li>If Flap Stop Rib equals Aileron Start Rib, flap and aileron widths must match. DesignRC corrects the last-edited width and uses one continuous hinge post across the shared boundary.</li>
-        <li>TE members remain in the unaffected first/last bays and terminate at the correct faces of ribs adjacent to controls.</li>
+        <li>A clearance gap is maintained around movable controls.</li>
+        <li>When flap and aileron meet at one rib, their widths must match and DesignRC creates a continuous hinge post.</li>
+        <li>Aileron Start Rib cannot precede Flap Stop Rib.</li>
       </ul>
 
-      <h2 id="joiners">Joiner tab</h2>
+      <h2 id="spoilers">Spoilers tab</h2>
       <dl>
-        <dt>Add Rib 1a</dt><dd>Panel 1 only. Inserts an additional rib halfway between R1 and the next regular rib, useful for center-section support and joiner layout.</dd>
-        <dt>Center Spar Wood Joiner</dt><dd>Creates a laser-cut wood joiner tied to selected top/bottom 25% spars. Wood joiners occupy two rib bays and stop at rib faces rather than passing through the outer ribs. Joint ribs are split around the slot. Misaligned wood spars cause Update View to stop because a wood joiner cannot bend.</dd>
-        <dt>Joiner behind mid spar</dt><dd>Adds a CF rod, CF tube, or aluminum tube joiner at approximately 30% chord. OD controls the member/hole size; tube choices also use ID.</dd>
-        <dt>Joiner at 60% Chord</dt><dd>Adds the selected tubular/rod joiner at 60% chord with OD and, for tubes, ID.</dd>
+        <dt>Spoilers</dt><dd>Builds a recessed spoiler panel, forward and aft frame rails, and end support rails over the selected rib range.</dd>
+        <dt>Start / End Rib</dt><dd>Defines the spoiler span. A center spoiler requires zero dihedral.</dd>
+        <dt>Start Chord Location</dt><dd>Positions the spoiler assembly as a percentage of local chord.</dd>
+        <dt>Chordwise Length / Thickness</dt><dd>Defines the spoiler panel.</dd>
+        <dt>Frame Rail Width</dt><dd>Width of the surrounding frame rails. Support Rail Height is calculated and displayed.</dd>
+        <dt>Lightening Holes</dt><dd>Adds optimized holes to the spoiler using minimum border and circle spacing.</dd>
+        <dt>Wiring Holes</dt><dd>The same synchronized wiring-hole definition shown on the Ailerons/Flaps page.</dd>
       </dl>
-      <p>CF and aluminum joiners pass through four ribs around a panel joint. Wood joiners pass through the two joint ribs and occupy two bays without passing through the next ribs. Joiner axes and holes are oriented perpendicular to the joint ribs so adjoining panels assemble at the intended dihedral.</p>
 
-      <h2 id="actions">Buttons and status information</h2>
-      <dl>
-        <dt>Update View</dt><dd>Validates all panels and rebuilds ribs, cutouts, structural members, joiners, mirrored geometry, and display meshes. The cursor changes to busy while lengthy work is active.</dd>
-        <dt>Cancel</dt><dd>Appears in the status bar during Update View. Requests cancellation after the current geometry operation completes safely.</dd>
-        <dt>Progress bar</dt><dd>Shows the current rebuild percentage while status text describes the active stage.</dd>
-        <dt>Fit View</dt><dd>Fits the entire model or plan into the active graphics tab.</dd>
-        <dt>Generate Plan</dt><dd>Enabled only after valid geometry is generated. Builds the flattened, annotated full-scale drawing and switches to Plan View.</dd>
-        <dt>Export Plan PDF</dt><dd>Enabled after a plan is generated. Writes the displayed plan as a single custom-size vector PDF at 1:1 scale.</dd>
-        <dt>Export DXF/SVG</dt><dd>Opens the part-selection dialog for laser-cut part export.</dd>
-      </dl>
-      <p>The metrics area reports full wingspan, full wing area, aspect ratio, and taper ratio after a successful update.</p>
+      <h2 id="generate">Generate Wing</h2>
+      <p><strong>Generate Wing</strong> validates every panel and then builds ribs, openings, members, controls, joiners, material solids, the mirrored assembly, and display meshes. Progress messages identify the active stage. <strong>Cancel</strong> requests a safe stop after the current geometry operation.</p>
+      <p>Successful generation enables Generate Plan, Export Parts, and Export STEP. A failed generation reports the specific panel or component and leaves the last valid preview intact.</p>
 
-      <h2 id="viewport">3D View and navigation</h2>
+      <h2 id="viewport">3D View</h2>
       <dl>
-        <dt>Left mouse drag</dt><dd>Orbits the camera around the model.</dd>
-        <dt>Right mouse drag</dt><dd>Pans the view.</dd>
+        <dt>Left drag</dt><dd>Orbits around the assembly.</dd>
+        <dt>Right drag</dt><dd>Pans the camera.</dd>
         <dt>Mouse wheel</dt><dd>Zooms in and out.</dd>
-        <dt>Middle mouse button</dt><dd>No assigned action.</dd>
-        <dt>Axis gizmo</dt><dd>Shows the X, Y, and Z directions with their arrows meeting at a common origin.</dd>
+        <dt>Fit View</dt><dd>Fits the complete assembly in the viewport.</dd>
+        <dt>Reset / presets</dt><dd>Reset restores the default camera; Top, Bottom, Front, Back, Left, and Right select orthographic directions.</dd>
       </dl>
-      <p>Wood components use the wood display color, carbon-fiber components are black, and aluminum components are silver. Lighting and per-part edge contrast make adjoining pieces distinguishable.</p>
+      <p>Parts are colored by material: wood, carbon fiber, aluminum, steel, and fiberglass are visually distinct. Part edges remain visible for assembly inspection.</p>
 
-      <h2 id="plans">Plan View and PDF export</h2>
-      <p>The plan shows both flattened wing halves, one above the other, without dihedral foreshortening. It includes rib widths and names, LE/TE and spar outlines, sheeting, shear webs, joiners, hinge posts, control surfaces, dimensions, dihedral and twist annotations, panel spans between the halves, the R1 cutaway, border, wing metrics, and title block.</p>
+      <h2 id="plans">Plan View and plan PDF</h2>
+      <p><strong>Generate Plan</strong> creates a flattened drawing of both wing halves at manufacturing dimensions. It includes rib outlines and labels, spars, sheeting, edge stock, controls, spoilers, hinge posts, joiners, dimensions, panel spans, dihedral and twist notes, metrics, borders, and a title block.</p>
       <dl>
-        <dt>Left mouse drag</dt><dd>Pans the plan.</dd>
-        <dt>Mouse wheel</dt><dd>Zooms the plan.</dd>
-        <dt>Export Plan PDF</dt><dd>Starts in the last folder used for file I/O and proposes <code>project-name.pdf</code>. The PDF page has the plan's actual physical dimensions and a scale of 1:1.</dd>
+        <dt>Left drag</dt><dd>Pans the drawing.</dd>
+        <dt>Mouse wheel</dt><dd>Zooms the drawing.</dd>
+        <dt>Fit View</dt><dd>Fits the full plan when Plan View is active.</dd>
+        <dt>Export Plan PDF</dt><dd>Writes a vector PDF on a custom page sized to the complete drawing. Geometry is exported at 1:1 scale.</dd>
       </dl>
-      <div class="note">Changing any design parameter invalidates the current plan. Run Update View and Generate Plan again before exporting a revised PDF.</div>
+      <div class="note">Changing any design parameter invalidates the plan. Generate Wing and Generate Plan again before exporting a revised plan.</div>
 
-      <h2 id="parts">DXF and SVG part export</h2>
-      <p>The export dialog lists available ribs, shear webs, sheet TE parts, wood joiners, and one dihedral-angle template per panel.</p>
+      <h2 id="parts">Parts export</h2>
+      <p><strong>Export Parts</strong> lists all available ribs and split rib halves, riblets, shear webs, sheet-stock parts, wood joiners, spoilers, and one dihedral-angle template per panel. A rib bisected by a wood joiner is exported as two separate closed pieces in its part drawing.</p>
       <dl>
-        <dt>DXF / SVG</dt><dd>Select either format or both. At least one format must be checked.</dd>
-        <dt>Select All</dt><dd>Checks every listed part.</dd>
-        <dt>Select None</dt><dd>Clears every listed part so a smaller set can be chosen.</dd>
-        <dt>Part checkboxes</dt><dd>Choose the individual files to create. Names match drawing part names, for example <code>R1.dxf</code>, <code>SW1.svg</code>, or <code>J2.dxf</code>.</dd>
+        <dt>DXF / SVG / PDF</dt><dd>Select one or more output formats. DXF and SVG are suitable for CAD and laser workflows. A combined PDF places all selected parts tightly on one custom-size poster page at full scale; trailing-edge stock is oriented with its length horizontal.</dd>
+        <dt>Initial selection</dt><dd>No parts are selected when the dialog opens. OK remains disabled until at least one format and one part are selected.</dd>
+        <dt>All Parts</dt><dd>Exports all generated part drawings into one combined file for each selected format. The PDF is one poster-size page rather than letter-size tiles.</dd>
+        <dt>Select All / None</dt><dd>Checks or clears the entire list.</dd>
+        <dt>Individual parts</dt><dd>Creates a separate file named from each checked part.</dd>
       </dl>
-      <p>DXF and SVG are dimensioned in millimeters for consistent CAD and laser software import. SVG files declare their physical size in millimeters. Ribs include all generated holes, notches, slots, and split-piece outlines. Centered part names are positioned to avoid cut lines where possible.</p>
+      <p>DXF and SVG use millimeters for reliable CAD import. Exported ribs include generated holes, notches, slots, lightening geometry, and split-piece outlines.</p>
 
-      <h2 id="validation">Validation and corrections</h2>
-      <p>Update View validates parameter combinations before expensive geometry work. Typical checks include valid control-surface rib ranges, equal widths at a shared flap/aileron rib, required joiner material selection, straight wood-spar alignment, feasible LE/TE stock height, capped rib solids, and valid boolean cuts.</p>
-      <p>Some related fields are corrected automatically when there is one unambiguous valid value; a message explains the correction. Other errors stop processing so the indicated panel can be corrected. No previous valid preview is replaced by failed geometry.</p>
+      <h2 id="step">STEP assembly export</h2>
+      <p><strong>Export STEP</strong> writes the current generated 3D model as a named assembly. Individual wood, carbon-fiber, aluminum, steel, and fiberglass components remain separate assembly parts with material colors. STEP export requires a current successful Generate Wing operation.</p>
+
+      <h2 id="defaults">User Defaults</h2>
+      <p><strong>Edit &gt; Defaults</strong> controls the starting state for new projects:</p>
+      <ul>
+        <li>global millimeter or inch display;</li>
+        <li>default number of connected panels;</li>
+        <li>geometry worker threads, up to the available CPU thread count minus one;</li>
+        <li>complete parameter defaults for every panel; and</li>
+        <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
+      </ul>
+      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.0 installed defaults.</p>
+
+      <h2 id="validation">Validation and automatic corrections</h2>
+      <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler range and center-dihedral rules, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
+      <p>When only one valid correction exists, DesignRC may adjust a related field and explain the change. Otherwise generation stops with a message identifying what must be corrected.</p>
+      <div class="note warning"><strong>Manufacturing responsibility:</strong> inspect exported geometry, material choices, clearances, structural loads, and machine settings before cutting or flying. DesignRC does not certify structural strength or airworthiness.</div>
 
       <h2 id="licenses">Licenses and source code</h2>
-      <p>DesignRC is Copyright &copy; 2026 Barry Foust and is free software licensed under the GNU General Public License version 3 only. DesignRC comes with absolutely no warranty. The corresponding DesignRC source and build scripts for each installer release must be published with that release at <a href="https://github.com/barryfx/DesignRC">github.com/barryfx/DesignRC</a>.</p>
-      <p>DesignRC dynamically links <a href="https://www.qt.io/">Qt 6</a> under LGPL 3.0, <a href="https://dev.opencascade.org/">Open CASCADE Technology</a> under LGPL 2.1 with the Open CASCADE exception, and <a href="https://freetype.org/">FreeType</a> under the FreeType License. Users may replace these DLLs with compatible modified versions and may reverse engineer DesignRC when necessary to debug those library modifications.</p>
-      <p>The installed <code>licenses</code> folder contains the complete license texts, exact source locations, and third-party notices:</p>
+      <p>DesignRC is Copyright &copy; 2026 Barry Foust and is free software licensed under the GNU General Public License version 3 only. It comes with absolutely no warranty. Source and build scripts are published at <a href="https://github.com/barryfx/DesignRC">github.com/barryfx/DesignRC</a>.</p>
+      <p>DesignRC dynamically links Qt 6 under LGPL 3.0, Open CASCADE Technology under LGPL 2.1 with its additional exception, and FreeType under the FreeType License. Complete texts and notices are installed in the <code>licenses</code> folder:</p>
       <ul>
         <li><a href="../licenses/DESIGNRC-GPL-3.0.txt">DesignRC GPL 3.0</a></li>
         <li><a href="../licenses/QT-LGPL-3.0.txt">Qt LGPL 3.0</a></li>
         <li><a href="../licenses/OCCT-LGPL-2.1.txt">OCCT LGPL 2.1</a> and <a href="../licenses/OCCT-LGPL-EXCEPTION.txt">Open CASCADE exception</a></li>
         <li><a href="../licenses/FREETYPE-FTL.txt">FreeType License</a></li>
-        <li><a href="../licenses/THIRD_PARTY_NOTICES.md">Complete third-party notices</a></li>
+        <li><a href="../licenses/THIRD_PARTY_NOTICES.md">Third-party notices</a></li>
       </ul>
     </main>
   </div>
-  <footer>DesignRC 0.9.0 &middot; Release date: July 19, 2026</footer>
+  <footer>DesignRC 1.0 &middot; Release date: July 27, 2026</footer>
 </div>
 </body>
 </html>

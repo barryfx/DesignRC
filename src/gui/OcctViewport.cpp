@@ -120,22 +120,28 @@ void OcctViewport::initializeViewer() {
   view_->SetProj(V3d_XposYnegZpos);
   displayViewGizmo();
   if (!pendingWoodShape_.IsNull() || !pendingCarbonFiberShape_.IsNull() ||
-      !pendingAluminumShape_.IsNull())
+      !pendingAluminumShape_.IsNull() || !pendingSteelShape_.IsNull() ||
+      !pendingFiberglassShape_.IsNull())
     displayPendingShapes();
   view_->MustBeResized();
   redraw();
 }
 
 void OcctViewport::displayShape(const TopoDS_Shape& shape) {
-  displayMaterialShapes(shape, TopoDS_Shape{}, TopoDS_Shape{});
+  displayMaterialShapes(shape, TopoDS_Shape{}, TopoDS_Shape{},
+      TopoDS_Shape{}, TopoDS_Shape{});
 }
 
 void OcctViewport::displayMaterialShapes(const TopoDS_Shape& wood,
                                          const TopoDS_Shape& carbonFiber,
-                                         const TopoDS_Shape& aluminum) {
+                                         const TopoDS_Shape& aluminum,
+                                         const TopoDS_Shape& steel,
+                                         const TopoDS_Shape& fiberglass) {
   pendingWoodShape_ = wood;
   pendingCarbonFiberShape_ = carbonFiber;
   pendingAluminumShape_ = aluminum;
+  pendingSteelShape_ = steel;
+  pendingFiberglassShape_ = fiberglass;
   if (context_.IsNull()) return;
   displayPendingShapes();
   fitAll();
@@ -145,7 +151,7 @@ void OcctViewport::displayPendingShapes() {
   for (const auto& displayed : displayedShapes_) context_->Remove(displayed, false);
   displayedShapes_.clear();
 
-  enum class Appearance { Wood, CarbonFiber, Aluminum };
+  enum class Appearance { Wood, CarbonFiber, Aluminum, Steel, Fiberglass };
   const auto display = [&](const TopoDS_Shape& shape, const Appearance appearance) {
     if (shape.IsNull() || !TopExp_Explorer{shape, TopAbs_FACE}.More()) return;
     auto object = occ::handle<AIS_Shape>{new AIS_Shape{shape}};
@@ -170,12 +176,24 @@ void OcctViewport::displayPendingShapes() {
       material.SetShininess(0.85F);
       object->SetMaterial(material);
       object->SetColor(Quantity_Color{0.015, 0.015, 0.015, Quantity_TOC_RGB});
-    } else {
+    } else if (appearance == Appearance::Aluminum) {
       object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
       Graphic3d_MaterialAspect material{Graphic3d_NOM_ALUMINIUM};
       material.SetShininess(0.9F);
       object->SetMaterial(material);
       object->SetColor(Quantity_Color{0.68, 0.70, 0.74, Quantity_TOC_RGB});
+    } else if (appearance == Appearance::Steel) {
+      object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
+      Graphic3d_MaterialAspect material{Graphic3d_NOM_STEEL};
+      material.SetShininess(0.95F);
+      object->SetMaterial(material);
+      object->SetColor(Quantity_Color{0.90, 0.91, 0.93, Quantity_TOC_RGB});
+    } else {
+      object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
+      Graphic3d_MaterialAspect material{Graphic3d_NOM_PLASTIC};
+      material.SetShininess(0.3F);
+      object->SetMaterial(material);
+      object->SetColor(Quantity_Color{0.96, 0.91, 0.72, Quantity_TOC_RGB});
     }
     // Selection is not currently used; skip its expensive face hierarchy.
     context_->Display(object, AIS_Shaded, -1, false);
@@ -184,6 +202,8 @@ void OcctViewport::displayPendingShapes() {
   display(pendingWoodShape_, Appearance::Wood);
   display(pendingCarbonFiberShape_, Appearance::CarbonFiber);
   display(pendingAluminumShape_, Appearance::Aluminum);
+  display(pendingSteelShape_, Appearance::Steel);
+  display(pendingFiberglassShape_, Appearance::Fiberglass);
   // Publish all material presentations before FitAll queries their combined
   // bounds. With several newly displayed AIS objects, deferred viewer updates
   // can otherwise leave the first automatic fit using incomplete extents.
@@ -194,6 +214,8 @@ void OcctViewport::clearShape() {
   pendingWoodShape_.Nullify();
   pendingCarbonFiberShape_.Nullify();
   pendingAluminumShape_.Nullify();
+  pendingSteelShape_.Nullify();
+  pendingFiberglassShape_.Nullify();
   if (context_.IsNull()) return;
   for (const auto& displayed : displayedShapes_) context_->Remove(displayed, false);
   displayedShapes_.clear();
@@ -205,6 +227,30 @@ void OcctViewport::fitAll() {
   view_->FitAll(0.05, false);
   view_->ZFitAll();
   redraw();
+}
+
+void OcctViewport::setCameraView(const CameraView cameraView) {
+  initializeViewer();
+  if (view_.IsNull()) return;
+  switch (cameraView) {
+    case CameraView::Reset:  view_->SetProj(V3d_XposYnegZpos); break;
+    case CameraView::Top:
+      view_->SetProj(V3d_Zpos);
+      view_->SetUp(-1.0, 0.0, 0.0);
+      break;
+    case CameraView::Bottom:
+      view_->SetProj(V3d_Zneg);
+      view_->SetUp(-1.0, 0.0, 0.0);
+      break;
+    // The wing chord runs along +X, span along +/-Y, and vertical along +Z.
+    // Front therefore looks aft from the leading edge, while left and right
+    // look inward from their corresponding wing tips.
+    case CameraView::Front:  view_->SetProj(V3d_Xneg); break;
+    case CameraView::Back:   view_->SetProj(V3d_Xpos); break;
+    case CameraView::Left:   view_->SetProj(V3d_Yneg); break;
+    case CameraView::Right:  view_->SetProj(V3d_Ypos); break;
+  }
+  fitAll();
 }
 
 void OcctViewport::mousePressEvent(QMouseEvent* event) {

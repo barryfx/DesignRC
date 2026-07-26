@@ -1,0 +1,15 @@
+Feature Requests
+
+
+1) Option for center joiner for wing that plug into the fuse.
+2) On joiners - option for rod type joiners that fit into a sleave. Allow for possitioning inside the spar caps or anywhere else fore and aft. Also a rear joiner/guide pin with or without a sleave.
+3)Extra holes for wiring and lightening holes in different shapes.
+4)Washout/twist - when you apply the twist to one of the mid or center panel - like with the Bubble Dancer/Allegro etc, the next outer panel does not align any more and there is no way to apply the twist to the root rib.
+5) The export function exports each rib as a separate file. Thats very time consuming to import each one separately to LightBurn for grouping, and setting up cutting files, etc. It would be much better to have the entire file get imported including the planview. I always end up needing to customise small details and its essential to be able to see all the parts at the same time.
+6) A zoom function would be nice for the 3D and plan views to check the fit of small sections like the joiners.
+7) spoiler option
+8) View Changes (Reset, Top, Bottom, Right, Left, Front, Back)
+9) Export parts to PDF
+10) Export to STEP file
+*11) Create Desktop Icon
+12) Wire holes in ribs

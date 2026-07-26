@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-current release is **0.9.0**.
+current release is **1.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64 and Ubuntu 24.04 LTS x86-64.
 > The Linux build has only been tested on Ubuntu 24.04 under WSL 2 with WSLg; other Linux
@@ -18,7 +18,8 @@ current release is **0.9.0**.
 - Displays the assembled wing in an interactive OpenCascade 3D viewport.
 - Produces a flattened, annotated, full-scale technical plan of both wing halves.
 - Exports the plan as a custom-page vector PDF at 1:1 scale.
-- Exports selected laser-cut parts as full-scale DXF and/or SVG files.
+- Exports selected laser-cut parts as full-scale DXF, SVG, and/or PDF files.
+- Exports the material-colored 3D assembly as STEP.
 - Saves editable projects in the `.designrc` format.
 - Supports global millimeter or inch display units and per-parameter unit overrides. Inch spinner
   values advance in 1/32-inch increments and display exact 1/32-inch values as fractions.
@@ -34,13 +35,13 @@ Run it anyway if you wish to install.
 
 ## Downloading the Ubuntu 24.04 package
 
-Download `designrc_0.9.0_amd64.deb` from the
+Download `designrc_1.0_amd64.deb` from the
 [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases). The package targets
 Ubuntu 24.04 LTS on x86-64 (`amd64`) and has only been tested under WSL 2 with WSLg. Install it from
 the directory containing the download:
 
 ```bash
-sudo apt install ./designrc_0.9.0_amd64.deb
+sudo apt install ./designrc_1.0_amd64.deb
 designrc
 ```
 
@@ -59,14 +60,14 @@ sudo apt install wslu xdg-utils
 2. Configure each panel on the **Specs**, **Spars**, **LE/TE**, **Ailerons/Flaps**, and **Joiner**
    tabs.
 3. Import root and tip airfoil `.dat` files where required.
-4. Press **Update View** to validate the design and build the 3D geometry.
+4. Press **Generate Wing** to validate the design and build the 3D geometry.
 5. Inspect the wing with left-drag orbit, right-drag pan, and mouse-wheel zoom.
 6. Press **Generate Plan** to create the flattened technical drawing.
 7. Export the plan to PDF or export selected cutting parts to DXF/SVG.
 8. Save the editable design as a `.designrc` project.
 
 Parameter edits do not automatically rebuild geometry. This allows several values to be changed
-before running the potentially expensive **Update View** operation.
+before running the potentially expensive **Generate Wing** operation.
 
 ## Source layout
 
@@ -165,12 +166,16 @@ ctest --test-dir build/debug -C Debug -R designrc_geometry_tests --output-on-fai
 ```
 
 The application starts maximized. A new project intentionally leaves the 3D viewport blank until
-**Update View** is pressed.
+**Generate Wing** is pressed.
 
 ### Build the Windows installer
 
 An installer requires the optimized OCCT libraries at `../third_party/occt/install-release` and
-Inno Setup 6. Install the installer compiler once with:
+Inno Setup 6. The OCCT Release installation must be configured with both
+`BUILD_MODULE_ApplicationFramework=ON` and `BUILD_MODULE_DataExchange=ON` because DesignRC's STEP
+assembly exporter uses XCAF and STEP data-exchange support.
+
+Install the installer compiler once with:
 
 ```powershell
 winget install --id JRSoftware.InnoSetup -e
@@ -230,8 +235,8 @@ cmake -S "$occt_source" -B "$HOME/build/designrc-occt-debug" -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_INSTALL_PREFIX="$occt_debug_prefix" \
   -DINSTALL_DIR_LAYOUT=Unix -DINSTALL_DIR_CMAKE=cmake \
-  -DBUILD_MODULE_ApplicationFramework=OFF \
-  -DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_Draw=OFF \
+  -DBUILD_MODULE_ApplicationFramework=ON \
+  -DBUILD_MODULE_DataExchange=ON -DBUILD_MODULE_Draw=OFF \
   -DUSE_FREETYPE=ON -DUSE_OPENGL=ON -DUSE_XLIB=ON \
   -DUSE_FFMPEG=OFF -DUSE_FREEIMAGE=OFF -DUSE_TBB=OFF -DUSE_VTK=OFF
 cmake --build "$HOME/build/designrc-occt-debug"
@@ -266,8 +271,8 @@ cmake -S "$occt_source" -B "$HOME/build/designrc-occt-release" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_INSTALL_PREFIX="$occt_release_prefix" \
   -DINSTALL_DIR_LAYOUT=Unix -DINSTALL_DIR_CMAKE=cmake \
-  -DBUILD_MODULE_ApplicationFramework=OFF \
-  -DBUILD_MODULE_DataExchange=OFF -DBUILD_MODULE_Draw=OFF \
+  -DBUILD_MODULE_ApplicationFramework=ON \
+  -DBUILD_MODULE_DataExchange=ON -DBUILD_MODULE_Draw=OFF \
   -DUSE_FREETYPE=ON -DUSE_OPENGL=ON -DUSE_XLIB=ON \
   -DUSE_FFMPEG=OFF -DUSE_FREEIMAGE=OFF -DUSE_TBB=OFF -DUSE_VTK=OFF
 cmake --build "$HOME/build/designrc-occt-release"
@@ -285,15 +290,15 @@ when the source tree is hosted on a WSL `/mnt/c` mount. It writes the Ubuntu 24.
 corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_0.9.0_amd64.deb
-dist/DesignRC-0.9.0-source.tar.gz
-dist/DesignRC-0.9.0-Linux-x64.sha256
+dist/designrc_1.0_amd64.deb
+dist/DesignRC-1.0-source.tar.gz
+dist/DesignRC-1.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_0.9.0_amd64.deb
+sudo apt install ./dist/designrc_1.0_amd64.deb
 ```
 
 ## Main dependencies
@@ -302,7 +307,7 @@ sudo apt install ./dist/designrc_0.9.0_amd64.deb
 - [Open CASCADE Technology](https://dev.opencascade.org/) provides solid modeling, boolean
   operations, meshing, and 3D visualization.
 
-DXF and SVG part export are written directly from DesignRC's two-dimensional manufacturing
+DXF, SVG, and PDF part export are written directly from DesignRC's two-dimensional manufacturing
 geometry and do not require an additional export library.
 
 ## License

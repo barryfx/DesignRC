@@ -12,10 +12,10 @@ cpack --config "$project_root/build/linux-release/CPackConfig.cmake" \
 
 tar --exclude=.git --exclude=build --exclude=dist --exclude=out \
   --exclude=tmp --exclude='$install' \
-  -czf "$package_stage/DesignRC-0.9.0-source.tar.gz" \
+  -czf "$package_stage/DesignRC-1.0-source.tar.gz" \
   -C "$project_root" .
-(cd "$package_stage" && sha256sum *.deb DesignRC-0.9.0-source.tar.gz \
-  > DesignRC-0.9.0-Linux-x64.sha256)
+(cd "$package_stage" && sha256sum *.deb DesignRC-1.0-source.tar.gz \
+  > DesignRC-1.0-Linux-x64.sha256)
 
 mkdir -p "$project_root/dist"
 cp "$package_stage"/*.deb "$package_stage"/*.tar.gz \
