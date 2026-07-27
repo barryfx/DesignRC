@@ -4,9 +4,9 @@ DesignRC is a parametric desktop application for designing built-up RC airplane 
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 current release is **1.0**.
 
-> **Platform status:** DesignRC is available for Windows 11 x64 and Ubuntu 24.04 LTS x86-64.
-> The Linux build has only been tested on Ubuntu 24.04 under WSL 2 with WSLg; other Linux
-> distributions and Ubuntu releases are not currently tested or supported.
+> **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
+> x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
+> package has been tested in Fedora 44.
 
 ## What DesignRC does
 
@@ -27,34 +27,40 @@ current release is **1.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## Downloading Installer for Windows 11
+## Download
 
-Download the installer from the Releases section of the right hand column and run the installer.
-Windows will give an error because the installer isn't signed (that costs money and this is free).
-Run it anyway if you wish to install.
+Release 1.0 provides three installers on the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.0):
 
-## Downloading the Debian/Ubuntu package
+- `DesignRC-1.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+  it is not code-signed, Windows may display a warning before allowing it to run.
+- `designrc_1.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+  with:
 
-Download `designrc_1.0_amd64.deb` from the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases). The package is built
-on Ubuntu 24.04 LTS for x86-64 (`amd64`) and supports current Debian-family distributions with the
-required `t64` runtime packages. It is tested under WSL 2 with WSLg. Install it from the directory
-containing the download:
+  ```bash
+  sudo apt install ./designrc_1.0_amd64.deb
+  designrc
+  ```
 
-```bash
-sudo apt install ./designrc_1.0_amd64.deb
-designrc
-```
+  APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
+  and the ICU 74 runtime required by the bundled Qt build are included. Bundling ICU avoids an
+  unavailable `libicu74` dependency on Debian releases that provide a different ICU ABI. On WSL,
+  install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
-APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0, and
-the ICU 74 runtime required by the bundled Qt build are included in the package. Bundling ICU avoids
-an unavailable `libicu74` dependency on Debian releases that provide a different ICU ABI. FreeType,
-Fontconfig, OpenGL, X11/XCB, glibc, and the C++ runtime are provided by the distribution. On WSL,
-install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
+  ```bash
+  sudo apt install wslu xdg-utils
+  ```
 
-```bash
-sudo apt install wslu xdg-utils
-```
+- `designrc-1.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+  with:
+
+  ```bash
+  sudo dnf install ./designrc-1.0-1.x86_64.rpm
+  designrc
+  ```
+
+The release also includes source archives and `DesignRC-1.0-SHA256SUMS.txt`. Use the checksum file
+to verify a download before installing it.
 
 ## Typical use
 
@@ -303,22 +309,61 @@ Install the locally built package with:
 sudo apt install ./dist/designrc_1.0_amd64.deb
 ```
 
-### Fedora RPM package
+## Building on Fedora
 
-Build the Fedora Release executable and RPM inside the Fedora build
-container:
+These instructions are for Fedora 44 x86-64. Install the compiler, CMake, Ninja, Qt 6 and
+OpenCascade development packages, RPM packaging tools, and graphics development libraries:
+
+```bash
+sudo dnf install \
+  gcc-c++ cmake ninja-build rpm-build \
+  qt6-qtbase-devel qt6-qttools-devel \
+  opencascade-devel \
+  libX11-devel libXext-devel libXi-devel \
+  mesa-libGL-devel mesa-libGLU-devel \
+  freetype-devel fontconfig-devel
+```
+
+### Configure, build, and test DesignRC
+
+From the DesignRC source directory, configure a Debug build against Fedora's system OpenCascade,
+then build and run the regression tests:
+
+```bash
+cmake -S . -B build/fedora-debug -G Ninja \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DOpenCASCADE_DIR=/usr/lib64/cmake/opencascade
+cmake --build build/fedora-debug
+ctest --test-dir build/fedora-debug --output-on-failure
+```
+
+Run the Debug application with:
+
+```bash
+./build/fedora-debug/designrc
+```
+
+### Build and install the RPM package
+
+Build the Fedora Release executable and RPM with the checked-in packaging script:
 
 ```bash
 sh packaging/linux/build-rpm.sh
 ```
 
-The script writes the x86-64 RPM, corresponding source archive, and
-SHA-256 checksums to:
+The script writes the x86-64 RPM, corresponding source archive, and SHA-256 checksums to:
 
 ```text
 dist/designrc-1.0-1.x86_64.rpm
 dist/DesignRC-1.0-source.tar.gz
 dist/DesignRC-1.0-Linux-RPM-x64.sha256
+```
+
+Install the locally built package and start DesignRC with:
+
+```bash
+sudo dnf install ./dist/designrc-1.0-1.x86_64.rpm
+designrc
 ```
 
 ## Main dependencies
