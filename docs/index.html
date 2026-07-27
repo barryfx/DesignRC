@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DesignRC is a parametric desktop application for designing built-up RC airplane wings and producing manufacturing-ready plans and parts.">
+  <meta property="og:title" content="DesignRC — Design wings. Build with confidence.">
+  <meta property="og:description" content="Parametric RC wing design, 3D solid modeling, full-scale plans, and manufacturing exports for Windows and Linux.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://barryfx.github.io/DesignRC/">
+  <meta property="og:image" content="https://raw.githubusercontent.com/barryfx/DesignRC/main/resources/graphics/designrc_splash.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#07111d">
+  <title>DesignRC — Parametric RC Wing Design</title>
+  <link rel="icon" href="https://raw.githubusercontent.com/barryfx/DesignRC/main/resources/graphics/designrc_smaller.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <div class="shell nav-wrap">
+      <a class="brand" href="#top" aria-label="DesignRC home">
+        <span class="brand-mark">DR</span>
+        <span>DesignRC</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#features">Features</a>
+        <a href="#workflow">Workflow</a>
+        <a href="#download">Download</a>
+        <a href="https://github.com/barryfx/DesignRC">Source</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top">
+      <div class="grid-lines" aria-hidden="true"></div>
+      <div class="shell hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Open-source wing design for model aircraft</p>
+          <h1>Design wings.<br><em>Build with confidence.</em></h1>
+          <p class="hero-lede">
+            Turn a half-wing definition into a complete 3D assembly, full-scale technical plan,
+            and manufacturing-ready parts—all from one parametric desktop application.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#download">Download version 1.0</a>
+            <a class="button button-secondary" href="https://github.com/barryfx/DesignRC">View on GitHub</a>
+          </div>
+          <div class="hero-meta" aria-label="Project highlights">
+            <span><strong>3</strong> installer formats</span>
+            <span><strong>1:1</strong> vector plans</span>
+            <span><strong>GPL</strong> open source</span>
+          </div>
+        </div>
+
+        <div class="hero-visual">
+          <div class="blueprint-card">
+            <span class="corner corner-a"></span>
+            <span class="corner corner-b"></span>
+            <img
+              src="https://raw.githubusercontent.com/barryfx/DesignRC/main/resources/graphics/designrc_splash.png"
+              alt="DesignRC logo showing a model aircraft over engineering drawings"
+              width="512"
+              height="512"
+            >
+            <div class="drawing-note note-one">PARAMETRIC</div>
+            <div class="drawing-note note-two">FULL SPAN</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="signal-strip" aria-label="DesignRC capabilities">
+      <div class="signal-track">
+        <span>Airfoil interpolation</span>
+        <i></i>
+        <span>OpenCascade solids</span>
+        <i></i>
+        <span>Full-scale plans</span>
+        <i></i>
+        <span>DXF · SVG · PDF · STEP</span>
+      </div>
+    </section>
+
+    <section class="section shell" id="features">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow"><span></span> From airfoil to workshop</p>
+          <h2>One model. Every part.</h2>
+        </div>
+        <p>
+          DesignRC keeps the aerodynamic definition, structure, 3D preview, plans, and exported
+          parts connected—so a design change flows through the entire wing.
+        </p>
+      </div>
+
+      <div class="feature-grid">
+        <article class="feature-card feature-wide">
+          <p class="card-number">01</p>
+          <h3>Parametric wing geometry</h3>
+          <p>
+            Define connected panels with independent chord, sweep, twist, dihedral, rib spacing,
+            and root and tip airfoils. DesignRC mirrors the half-wing into the complete aircraft.
+          </p>
+          <div class="airfoil-diagram" aria-hidden="true">
+            <div class="airfoil-line airfoil-root"></div>
+            <div class="airfoil-line airfoil-mid"></div>
+            <div class="airfoil-line airfoil-tip"></div>
+            <div class="span-line"></div>
+          </div>
+        </article>
+
+        <article class="feature-card">
+          <p class="card-number">02</p>
+          <h3>Built-up structure</h3>
+          <p>
+            Generate ribs, spars, shear webs, sheeting, leading and trailing edges, joiners,
+            hinge posts, turbulators, flaps, and ailerons.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <p class="card-number">03</p>
+          <h3>True solid preview</h3>
+          <p>
+            Inspect the assembled wing in an interactive OpenCascade viewport with orbit, pan,
+            zoom, material colors, and STEP export.
+          </p>
+        </article>
+
+        <article class="feature-card">
+          <p class="card-number">04</p>
+          <h3>Manufacturing output</h3>
+          <p>
+            Create a tightly packed, full-scale poster plan and export selected laser-cut parts
+            as vector DXF, SVG, or PDF files.
+          </p>
+        </article>
+
+        <article class="feature-card feature-accent">
+          <p class="card-number">05</p>
+          <h3>Exact workshop units</h3>
+          <p>
+            Work globally in millimeters or inches, override units per parameter, and display
+            exact 1/32-inch values as familiar fractions.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="workflow-section" id="workflow">
+      <div class="shell">
+        <div class="section-heading light">
+          <div>
+            <p class="eyebrow"><span></span> A direct path to fabrication</p>
+            <h2>Design. Inspect. Export.</h2>
+          </div>
+          <p>
+            Move from imported airfoil coordinates to build-ready parts without rebuilding the
+            same geometry in separate CAD and drawing tools.
+          </p>
+        </div>
+
+        <ol class="workflow">
+          <li>
+            <span class="step-number">01</span>
+            <div>
+              <h3>Define the wing</h3>
+              <p>Set panel geometry, import Selig-style airfoils, and configure the internal structure.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <div>
+              <h3>Generate and inspect</h3>
+              <p>Build the solid model, verify the complete mirrored wing, and refine the design.</p>
+            </div>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <div>
+              <h3>Make the parts</h3>
+              <p>Export full-scale plans, cutting files, and a material-colored STEP assembly.</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="section shell download-section" id="download">
+      <div class="download-intro">
+        <p class="eyebrow"><span></span> Version 1.0</p>
+        <h2>Choose your platform.</h2>
+        <p>
+          DesignRC is available for 64-bit Windows and Linux. Every installer is published with
+          source archives and SHA-256 checksums.
+        </p>
+      </div>
+
+      <div class="download-grid">
+        <article class="download-card">
+          <div class="platform-icon" aria-hidden="true">W</div>
+          <p class="platform-label">Windows 11 · x64</p>
+          <h3>Windows installer</h3>
+          <p>Guided per-user installation with the application graphics and runtime dependencies included.</p>
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.0/DesignRC-1.0-Windows-x64-Setup.exe">
+            Download .exe <span>↓</span>
+          </a>
+          <small>Windows may warn because the installer is not code-signed.</small>
+        </article>
+
+        <article class="download-card">
+          <div class="platform-icon" aria-hidden="true">D</div>
+          <p class="platform-label">Debian / Ubuntu · amd64</p>
+          <h3>Debian package</h3>
+          <p>Includes Qt 6.4.2, OCCT 8.0, and ICU 74 while APT resolves system runtime libraries.</p>
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.0/designrc_1.0_amd64.deb">
+            Download .deb <span>↓</span>
+          </a>
+          <code>sudo apt install ./designrc_1.0_amd64.deb</code>
+        </article>
+
+        <article class="download-card">
+          <div class="platform-icon" aria-hidden="true">F</div>
+          <p class="platform-label">Fedora · x86_64</p>
+          <h3>Fedora package</h3>
+          <p>Native RPM package tested in Fedora 44 with required dependencies resolved by DNF.</p>
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.0/designrc-1.0-1.x86_64.rpm">
+            Download .rpm <span>↓</span>
+          </a>
+          <code>sudo dnf install ./designrc-1.0-1.x86_64.rpm</code>
+        </article>
+      </div>
+
+      <div class="release-links">
+        <a href="https://github.com/barryfx/DesignRC/releases/download/1.0/DesignRC-1.0-SHA256SUMS.txt">SHA-256 checksums</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/tag/1.0">Release notes and source archives</a>
+        <a href="https://github.com/barryfx/DesignRC/blob/main/README.md">Build from source</a>
+      </div>
+    </section>
+
+    <section class="closing">
+      <div class="shell closing-inner">
+        <div>
+          <p class="eyebrow"><span></span> Built for builders</p>
+          <h2>From the first rib<br>to the final plan.</h2>
+        </div>
+        <div class="closing-copy">
+          <p>
+            DesignRC is free software licensed under GPL-3.0-only. Explore the source, report an
+            issue, or adapt it to your own workshop.
+          </p>
+          <a class="button button-light" href="https://github.com/barryfx/DesignRC">Explore the project</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <div class="brand">
+        <span class="brand-mark">DR</span>
+        <span>DesignRC</span>
+      </div>
+      <p>Copyright © 2026 Barry Foust · GPL-3.0-only</p>
+      <div>
+        <a href="https://github.com/barryfx/DesignRC">GitHub</a>
+        <a href="https://github.com/barryfx/DesignRC/issues">Issues</a>
+        <a href="https://github.com/barryfx/DesignRC/releases">Releases</a>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
