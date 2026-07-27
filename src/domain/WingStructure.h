@@ -4,6 +4,7 @@
 
 #include <string>
 #include <array>
+#include <functional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -27,14 +28,36 @@ private:
 
 enum class SpanMemberKind { Rectangular, Tube, Rod, Turbulator };
 
+struct SparParameters {
+  int chordLocationPercent{25};
+  int verticalLocation{2}; // 0 top, 1 bottom, 2 mid
+  int material{1}; // 0 wood, 1 carbon fiber
+  int type{0}; // 0 tube, 1 rod, 2 strip
+  double woodHeight{5.0};
+  double woodWidth{9.0};
+  double tubeOd{6.0};
+  double tubeId{5.0};
+  double rodOd{6.0};
+  double stripWidth{6.0};
+  double stripThickness{1.0};
+};
+
 struct Point3 {
   double x{};
   double y{};
   double z{};
 };
 
+struct RibOutlineSegment {
+  std::vector<Point2> points;
+  bool spline{false};
+};
+
 struct StructureParameters {
   double ribThickness{3.0};
+  std::vector<SparParameters> spars;
+  bool sparShearWebs{false};
+  double sparShearWebThickness{3.0};
   bool topSpar{false};
   double topSparHeight{5.0};
   double topSparWidth{10.0};
@@ -95,6 +118,32 @@ struct StructureParameters {
   int flapStartRib{1};
   int flapStopRib{5};
   double controlSurfaceGap{1.5};
+  bool spoilers{false};
+  int spoilerStartRib{3};
+  int spoilerEndRib{7};
+  int spoilerChordLocationPercent{30};
+  double spoilerWidth{25.4};
+  double spoilerThickness{3.0};
+  double spoilerFrameRailWidth{6.0};
+  double spoilerSupportRailHeight{3.0};
+  bool spoilerLighteningHoles{false};
+  double spoilerMinimumWoodMargin{6.0};
+  double spoilerMinimumCircleDistance{12.0};
+  bool ribLighteningHoles{false};
+  int ribLighteningStartRib{3};
+  int ribLighteningStopRib{7};
+  double ribLighteningMinimumWoodMargin{6.0};
+  double ribLighteningMinimumHoleDistance{12.0};
+  bool riblets{false};
+  int ribletStartRib{2};
+  int ribletEndRib{8};
+  int ribletsPerBay{2};
+  bool wiringHoles{false};
+  int wiringHoleStartRib{2};
+  int wiringHoleEndRib{9};
+  int wiringHoleChordLocationPercent{50};
+  double wiringHoleWidth{9.525};
+  double wiringHoleHeight{6.35};
   bool rib1aPresent{false};
   bool centerSparWoodJoiner{false};
   bool behindSparJoiner{false};
@@ -118,7 +167,28 @@ struct StructuredRib {
   std::vector<std::vector<Point2>> holes;
   std::vector<std::vector<Point2>> booleanCutouts;
   std::vector<std::vector<Point2>> booleanHoles;
+  // A center Sleeve/Rod joint can use different ODs on the two wing halves.
+  // These openings are kept out of booleanHoles so the mirrored ribs do not
+  // receive both concentric cuts.
+  std::vector<std::vector<Point2>> positiveHalfBooleanHoles;
+  std::vector<std::vector<Point2>> negativeHalfBooleanHoles;
+  bool uniqueHalfPartVariants{};
   std::string name;
+  // Unique manufacturing names for asymmetric center ribs. Empty for ribs
+  // that remain a single mirrored part definition.
+  std::string positiveHalfName;
+  std::string negativeHalfName;
+  // Closed internal polygons cut after extrusion. Kept separate from
+  // booleanCutouts because those may be full-height wood-joiner split slots.
+  std::vector<std::vector<Point2>> internalCutouts;
+  std::vector<RibOutlineSegment> outlineSegments;
+  // Finished 2D manufacturing contour when an open Boolean feature, such as
+  // an exposed carbon leading edge, changes the extruded outer outline.
+  std::vector<Point2> partOutline;
+  std::vector<RibOutlineSegment> partOutlineSegments;
+  // Full-height wood-joiner cuts divide the exported rib into separate
+  // physical pieces. They are also present in booleanCutouts for 3D cutting.
+  std::vector<std::vector<Point2>> ribSplitCutouts;
 };
 
 struct SpanMember {
@@ -128,6 +198,9 @@ struct SpanMember {
   double height{};
   double innerDiameter{};
   std::vector<Point2> centers;
+  bool carbonFiber{false};
+  int verticalLocation{2}; // 0 top, 1 bottom, 2 middle
+  bool cutsSheeting{false};
 };
 
 struct ShearWebPart {
@@ -166,6 +239,32 @@ struct SheetStockPart {
   std::vector<std::vector<Point2>> slots;
 };
 
+struct SpoilerPart {
+  std::string name{"Spoiler"};
+  std::size_t startRibIndex{};
+  std::size_t endRibIndex{};
+  double chordLocationPercent{30.0};
+  double width{};
+  double thickness{};
+  double frameRailWidth{};
+  double supportRailHeight{};
+  double gap{1.5875};
+  bool spansCenter{};
+  double minimumWoodMargin{};
+  std::vector<std::array<Point2, 4>> spoilerProfiles;
+  std::vector<std::array<Point2, 4>> forwardRailProfiles;
+  std::vector<std::array<Point2, 4>> aftRailProfiles;
+  std::vector<std::array<Point2, 4>> supportProfiles;
+  std::vector<Point2> dxfOutline;
+  std::vector<std::vector<Point2>> lighteningHoleOutlines;
+};
+
+struct WiringHoleCut {
+  std::string name;
+  std::size_t ribIndex{};
+  std::vector<Point2> outline;
+};
+
 struct JoinerPart {
   std::string name;
   SpanMemberKind kind{SpanMemberKind::Rod};
@@ -180,8 +279,12 @@ struct JoinerPart {
   double mirrorPlaneAngleDegrees{};
   double axisAngleDegrees{};
   bool hasExplicitEndpoints{false};
+  bool mirrorInAssembly{true};
   Point3 innerEndpoint;
   Point3 outerEndpoint;
+  std::string annotationName;
+  bool annotateOnBothPlanHalves{false};
+  bool annotateOnMirroredPlanHalf{false};
 };
 
 struct SheetingPart {
@@ -195,6 +298,7 @@ struct SheetingPart {
 
 struct StructuredWing {
   std::vector<StructuredRib> ribs;
+  std::vector<StructuredRib> riblets;
   std::vector<SpanMember> members;
   std::vector<ProfiledSpanMember> profiledMembers;
   std::vector<ControlSurfacePart> controlSurfaces;
@@ -202,10 +306,29 @@ struct StructuredWing {
   std::vector<ShearWebPart> shearWebs;
   std::vector<JoinerPart> joiners;
   std::vector<SheetingPart> sheeting;
+  std::vector<SpoilerPart> spoilers;
+  std::vector<WiringHoleCut> wiringHoles;
 };
 
 [[nodiscard]] StructuredWing applyWingStructure(
     const std::vector<RibDefinition>& ribs,
     const StructureParameters& parameters);
+
+void addRiblets(StructuredWing& wing,
+                const StructureParameters& parameters);
+
+using RibLighteningProgressCallback =
+    std::function<void(std::size_t, std::size_t)>;
+
+void addRibLighteningHoles(
+    StructuredWing& wing, const StructureParameters& parameters,
+    const RibLighteningProgressCallback& progress = {},
+    std::size_t maximumWorkers = 0);
+
+[[nodiscard]] std::size_t ribLighteningHoleWorkerCount(
+    std::size_t ribCount, std::size_t maximumWorkers = 0);
+
+[[nodiscard]] std::vector<RibOutlineSegment> makeRibOutlineSegments(
+    const std::vector<Point2>& closedOutline);
 
 } // namespace designrc::domain

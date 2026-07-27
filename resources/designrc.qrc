@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="graphics/designrc_splash.png">graphics/designrc_splash.png</file>
+    <file alias="graphics/designrc_icon.png">graphics/designrc_icon.png</file>
+    <file alias="graphics/designrc_smaller.png">graphics/designrc_smaller.png</file>
+    <file alias="graphics/designrc_smaller.ico">graphics/designrc_smaller.ico</file>
+  </qresource>
+</RCC>

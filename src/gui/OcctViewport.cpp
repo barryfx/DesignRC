@@ -77,23 +77,23 @@ void OcctViewport::initializeViewer() {
   if (initialized_) return;
   initialized_ = true;
 
-  const auto connection = occ::handle<Aspect_DisplayConnection>{new Aspect_DisplayConnection};
-  const auto driver = occ::handle<OpenGl_GraphicDriver>{new OpenGl_GraphicDriver{connection}};
-  viewer_ = occ::handle<V3d_Viewer>{new V3d_Viewer{driver}};
+  const auto connection = Handle(Aspect_DisplayConnection){new Aspect_DisplayConnection};
+  const auto driver = Handle(OpenGl_GraphicDriver){new OpenGl_GraphicDriver{connection}};
+  viewer_ = Handle(V3d_Viewer){new V3d_Viewer{driver}};
   viewer_->SetDefaultTypeOfView(V3d_ORTHOGRAPHIC);
 
   // Use lighting symmetric about the wing center plane. OCCT's default
   // directional lights illuminate mirrored surfaces at different diffuse and
   // specular intensities, making identical wood and aluminum materials appear
   // different on the left and right wing halves.
-  const auto ambient = occ::handle<Graphic3d_CLight>{
+  const auto ambient = Handle(Graphic3d_CLight){
       new Graphic3d_CLight{Graphic3d_TypeOfLightSource_Ambient}};
   ambient->SetIntensity(0.28F);
   viewer_->AddLight(ambient);
   viewer_->SetLightOn(ambient);
 
   const auto addDirectional = [this](const gp_Dir& direction) {
-    const auto light = occ::handle<Graphic3d_CLight>{
+    const auto light = Handle(Graphic3d_CLight){
         new Graphic3d_CLight{Graphic3d_TypeOfLightSource_Directional}};
     light->SetDirection(direction);
     light->SetIntensity(0.42F);
@@ -103,14 +103,14 @@ void OcctViewport::initializeViewer() {
   addDirectional(gp_Dir{-0.35, -0.55, -1.0});
   addDirectional(gp_Dir{-0.35,  0.55, -1.0});
 
-  context_ = occ::handle<AIS_InteractiveContext>{new AIS_InteractiveContext{viewer_}};
+  context_ = Handle(AIS_InteractiveContext){new AIS_InteractiveContext{viewer_}};
   context_->SetDisplayMode(AIS_Shaded, false);
   view_ = viewer_->CreateView();
 #if defined(_WIN32)
-  const auto window = occ::handle<WNT_Window>{
+  const auto window = Handle(WNT_Window){
       new WNT_Window{reinterpret_cast<Aspect_Handle>(winId()), Quantity_NOC_WHITE}};
 #else
-  const auto window = occ::handle<Xw_Window>{
+  const auto window = Handle(Xw_Window){
       new Xw_Window{connection, static_cast<Aspect_Drawable>(winId())}};
 #endif
   view_->SetWindow(window);
@@ -120,22 +120,28 @@ void OcctViewport::initializeViewer() {
   view_->SetProj(V3d_XposYnegZpos);
   displayViewGizmo();
   if (!pendingWoodShape_.IsNull() || !pendingCarbonFiberShape_.IsNull() ||
-      !pendingAluminumShape_.IsNull())
+      !pendingAluminumShape_.IsNull() || !pendingSteelShape_.IsNull() ||
+      !pendingFiberglassShape_.IsNull())
     displayPendingShapes();
   view_->MustBeResized();
   redraw();
 }
 
 void OcctViewport::displayShape(const TopoDS_Shape& shape) {
-  displayMaterialShapes(shape, TopoDS_Shape{}, TopoDS_Shape{});
+  displayMaterialShapes(shape, TopoDS_Shape{}, TopoDS_Shape{},
+      TopoDS_Shape{}, TopoDS_Shape{});
 }
 
 void OcctViewport::displayMaterialShapes(const TopoDS_Shape& wood,
                                          const TopoDS_Shape& carbonFiber,
-                                         const TopoDS_Shape& aluminum) {
+                                         const TopoDS_Shape& aluminum,
+                                         const TopoDS_Shape& steel,
+                                         const TopoDS_Shape& fiberglass) {
   pendingWoodShape_ = wood;
   pendingCarbonFiberShape_ = carbonFiber;
   pendingAluminumShape_ = aluminum;
+  pendingSteelShape_ = steel;
+  pendingFiberglassShape_ = fiberglass;
   if (context_.IsNull()) return;
   displayPendingShapes();
   fitAll();
@@ -145,10 +151,10 @@ void OcctViewport::displayPendingShapes() {
   for (const auto& displayed : displayedShapes_) context_->Remove(displayed, false);
   displayedShapes_.clear();
 
-  enum class Appearance { Wood, CarbonFiber, Aluminum };
+  enum class Appearance { Wood, CarbonFiber, Aluminum, Steel, Fiberglass };
   const auto display = [&](const TopoDS_Shape& shape, const Appearance appearance) {
     if (shape.IsNull() || !TopExp_Explorer{shape, TopAbs_FACE}.More()) return;
-    auto object = occ::handle<AIS_Shape>{new AIS_Shape{shape}};
+    auto object = Handle(AIS_Shape){new AIS_Shape{shape}};
     // Geometry is triangulated on background workers before publication.
     object->Attributes()->SetAutoTriangulation(false);
     object->Attributes()->SetupOwnShadingAspect();
@@ -161,7 +167,7 @@ void OcctViewport::displayPendingShapes() {
                                       165.0 / 255.0, Quantity_TOC_RGB});
       object->Attributes()->SetFaceBoundaryDraw(true);
       object->Attributes()->SetFaceBoundaryAspect(
-          occ::handle<Prs3d_LineAspect>{new Prs3d_LineAspect{
+          Handle(Prs3d_LineAspect){new Prs3d_LineAspect{
               Quantity_Color{105.0 / 255.0, 80.0 / 255.0, 60.0 / 255.0,
                              Quantity_TOC_RGB},
               Aspect_TOL_SOLID, 1.0}});
@@ -170,12 +176,24 @@ void OcctViewport::displayPendingShapes() {
       material.SetShininess(0.85F);
       object->SetMaterial(material);
       object->SetColor(Quantity_Color{0.015, 0.015, 0.015, Quantity_TOC_RGB});
-    } else {
+    } else if (appearance == Appearance::Aluminum) {
       object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
       Graphic3d_MaterialAspect material{Graphic3d_NOM_ALUMINIUM};
       material.SetShininess(0.9F);
       object->SetMaterial(material);
       object->SetColor(Quantity_Color{0.68, 0.70, 0.74, Quantity_TOC_RGB});
+    } else if (appearance == Appearance::Steel) {
+      object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
+      Graphic3d_MaterialAspect material{Graphic3d_NOM_STEEL};
+      material.SetShininess(0.95F);
+      object->SetMaterial(material);
+      object->SetColor(Quantity_Color{0.90, 0.91, 0.93, Quantity_TOC_RGB});
+    } else {
+      object->Attributes()->SetShadingModel(Graphic3d_TOSM_UNLIT, true);
+      Graphic3d_MaterialAspect material{Graphic3d_NOM_PLASTIC};
+      material.SetShininess(0.3F);
+      object->SetMaterial(material);
+      object->SetColor(Quantity_Color{0.96, 0.91, 0.72, Quantity_TOC_RGB});
     }
     // Selection is not currently used; skip its expensive face hierarchy.
     context_->Display(object, AIS_Shaded, -1, false);
@@ -184,6 +202,8 @@ void OcctViewport::displayPendingShapes() {
   display(pendingWoodShape_, Appearance::Wood);
   display(pendingCarbonFiberShape_, Appearance::CarbonFiber);
   display(pendingAluminumShape_, Appearance::Aluminum);
+  display(pendingSteelShape_, Appearance::Steel);
+  display(pendingFiberglassShape_, Appearance::Fiberglass);
   // Publish all material presentations before FitAll queries their combined
   // bounds. With several newly displayed AIS objects, deferred viewer updates
   // can otherwise leave the first automatic fit using incomplete extents.
@@ -194,6 +214,8 @@ void OcctViewport::clearShape() {
   pendingWoodShape_.Nullify();
   pendingCarbonFiberShape_.Nullify();
   pendingAluminumShape_.Nullify();
+  pendingSteelShape_.Nullify();
+  pendingFiberglassShape_.Nullify();
   if (context_.IsNull()) return;
   for (const auto& displayed : displayedShapes_) context_->Remove(displayed, false);
   displayedShapes_.clear();
@@ -205,6 +227,30 @@ void OcctViewport::fitAll() {
   view_->FitAll(0.05, false);
   view_->ZFitAll();
   redraw();
+}
+
+void OcctViewport::setCameraView(const CameraView cameraView) {
+  initializeViewer();
+  if (view_.IsNull()) return;
+  switch (cameraView) {
+    case CameraView::Reset:  view_->SetProj(V3d_XposYnegZpos); break;
+    case CameraView::Top:
+      view_->SetProj(V3d_Zpos);
+      view_->SetUp(-1.0, 0.0, 0.0);
+      break;
+    case CameraView::Bottom:
+      view_->SetProj(V3d_Zneg);
+      view_->SetUp(-1.0, 0.0, 0.0);
+      break;
+    // The wing chord runs along +X, span along +/-Y, and vertical along +Z.
+    // Front therefore looks aft from the leading edge, while left and right
+    // look inward from their corresponding wing tips.
+    case CameraView::Front:  view_->SetProj(V3d_Xneg); break;
+    case CameraView::Back:   view_->SetProj(V3d_Xpos); break;
+    case CameraView::Left:   view_->SetProj(V3d_Yneg); break;
+    case CameraView::Right:  view_->SetProj(V3d_Ypos); break;
+  }
+  fitAll();
 }
 
 void OcctViewport::mousePressEvent(QMouseEvent* event) {
@@ -265,17 +311,17 @@ void OcctViewport::redraw() {
 
 void OcctViewport::displayViewGizmo() {
   if (context_.IsNull()) return;
-  viewGizmoPersistence_ = occ::handle<Graphic3d_TransformPers>{new Graphic3d_TransformPers{
+  viewGizmoPersistence_ = Handle(Graphic3d_TransformPers){new Graphic3d_TransformPers{
       Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
       NCollection_Vec2<int>{kGizmoScreenOffset, kGizmoScreenOffset}}};
 
-  const auto prepare = [this](const occ::handle<AIS_Shape>& shape) {
+  const auto prepare = [this](const Handle(AIS_Shape)& shape) {
     shape->SetTransformPersistence(viewGizmoPersistence_);
     shape->SetZLayer(Graphic3d_ZLayerId_Topmost);
   };
   const auto addDecoration = [this, &prepare](const TopoDS_Shape& shape,
                                              const Quantity_Color& color) {
-    auto object = occ::handle<AIS_Shape>{new AIS_Shape{shape}};
+    auto object = Handle(AIS_Shape){new AIS_Shape{shape}};
     object->SetColor(color);
     prepare(object);
     context_->Display(object, AIS_Shaded, -1, false);

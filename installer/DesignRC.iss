@@ -1,5 +1,5 @@
 #define MyAppName "DesignRC"
-#define MyAppVersion "0.9.0"
+#define MyAppVersion "1.0"
 #define MyAppPublisher "Barry Foust"
 #define MyAppExeName "designrc.exe"
 #define MySourceDir "..\build\release\Release"
@@ -19,6 +19,7 @@ OutputBaseFilename=DesignRC-{#MyAppVersion}-Windows-x64-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\resources\graphics\designrc_smaller.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
@@ -38,7 +39,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
 
 [Files]
-Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "*.lib,*.exp,*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Excludes: "*.lib,*.exp,*.pdb,*_tests.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

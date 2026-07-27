@@ -1,0 +1,71 @@
+	Joiners Parameters GUI
+
+(design legend:  <> = default value,  () = comment, o = radio button, x = check box)
+( (if...) display only if true)
+
+--------------- Start Joiners GUI Panel Design ----------------
+     Removable Panel (Button)     Fixed Panel (Button)  (If one button was selected and there are joiners in the list, then the other button is selected, delete all joiners and display the other set of Add/Delete buttons after a warning dialog confirming deletion of all joiners.)
+
+(No default joiners in the list to start)
+(If Fixed Panel button is pressed, display the following buttons)
+    Add Fixed Joiner (Button)     Delete Checked (Button)  (Add adds a new Joiner to the bottom of the list.  Delete removes checked Joiners)
+
+x Joiner 1
+     Chord Location <35%> (spinner inc/dec by 1%) (Range 0%-90%)
+     o Wood  <o> CF  o Steel Rod (if Wood, Spans Spar to spar vertically.  Shear webs aren't added in rib bays with wood joiner which spans 2 bays!) 
+	(If Wood) Thickness <1/8in> (spinner)
+        (if CF)  <o> Tube   o Rod
+		(if Tube) OD <6mm>  ID <5mm>
+		(if Rod) OD <6mm>
+	(if Steel Rod)
+		OD <6mm>
+
+x Joiner 2
+     (Same options as Joiner 1)
+
+...
+
+x Joiner N
+     (Same options as Joiner 1)
+
+(If Removable Panel button is pressed, display the following:))
+     Add Sleeve/Rod Joiner (Button)   Add Alignment Pin (Button)   Delete Checked (Button)
+
+(If Add Sleeve/Rod Joiner button pressed add the following options to the bottom of the list:)
+x Joiner 1
+     This Panel:  o Sleeve  <o> Rod
+        (if Rod) OD <6mm>
+                 Material <o> CF  o Steel
+        (if Sleeve) Material o CF  <o> Aluminum  o Steel  o Fiberglass
+		 OD <7mm>
+     Adjoining Panel: o Sleeve  <o> Rod
+        (if Rod) OD <6mm>
+                 Material <o> CF  o Steel
+        (if Sleeve) Material o CF  <o> Aluminum  o Steel  o Fiberglass
+		 OD <7mm>
+
+
+(If Add Alignment Pin button pressed, display the following options added to the bottom of the list:)
+x Alignment Pin 1
+     	o Sleeve/Pin  <o> Pin/Hole
+	This Panel:  (if Sleeve/Pin) <o> Sleeve  o Rod 
+        (if Sleeve) Material o CF  <o> Aluminum  o Steel  o Fiberglass
+		 OD <3mm>
+        (if Rod) Material Material o CF  <o> Steel
+	Adjoining Panel: (If this panel Rod was selected) Sleeve Material o <CF>  <o> Aluminum  o Steel  o Fiberglass
+		 OD <3mm>
+                         (If this panel Sleeve selected) Rod Material o CF  <o> Steel
+		 OD <2mm>
+        This Panel:  (if Pin/Hole) <o> Pin o Hole
+                     Material <o> CF o Steel
+                  OD <2mm>
+
+x Joiner 2
+	(Same as Joiner 1 above)
+
+x Alignment Pin 2
+...
+
+x Entry N
+
+-----------------------End Joiners tab GUI----------------------------------------

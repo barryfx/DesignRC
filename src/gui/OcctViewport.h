@@ -22,6 +22,8 @@ class QWheelEvent;
 
 namespace designrc::gui {
 
+enum class CameraView { Reset, Top, Bottom, Front, Back, Left, Right };
+
 class OcctViewport final : public QWidget {
 public:
   explicit OcctViewport(QWidget* parent = nullptr);
@@ -29,9 +31,12 @@ public:
   void displayShape(const TopoDS_Shape& shape);
   void displayMaterialShapes(const TopoDS_Shape& wood,
                              const TopoDS_Shape& carbonFiber,
-                             const TopoDS_Shape& aluminum);
+                             const TopoDS_Shape& aluminum,
+                             const TopoDS_Shape& steel,
+                             const TopoDS_Shape& fiberglass);
   void clearShape();
   void fitAll();
+  void setCameraView(CameraView cameraView);
 
 protected:
   QPaintEngine* paintEngine() const override;
@@ -49,15 +54,17 @@ private:
   void displayViewGizmo();
   void redraw();
 
-  occ::handle<V3d_Viewer> viewer_;
-  occ::handle<V3d_View> view_;
-  occ::handle<AIS_InteractiveContext> context_;
-  std::vector<occ::handle<AIS_Shape>> displayedShapes_;
-  occ::handle<Graphic3d_TransformPers> viewGizmoPersistence_;
-  std::vector<occ::handle<AIS_InteractiveObject>> viewGizmoObjects_;
+  Handle(V3d_Viewer) viewer_;
+  Handle(V3d_View) view_;
+  Handle(AIS_InteractiveContext) context_;
+  std::vector<Handle(AIS_Shape)> displayedShapes_;
+  Handle(Graphic3d_TransformPers) viewGizmoPersistence_;
+  std::vector<Handle(AIS_InteractiveObject)> viewGizmoObjects_;
   TopoDS_Shape pendingWoodShape_;
   TopoDS_Shape pendingCarbonFiberShape_;
   TopoDS_Shape pendingAluminumShape_;
+  TopoDS_Shape pendingSteelShape_;
+  TopoDS_Shape pendingFiberglassShape_;
   QPoint lastMousePosition_;
   bool initialized_{false};
   bool orbiting_{false};
