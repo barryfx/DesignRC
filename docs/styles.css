@@ -524,7 +524,7 @@ h1 em {
   padding: 0;
   margin: 65px 0 0;
   list-style: none;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 1px;
   background: rgba(255, 255, 255, 0.14);
 }
