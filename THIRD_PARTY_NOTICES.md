@@ -55,6 +55,17 @@ DesignRC does not modify FreeType.
 - License overview: `licenses/FREETYPE-LICENSE.txt`
 - FreeType License: `licenses/FREETYPE-FTL.txt`
 
+## International Components for Unicode 74
+
+The Debian/Ubuntu package bundles the ICU 74 runtime libraries required by its Qt 6.4.2 build so
+the package remains installable on Debian releases whose repositories provide a different ICU ABI.
+ICU is Copyright (C) 1991-2022 Unicode, Inc. and other contributors and is distributed under its
+permissive license. DesignRC does not modify ICU.
+
+- Project: https://icu.unicode.org/
+- Exact source package: https://packages.ubuntu.com/source/noble/icu
+- License: `licenses/ICU-LICENSE.txt`
+
 Portions of Qt and OCCT may use additional third-party components. Before publishing an installer,
 compare its complete DLL and plugin inventory with the packaged Qt and OCCT SBOM/license data and
 add any required notices. Microsoft runtime components, when included, are redistributed under

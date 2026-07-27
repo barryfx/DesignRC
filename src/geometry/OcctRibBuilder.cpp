@@ -21,8 +21,13 @@
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GeomAPI_Interpolate.hxx>
-#include <NCollection_HArray1.hxx>
 #include <Precision.hxx>
+#include <Standard_Version.hxx>
+#if OCC_VERSION_HEX >= 0x080000
+#include <NCollection_HArray1.hxx>
+#else
+#include <TColgp_HArray1OfPnt.hxx>
+#endif
 #include <ShapeFix_Shape.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
@@ -49,6 +54,12 @@
 #include <thread>
 
 namespace designrc::geometry {
+
+#if OCC_VERSION_HEX >= 0x080000
+using OcctPointArray = NCollection_HArray1<gp_Pnt>;
+#else
+using OcctPointArray = TColgp_HArray1OfPnt;
+#endif
 
 TopoDS_Shape buildWingPreview(
     const std::vector<domain::RibDefinition>& ribs, const double ribThickness,
@@ -207,8 +218,8 @@ TopoDS_Wire makeSplineProfileWire(
       return BRepBuilderAPI_MakeEdge{
           transformLocal(rib, profile[begin], yOffset),
           transformLocal(rib, profile[end], yOffset)}.Edge();
-    const auto points = occ::handle<NCollection_HArray1<gp_Pnt>>{
-        new NCollection_HArray1<gp_Pnt>{
+    const auto points = Handle(OcctPointArray){
+        new OcctPointArray{
             1, static_cast<int>(end - begin + 1)}};
     for (std::size_t point = begin; point <= end; ++point)
       points->SetValue(
@@ -485,8 +496,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     for (const auto& segment : outlineSegments) {
       if (segment.spline && segment.points.size() >= 3) {
         const auto points =
-            occ::handle<NCollection_HArray1<gp_Pnt>>{
-                new NCollection_HArray1<gp_Pnt>{
+            Handle(OcctPointArray){
+                new OcctPointArray{
                     1, static_cast<int>(segment.points.size())}};
         for (std::size_t point = 0; point < segment.points.size(); ++point)
           points->SetValue(static_cast<int>(point + 1),
@@ -1165,8 +1176,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       const auto splineEdge = [&](const std::size_t begin,
                                   const std::size_t end) {
         const auto points =
-            occ::handle<NCollection_HArray1<gp_Pnt>>{
-                new NCollection_HArray1<gp_Pnt>{
+            Handle(OcctPointArray){
+                new OcctPointArray{
                     1, static_cast<int>(end - begin + 1)}};
         for (std::size_t point = begin; point <= end; ++point)
           points->SetValue(

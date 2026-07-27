@@ -77,23 +77,23 @@ void OcctViewport::initializeViewer() {
   if (initialized_) return;
   initialized_ = true;
 
-  const auto connection = occ::handle<Aspect_DisplayConnection>{new Aspect_DisplayConnection};
-  const auto driver = occ::handle<OpenGl_GraphicDriver>{new OpenGl_GraphicDriver{connection}};
-  viewer_ = occ::handle<V3d_Viewer>{new V3d_Viewer{driver}};
+  const auto connection = Handle(Aspect_DisplayConnection){new Aspect_DisplayConnection};
+  const auto driver = Handle(OpenGl_GraphicDriver){new OpenGl_GraphicDriver{connection}};
+  viewer_ = Handle(V3d_Viewer){new V3d_Viewer{driver}};
   viewer_->SetDefaultTypeOfView(V3d_ORTHOGRAPHIC);
 
   // Use lighting symmetric about the wing center plane. OCCT's default
   // directional lights illuminate mirrored surfaces at different diffuse and
   // specular intensities, making identical wood and aluminum materials appear
   // different on the left and right wing halves.
-  const auto ambient = occ::handle<Graphic3d_CLight>{
+  const auto ambient = Handle(Graphic3d_CLight){
       new Graphic3d_CLight{Graphic3d_TypeOfLightSource_Ambient}};
   ambient->SetIntensity(0.28F);
   viewer_->AddLight(ambient);
   viewer_->SetLightOn(ambient);
 
   const auto addDirectional = [this](const gp_Dir& direction) {
-    const auto light = occ::handle<Graphic3d_CLight>{
+    const auto light = Handle(Graphic3d_CLight){
         new Graphic3d_CLight{Graphic3d_TypeOfLightSource_Directional}};
     light->SetDirection(direction);
     light->SetIntensity(0.42F);
@@ -103,14 +103,14 @@ void OcctViewport::initializeViewer() {
   addDirectional(gp_Dir{-0.35, -0.55, -1.0});
   addDirectional(gp_Dir{-0.35,  0.55, -1.0});
 
-  context_ = occ::handle<AIS_InteractiveContext>{new AIS_InteractiveContext{viewer_}};
+  context_ = Handle(AIS_InteractiveContext){new AIS_InteractiveContext{viewer_}};
   context_->SetDisplayMode(AIS_Shaded, false);
   view_ = viewer_->CreateView();
 #if defined(_WIN32)
-  const auto window = occ::handle<WNT_Window>{
+  const auto window = Handle(WNT_Window){
       new WNT_Window{reinterpret_cast<Aspect_Handle>(winId()), Quantity_NOC_WHITE}};
 #else
-  const auto window = occ::handle<Xw_Window>{
+  const auto window = Handle(Xw_Window){
       new Xw_Window{connection, static_cast<Aspect_Drawable>(winId())}};
 #endif
   view_->SetWindow(window);
@@ -154,7 +154,7 @@ void OcctViewport::displayPendingShapes() {
   enum class Appearance { Wood, CarbonFiber, Aluminum, Steel, Fiberglass };
   const auto display = [&](const TopoDS_Shape& shape, const Appearance appearance) {
     if (shape.IsNull() || !TopExp_Explorer{shape, TopAbs_FACE}.More()) return;
-    auto object = occ::handle<AIS_Shape>{new AIS_Shape{shape}};
+    auto object = Handle(AIS_Shape){new AIS_Shape{shape}};
     // Geometry is triangulated on background workers before publication.
     object->Attributes()->SetAutoTriangulation(false);
     object->Attributes()->SetupOwnShadingAspect();
@@ -167,7 +167,7 @@ void OcctViewport::displayPendingShapes() {
                                       165.0 / 255.0, Quantity_TOC_RGB});
       object->Attributes()->SetFaceBoundaryDraw(true);
       object->Attributes()->SetFaceBoundaryAspect(
-          occ::handle<Prs3d_LineAspect>{new Prs3d_LineAspect{
+          Handle(Prs3d_LineAspect){new Prs3d_LineAspect{
               Quantity_Color{105.0 / 255.0, 80.0 / 255.0, 60.0 / 255.0,
                              Quantity_TOC_RGB},
               Aspect_TOL_SOLID, 1.0}});
@@ -311,17 +311,17 @@ void OcctViewport::redraw() {
 
 void OcctViewport::displayViewGizmo() {
   if (context_.IsNull()) return;
-  viewGizmoPersistence_ = occ::handle<Graphic3d_TransformPers>{new Graphic3d_TransformPers{
+  viewGizmoPersistence_ = Handle(Graphic3d_TransformPers){new Graphic3d_TransformPers{
       Graphic3d_TMF_TriedronPers, Aspect_TOTP_RIGHT_UPPER,
       NCollection_Vec2<int>{kGizmoScreenOffset, kGizmoScreenOffset}}};
 
-  const auto prepare = [this](const occ::handle<AIS_Shape>& shape) {
+  const auto prepare = [this](const Handle(AIS_Shape)& shape) {
     shape->SetTransformPersistence(viewGizmoPersistence_);
     shape->SetZLayer(Graphic3d_ZLayerId_Topmost);
   };
   const auto addDecoration = [this, &prepare](const TopoDS_Shape& shape,
                                              const Quantity_Color& color) {
-    auto object = occ::handle<AIS_Shape>{new AIS_Shape{shape}};
+    auto object = Handle(AIS_Shape){new AIS_Shape{shape}};
     object->SetColor(color);
     prepare(object);
     context_->Display(object, AIS_Shaded, -1, false);

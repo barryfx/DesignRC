@@ -33,22 +33,24 @@ Download the installer from the Releases section of the right hand column and ru
 Windows will give an error because the installer isn't signed (that costs money and this is free).
 Run it anyway if you wish to install.
 
-## Downloading the Ubuntu 24.04 package
+## Downloading the Debian/Ubuntu package
 
 Download `designrc_1.0_amd64.deb` from the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases). The package targets
-Ubuntu 24.04 LTS on x86-64 (`amd64`) and has only been tested under WSL 2 with WSLg. Install it from
-the directory containing the download:
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases). The package is built
+on Ubuntu 24.04 LTS for x86-64 (`amd64`) and supports current Debian-family distributions with the
+required `t64` runtime packages. It is tested under WSL 2 with WSLg. Install it from the directory
+containing the download:
 
 ```bash
 sudo apt install ./designrc_1.0_amd64.deb
 designrc
 ```
 
-APT installs the required Ubuntu runtime libraries automatically. Qt 6.4.2 and OCCT 8.0 are
-included in the package; FreeType, Fontconfig, OpenGL, X11/XCB, glibc, and the C++ runtime are
-provided by Ubuntu. On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the
-Windows default browser:
+APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0, and
+the ICU 74 runtime required by the bundled Qt build are included in the package. Bundling ICU avoids
+an unavailable `libicu74` dependency on Debian releases that provide a different ICU ABI. FreeType,
+Fontconfig, OpenGL, X11/XCB, glibc, and the C++ runtime are provided by the distribution. On WSL,
+install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
 ```bash
 sudo apt install wslu xdg-utils
@@ -259,7 +261,7 @@ Run the application through X11 or XWayland with:
 ./build/linux-debug/designrc
 ```
 
-### Build the Ubuntu package
+### Build the Debian/Ubuntu package
 
 Build and install a separate optimized OCCT copy for the distributable package:
 
@@ -299,6 +301,24 @@ Install the locally built package with:
 
 ```bash
 sudo apt install ./dist/designrc_1.0_amd64.deb
+```
+
+### Fedora RPM package
+
+Build the Fedora Release executable and RPM inside the Fedora build
+container:
+
+```bash
+sh packaging/linux/build-rpm.sh
+```
+
+The script writes the x86-64 RPM, corresponding source archive, and
+SHA-256 checksums to:
+
+```text
+dist/designrc-1.0-1.x86_64.rpm
+dist/DesignRC-1.0-source.tar.gz
+dist/DesignRC-1.0-Linux-RPM-x64.sha256
 ```
 
 ## Main dependencies

@@ -3,6 +3,10 @@ cmake_minimum_required(VERSION 3.24)
 project(DesignRC VERSION 1.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
+set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
+  "Linux package generator (DEB or RPM)")
+set_property(CACHE DESIGNRC_LINUX_PACKAGE_GENERATOR
+  PROPERTY STRINGS DEB RPM)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -282,8 +286,10 @@ if(UNIX AND NOT APPLE)
   install(FILES packaging/linux/qt.conf DESTINATION lib/designrc)
   install(FILES packaging/linux/designrc.desktop
     DESTINATION share/applications)
-  install(FILES packaging/linux/designrc.svg
-    DESTINATION share/icons/hicolor/scalable/apps)
+  install(FILES
+    resources/graphics/designrc_icon.png
+    resources/graphics/designrc_splash.png
+    DESTINATION share/designrc/graphics)
 
   install(DIRECTORY resources/help DESTINATION lib/designrc)
   install(DIRECTORY resources/licenses DESTINATION lib/designrc)
@@ -304,7 +310,7 @@ if(UNIX AND NOT APPLE)
     DESTINATION share/doc/designrc)
 
   file(GLOB _designrc_occt_libraries
-    "${OpenCASCADE_LIBRARY_DIR}/libTK*.so.8*")
+    "${OpenCASCADE_LIBRARY_DIR}/libTK*.so.*")
   if(NOT _designrc_occt_libraries)
     message(FATAL_ERROR "No Linux OCCT runtime libraries were found")
   endif()
@@ -335,10 +341,39 @@ if(UNIX AND NOT APPLE)
     message(FATAL_ERROR "The Linux Qt runtime or XCB platform plugin was not found")
   endif()
   install(FILES ${_designrc_qt_libraries} DESTINATION lib/designrc)
-  install(FILES "${QT_INSTALL_PLUGINS}/platforms/libqxcb.so"
+  set(_designrc_qt_platform_plugins
+    "${QT_INSTALL_PLUGINS}/platforms/libqxcb.so")
+  if(EXISTS "${QT_INSTALL_PLUGINS}/platforms/libqoffscreen.so")
+    list(APPEND _designrc_qt_platform_plugins
+      "${QT_INSTALL_PLUGINS}/platforms/libqoffscreen.so")
+  endif()
+  install(FILES ${_designrc_qt_platform_plugins}
     DESTINATION lib/designrc/qt6/plugins/platforms)
 
-  set(CPACK_GENERATOR DEB)
+  # Install the ICU ABI used by the bundled Qt libraries. This keeps the
+  # package portable across distributions whose repositories use another
+  # ICU ABI package name.
+  set(_designrc_icu_libraries)
+  foreach(_icu_component icudata icui18n icuuc)
+    file(GLOB _designrc_icu_component_libraries
+      "${QT_INSTALL_LIBS}/lib${_icu_component}.so.*")
+    if(NOT _designrc_icu_component_libraries)
+      message(FATAL_ERROR
+        "The Linux ${_icu_component} runtime library was not found")
+    endif()
+    list(APPEND _designrc_icu_libraries
+      ${_designrc_icu_component_libraries})
+  endforeach()
+  list(REMOVE_DUPLICATES _designrc_icu_libraries)
+  install(FILES ${_designrc_icu_libraries} DESTINATION lib/designrc)
+
+  string(TOUPPER "${DESIGNRC_LINUX_PACKAGE_GENERATOR}"
+    _designrc_linux_package_generator)
+  if(NOT _designrc_linux_package_generator MATCHES "^(DEB|RPM)$")
+    message(FATAL_ERROR
+      "DESIGNRC_LINUX_PACKAGE_GENERATOR must be DEB or RPM")
+  endif()
+  set(CPACK_GENERATOR "${_designrc_linux_package_generator}")
   set(CPACK_PACKAGE_NAME designrc)
   set(CPACK_PACKAGE_VENDOR "DesignRC")
   set(CPACK_PACKAGE_CONTACT
@@ -354,13 +389,24 @@ if(UNIX AND NOT APPLE)
   set(CPACK_PACKAGE_DIRECTORY "${CMAKE_SOURCE_DIR}/dist")
   set(CPACK_PACKAGING_INSTALL_PREFIX /usr)
   set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
-  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-  set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE amd64)
-  set(CPACK_DEBIAN_PACKAGE_MAINTAINER
-    "Barry Foust <barryfx@users.noreply.github.com>")
-  set(CPACK_DEBIAN_PACKAGE_SECTION graphics)
-  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-  set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS /usr/lib/designrc)
+  if(_designrc_linux_package_generator STREQUAL "DEB")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE amd64)
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER
+      "Barry Foust <barryfx@users.noreply.github.com>")
+    set(CPACK_DEBIAN_PACKAGE_SECTION graphics)
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS /usr/lib/designrc)
+  else()
+    set(CPACK_RPM_FILE_NAME
+      "designrc-${PROJECT_VERSION}-1.x86_64.rpm")
+    set(CPACK_RPM_PACKAGE_ARCHITECTURE x86_64)
+    set(CPACK_RPM_PACKAGE_RELEASE 1)
+    set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-or-later")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Engineering")
+    set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+    set(CPACK_RPM_PACKAGE_AUTOPROV ON)
+  endif()
   set(CPACK_STRIP_FILES ON)
   include(CPack)
 endif()

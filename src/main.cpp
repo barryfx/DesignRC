@@ -38,7 +38,11 @@ int main(int argc, char* argv[]) {
   application.setApplicationName("DesignRC");
   application.setApplicationVersion(DESIGNRC_VERSION);
   application.setOrganizationName("DesignRC");
-  application.setWindowIcon(QIcon(":/graphics/designrc_smaller.png"));
+#if defined(Q_OS_WIN)
+  application.setWindowIcon(QIcon(":/graphics/designrc_smaller.ico"));
+#else
+  application.setWindowIcon(QIcon(":/graphics/designrc_icon.png"));
+#endif
   if (application.arguments().contains("--joiner-backend-regression"))
     return designrc::gui::runJoinerBackendRegression();
 

@@ -51,6 +51,7 @@
 #include <QVBoxLayout>
 
 #include <Standard_Failure.hxx>
+#include <Standard_Version.hxx>
 
 #include <filesystem>
 #include <algorithm>
@@ -70,6 +71,14 @@
 
 namespace designrc::gui {
 namespace {
+
+const char* occtExceptionMessage(const Standard_Failure& exception) {
+#if OCC_VERSION_HEX >= 0x080000
+  return exception.what();
+#else
+  return exception.GetMessageString();
+#endif
+}
 
 class BusyCursor final {
 public:
@@ -353,6 +362,7 @@ void addInnerPanelJoinerCuts(domain::StructuredWing& inner,
           std::vector<domain::Point2> jointCut;
           for (const auto& corner : rootCorners)
             jointCut.push_back(localSectionPoint(rib, corner));
+          inner.ribs[i].ribSplitCutouts.push_back(jointCut);
           inner.ribs[i].booleanCutouts.push_back(std::move(jointCut));
         }
       } else {
@@ -853,8 +863,11 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
       // terminal rib must remain whole.
       if (ribIndex < secondRibIndex) {
         const auto& profile = joiner.rectangularProfiles.back();
-        outer.ribs[ribIndex].booleanCutouts.emplace_back(
-            profile.begin(), profile.end());
+        std::vector<domain::Point2> splitCutout{
+            profile.begin(), profile.end()};
+        outer.ribs[ribIndex].ribSplitCutouts.push_back(splitCutout);
+        outer.ribs[ribIndex].booleanCutouts.push_back(
+            std::move(splitCutout));
       }
     }
     removeJointWeb(outer, true);
@@ -895,8 +908,11 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
           jointIndex, fraction, data.woodThickness);
       const auto secondProfile = woodProfile(inner, *innerTop, *innerBottom,
           secondIndex, fraction, data.woodThickness);
-      inner.ribs[jointIndex].booleanCutouts.emplace_back(
-          jointProfile.begin(), jointProfile.end());
+      std::vector<domain::Point2> splitCutout{
+          jointProfile.begin(), jointProfile.end()};
+      inner.ribs[jointIndex].ribSplitCutouts.push_back(splitCutout);
+      inner.ribs[jointIndex].booleanCutouts.push_back(
+          std::move(splitCutout));
       removeJointWeb(inner, false);
       const auto innerSecond = globalProfile(inner.ribs[secondIndex].rib, secondProfile,
           (inner.ribs[secondIndex].rib.ribThicknessStartFactor + 1.0) *
@@ -1674,7 +1690,10 @@ int runJoinerBackendRegression() {
     WingPanelData wood = fixed;
     wood.spars = {
         {35, 0, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0},
-        {35, 1, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
+        {35, 1, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0},
+        // Keep an unrelated internal rectangular cutout on every rib. This
+        // guards against regressing wood-joiner slots back into closed holes.
+        {60, 2, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
     wood.sparShearWebs = true;
     wood.addRib1a = true;
     wood.fixedJoiners.front().material = 0;
@@ -1683,18 +1702,21 @@ int runJoinerBackendRegression() {
     if (woodWing.joiners.size() != 1) return 31;
     if (woodWing.joiners.front().stopRibIndex != 2 ||
         woodWing.joiners.front().rectangularProfiles.size() != 3 ||
-        woodWing.ribs[0].booleanCutouts.empty() ||
-        woodWing.ribs[1].booleanCutouts.empty() ||
-        !woodWing.ribs[2].booleanCutouts.empty())
+        woodWing.ribs[0].ribSplitCutouts.size() != 1 ||
+        woodWing.ribs[1].ribSplitCutouts.size() != 1 ||
+        !woodWing.ribs[2].ribSplitCutouts.empty() ||
+        woodWing.ribs[0].booleanCutouts.size() <=
+            woodWing.ribs[0].ribSplitCutouts.size())
       return 32;
     if (woodWing.joiners.front().innerRectangularProfiles.size() != 2) return 33;
     if (woodWing.joiners.front().dxfOutline.size() != 6 ||
         woodWing.joiners.front().name != "Joiner 1") return 34;
 
     const auto exportsAsTwoPieces =
-        [](const domain::StructuredRib& rib) {
-      if (rib.booleanCutouts.size() != 1) return false;
-      const auto& slot = rib.booleanCutouts.front();
+        [](const domain::StructuredRib& rib,
+           const std::size_t expectedInternalCutoutCount) {
+      if (rib.ribSplitCutouts.size() != 1) return false;
+      const auto& slot = rib.ribSplitCutouts.front();
       const auto [slotMinimum, slotMaximum] = std::minmax_element(
           slot.begin(), slot.end(),
           [](const domain::Point2 left, const domain::Point2 right) {
@@ -1718,14 +1740,17 @@ int runJoinerBackendRegression() {
         else
           return false;
       }
+      const auto internalCutoutCount = std::count_if(
+          drawing.paths.begin(), drawing.paths.end(),
+          [](const domain::PartDrawingPath& path) {
+            return path.layer == "RIB_HOLES";
+          });
       return hasLeadingPiece && hasTrailingPiece &&
-          std::none_of(drawing.paths.begin(), drawing.paths.end(),
-              [](const domain::PartDrawingPath& path) {
-                return path.layer == "RIB_HOLES";
-              });
+          static_cast<std::size_t>(internalCutoutCount) ==
+              expectedInternalCutoutCount;
     };
-    if (!exportsAsTwoPieces(woodWing.ribs[0]) ||
-        !exportsAsTwoPieces(woodWing.ribs[1]))
+    if (!exportsAsTwoPieces(woodWing.ribs[0], 1) ||
+        !exportsAsTwoPieces(woodWing.ribs[1], 1))
       return 35;
 
     WingPanelData oneBayWood = wood;
@@ -1735,9 +1760,9 @@ int runJoinerBackendRegression() {
     if (oneBayWing.joiners.size() != 1 ||
         oneBayWing.joiners.front().stopRibIndex != 1 ||
         oneBayWing.joiners.front().rectangularProfiles.size() != 2 ||
-        oneBayWing.ribs[0].booleanCutouts.size() != 1 ||
-        !oneBayWing.ribs[1].booleanCutouts.empty() ||
-        !exportsAsTwoPieces(oneBayWing.ribs[0]))
+        oneBayWing.ribs[0].ribSplitCutouts.size() != 1 ||
+        !oneBayWing.ribs[1].ribSplitCutouts.empty() ||
+        !exportsAsTwoPieces(oneBayWing.ribs[0], 1))
       return 36;
 
     WingPanelData panelJointInner = oneBayWood;
@@ -1754,13 +1779,13 @@ int runJoinerBackendRegression() {
         panelWoodOuter.joiners.size() != 1 ||
         panelWoodOuter.joiners.front().innerRectangularProfiles.size() != 2 ||
         !panelWoodOuter.joiners.front().mirrorInAssembly ||
-        panelWoodInner.ribs.back().booleanCutouts.size() != 1 ||
+        panelWoodInner.ribs.back().ribSplitCutouts.size() != 1 ||
         !panelWoodInner.ribs[panelWoodInner.ribs.size() - 2]
-             .booleanCutouts.empty() ||
-        panelWoodOuter.ribs.front().booleanCutouts.size() != 1 ||
-        !panelWoodOuter.ribs[1].booleanCutouts.empty() ||
-        !exportsAsTwoPieces(panelWoodInner.ribs.back()) ||
-        !exportsAsTwoPieces(panelWoodOuter.ribs.front()))
+             .ribSplitCutouts.empty() ||
+        panelWoodOuter.ribs.front().ribSplitCutouts.size() != 1 ||
+        !panelWoodOuter.ribs[1].ribSplitCutouts.empty() ||
+        !exportsAsTwoPieces(panelWoodInner.ribs.back(), 1) ||
+        !exportsAsTwoPieces(panelWoodOuter.ribs.front(), 1))
       return 37;
     const auto panelJoinerShapeCount = std::count_if(
         panelWoodPreview.materialShapes.parts.begin(),
@@ -1845,9 +1870,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
   metrics_->setWordWrap(true);
   leftLayout->addWidget(metrics_);
 
-  viewport_ = new OcctViewport;
-  planViewport_ = new PlanViewport;
   auto* threeDimensionalPage = new QWidget;
+  viewport_ = new OcctViewport{threeDimensionalPage};
+  planViewport_ = new PlanViewport;
   auto* threeDimensionalLayout = new QVBoxLayout{threeDimensionalPage};
   threeDimensionalLayout->setContentsMargins(0, 0, 0, 4);
   threeDimensionalLayout->setSpacing(4);
@@ -2008,7 +2033,7 @@ void MainWindow::exportStep() {
   } catch (const Standard_Failure& exception) {
     statusBar()->showMessage("STEP export failed", 5000);
     QMessageBox::critical(this, "STEP export failed",
-        QString{"OpenCascade: %1"}.arg(exception.what()));
+        QString{"OpenCascade: %1"}.arg(occtExceptionMessage(exception)));
   } catch (const std::exception& exception) {
     statusBar()->showMessage("STEP export failed", 5000);
     QMessageBox::critical(this, "STEP export failed", exception.what());
@@ -2380,7 +2405,8 @@ void MainWindow::regeneratePreview() {
     } catch (const UpdateCancelled&) {
       cancelled = true;
     } catch (const Standard_Failure& exception) {
-      error = QString{"OpenCascade: %1"}.arg(exception.what());
+      error = QString{"OpenCascade: %1"}.arg(
+          occtExceptionMessage(exception));
     } catch (const std::exception& exception) {
       error = exception.what();
     } catch (...) {
@@ -2452,7 +2478,8 @@ void MainWindow::regeneratePreview() {
       } catch (const Standard_Failure& exception) {
         finishUi();
         QMessageBox::critical(window, "Preview update failed",
-            QString{"OpenCascade display: %1"}.arg(exception.what()));
+            QString{"OpenCascade display: %1"}.arg(
+                occtExceptionMessage(exception)));
         return;
       } catch (const std::exception& exception) {
         finishUi();
@@ -2643,7 +2670,7 @@ void MainWindow::regeneratePreviewSynchronous() {
     statusBar()->showMessage("Complete mirrored wing preview updated", 3000);
   } catch (const Standard_Failure& exception) {
     QMessageBox::critical(this, "Preview update failed",
-        QString{"OpenCascade: %1"}.arg(exception.what()));
+        QString{"OpenCascade: %1"}.arg(occtExceptionMessage(exception)));
   } catch (const std::exception& exception) {
     QMessageBox::critical(this, "Preview update failed", exception.what());
   } catch (...) {

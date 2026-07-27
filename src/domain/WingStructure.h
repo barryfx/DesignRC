@@ -186,6 +186,9 @@ struct StructuredRib {
   // an exposed carbon leading edge, changes the extruded outer outline.
   std::vector<Point2> partOutline;
   std::vector<RibOutlineSegment> partOutlineSegments;
+  // Full-height wood-joiner cuts divide the exported rib into separate
+  // physical pieces. They are also present in booleanCutouts for 3D cutting.
+  std::vector<std::vector<Point2>> ribSplitCutouts;
 };
 
 struct SpanMember {

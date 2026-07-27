@@ -152,7 +152,7 @@ void exportStepAssembly(const std::vector<NamedPartShape>& parts,
   if (hierarchy.children.empty() && hierarchy.parts.empty())
     throw std::invalid_argument("STEP export contains no valid 3D parts");
 
-  const occ::handle<TDocStd_Document> document{
+  const Handle(TDocStd_Document) document{
       new TDocStd_Document{TCollection_ExtendedString{"BinXCAF"}}};
   const auto shapeTool = XCAFDoc_DocumentTool::ShapeTool(document->Main());
   const TDF_Label assembly = shapeTool->NewShape();

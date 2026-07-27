@@ -1087,8 +1087,8 @@ QWidget* WingPanelEditor::makeRibsPage() {
   addRib1a_ = new QCheckBox{
       "Add Rib 1a (Adds an extra rib between ribs 1 and 2 for extra strength)"};
   addRib1a_->setObjectName("addRib1a");
-  addRib1a_->setVisible(showRootChord_);
   form->addRow(addRib1a_);
+  addRib1a_->setVisible(showRootChord_);
   layout->addWidget(ribs);
   ribLighteningHoles_ = new QCheckBox{
       "Lightening Holes (Add this option last due to longer wing generation times)"};

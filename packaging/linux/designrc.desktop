@@ -2,7 +2,7 @@
 Name=DesignRC
 Comment=Design built-up radio-control aircraft wings
 Exec=designrc
-Icon=designrc
+Icon=/usr/share/designrc/graphics/designrc_icon.png
 Terminal=false
 Type=Application
 Categories=Graphics;Engineering;

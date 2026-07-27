@@ -7,6 +7,8 @@ $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $releaseDir = Join-Path $projectRoot 'build\release\Release'
 $sourceDir = Join-Path $releaseDir 'source'
 $sourceArchive = Join-Path $sourceDir 'DesignRC-1.0-source.zip'
+$distDir = Join-Path $projectRoot 'dist'
+$publishedSourceArchive = Join-Path $distDir 'DesignRC-1.0-source.zip'
 $iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 
 if (-not (Test-Path -LiteralPath $iscc)) {
@@ -34,17 +36,25 @@ try {
   if (-not $crtDir) { throw 'The x64 Visual C++ runtime DLL directory was not found.' }
   Copy-Item -Path (Join-Path $crtDir.FullName '*.dll') -Destination $releaseDir -Force
 
-  New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-
-  if (Test-Path -LiteralPath $sourceArchive) {
-    Remove-Item -LiteralPath $sourceArchive -Force
+  if (Test-Path -LiteralPath $sourceDir) {
+    $resolvedReleaseDir = [IO.Path]::GetFullPath($releaseDir)
+    $resolvedSourceDir = [IO.Path]::GetFullPath($sourceDir)
+    if (-not $resolvedSourceDir.StartsWith(
+        $resolvedReleaseDir + [IO.Path]::DirectorySeparatorChar,
+        [StringComparison]::OrdinalIgnoreCase)) {
+      throw 'The source staging directory is outside the Release directory.'
+    }
+    Remove-Item -LiteralPath $resolvedSourceDir -Recurse -Force
   }
+  New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
   & tar.exe -a -c -f $sourceArchive --exclude=.git --exclude=build --exclude=dist `
       --exclude='$install' .
   if ($LASTEXITCODE -ne 0) { throw 'Corresponding-source archive creation failed.' }
 
   & $iscc (Join-Path $PSScriptRoot 'DesignRC.iss')
   if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
+  New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+  Copy-Item -LiteralPath $sourceArchive -Destination $publishedSourceArchive -Force
 } finally {
   Pop-Location
 }

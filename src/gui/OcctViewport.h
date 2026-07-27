@@ -54,12 +54,12 @@ private:
   void displayViewGizmo();
   void redraw();
 
-  occ::handle<V3d_Viewer> viewer_;
-  occ::handle<V3d_View> view_;
-  occ::handle<AIS_InteractiveContext> context_;
-  std::vector<occ::handle<AIS_Shape>> displayedShapes_;
-  occ::handle<Graphic3d_TransformPers> viewGizmoPersistence_;
-  std::vector<occ::handle<AIS_InteractiveObject>> viewGizmoObjects_;
+  Handle(V3d_Viewer) viewer_;
+  Handle(V3d_View) view_;
+  Handle(AIS_InteractiveContext) context_;
+  std::vector<Handle(AIS_Shape)> displayedShapes_;
+  Handle(Graphic3d_TransformPers) viewGizmoPersistence_;
+  std::vector<Handle(AIS_InteractiveObject)> viewGizmoObjects_;
   TopoDS_Shape pendingWoodShape_;
   TopoDS_Shape pendingCarbonFiberShape_;
   TopoDS_Shape pendingAluminumShape_;

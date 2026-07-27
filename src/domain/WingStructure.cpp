@@ -1409,7 +1409,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           constexpr double machiningClearance = 0.01;
           cut[0].y += machiningClearance; cut[1].y += machiningClearance;
           cut[2].y -= machiningClearance; cut[3].y -= machiningClearance;
-          structured.booleanCutouts.push_back(rectangle(cut));
+          auto splitCutout = rectangle(cut);
+          structured.ribSplitCutouts.push_back(splitCutout);
+          structured.booleanCutouts.push_back(std::move(splitCutout));
         }
       } else {
         const double angleDifference = (joiner.axisAngleDegrees -

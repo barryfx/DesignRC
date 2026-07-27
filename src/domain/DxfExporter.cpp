@@ -507,16 +507,63 @@ PartDrawing makeStructuredRibPartDrawing(const StructuredRib& rib,
       drawing.paths.push_back(
           {segment.points, "RIB_OUTLINE", segment.spline, false});
   };
+  const auto sameCutout = [](const std::vector<Point2>& left,
+                             const std::vector<Point2>& right) {
+    if (left.size() != right.size()) return false;
+    for (std::size_t index = 0; index < left.size(); ++index)
+      if (std::hypot(left[index].x - right[index].x,
+                     left[index].y - right[index].y) > 1.0e-8)
+        return false;
+    return true;
+  };
+  const auto isSplitCutout = [&](const std::vector<Point2>& cutout) {
+    return std::any_of(
+        rib.ribSplitCutouts.begin(), rib.ribSplitCutouts.end(),
+        [&](const std::vector<Point2>& splitCutout) {
+          return sameCutout(cutout, splitCutout);
+        });
+  };
   bool exportedSplitPieces = false;
-  if (rib.booleanCutouts.size() == 1 && rib.booleanCutouts.front().size() >= 4) {
-    const auto& slot = rib.booleanCutouts.front();
-    const auto [minimum, maximum] = std::minmax_element(slot.begin(), slot.end(),
-        [](const Point2 a, const Point2 b) { return a.x < b.x; });
-    auto leadingPiece = clipAtX(finishedOutline, minimum->x, true);
-    auto trailingPiece = clipAtX(finishedOutline, maximum->x, false);
-    if (leadingPiece.size() >= 3 && trailingPiece.size() >= 3) {
-      appendOutline(leadingPiece);
-      appendOutline(trailingPiece);
+  if (!rib.ribSplitCutouts.empty()) {
+    std::vector<std::pair<double, double>> splitRanges;
+    splitRanges.reserve(rib.ribSplitCutouts.size());
+    for (const auto& slot : rib.ribSplitCutouts) {
+      if (slot.size() < 4) continue;
+      const auto [minimum, maximum] = std::minmax_element(
+          slot.begin(), slot.end(),
+          [](const Point2 a, const Point2 b) { return a.x < b.x; });
+      if (maximum->x > minimum->x + 1.0e-8)
+        splitRanges.emplace_back(minimum->x, maximum->x);
+    }
+    std::sort(splitRanges.begin(), splitRanges.end());
+    std::vector<std::pair<double, double>> mergedRanges;
+    for (const auto range : splitRanges) {
+      if (mergedRanges.empty() ||
+          range.first > mergedRanges.back().second + 1.0e-8)
+        mergedRanges.push_back(range);
+      else
+        mergedRanges.back().second =
+            std::max(mergedRanges.back().second, range.second);
+    }
+    std::vector<std::vector<Point2>> pieces;
+    if (!mergedRanges.empty()) {
+      pieces.push_back(clipAtX(
+          finishedOutline, mergedRanges.front().first, true));
+      for (std::size_t index = 1; index < mergedRanges.size(); ++index) {
+        auto middle = clipAtX(
+            finishedOutline, mergedRanges[index - 1].second, false);
+        pieces.push_back(
+            clipAtX(middle, mergedRanges[index].first, true));
+      }
+      pieces.push_back(clipAtX(
+          finishedOutline, mergedRanges.back().second, false));
+    }
+    if (!pieces.empty() &&
+        std::all_of(pieces.begin(), pieces.end(),
+            [](const std::vector<Point2>& piece) {
+              return piece.size() >= 3;
+            })) {
+      for (const auto& piece : pieces) appendOutline(piece);
       exportedSplitPieces = true;
     }
   }
@@ -531,8 +578,8 @@ PartDrawing makeStructuredRibPartDrawing(const StructuredRib& rib,
   }
   for (const auto& hole : rib.holes)
     drawing.paths.push_back({hole, "RIB_HOLES"});
-  if (!exportedSplitPieces)
-    for (const auto& cutout : rib.booleanCutouts)
+  for (const auto& cutout : rib.booleanCutouts)
+    if (!exportedSplitPieces || !isSplitCutout(cutout))
       drawing.paths.push_back({cutout, "RIB_HOLES"});
   for (const auto& hole : rib.booleanHoles)
     if (!isOpenOuterCut(hole))
