@@ -4,11 +4,12 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$releaseDir = Join-Path $projectRoot 'build\release\Release'
+$releaseBuildDir = Join-Path $projectRoot 'build\release-current'
+$releaseDir = Join-Path $releaseBuildDir 'Release'
 $sourceDir = Join-Path $releaseDir 'source'
-$sourceArchive = Join-Path $sourceDir 'DesignRC-1.0-source.zip'
+$sourceArchive = Join-Path $sourceDir 'DesignRC-1.1.0-source.zip'
 $distDir = Join-Path $projectRoot 'dist'
-$publishedSourceArchive = Join-Path $distDir 'DesignRC-1.0-source.zip'
+$publishedSourceArchive = Join-Path $distDir 'DesignRC-1.1.0-source.zip'
 $iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 
 if (-not (Test-Path -LiteralPath $iscc)) {
@@ -17,9 +18,9 @@ if (-not (Test-Path -LiteralPath $iscc)) {
 
 Push-Location $projectRoot
 try {
-  & cmake --preset windows-release
+  & cmake --preset windows-release -B $releaseBuildDir
   if ($LASTEXITCODE -ne 0) { throw 'CMake Release configuration failed.' }
-  & cmake --build --preset windows-release
+  & cmake --build $releaseBuildDir --config Release
   if ($LASTEXITCODE -ne 0) { throw 'DesignRC Release build failed.' }
 
   $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'

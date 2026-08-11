@@ -24,7 +24,7 @@
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
 #include <GCPnts_QuasiUniformDeflection.hxx>
-#include <GC_MakeSegment2d.hxx>
+#include <GCE2d_MakeSegment.hxx>
 #include <Geom_Plane.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Precision.hxx>
@@ -1235,7 +1235,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             const auto second = parameterPoint(
                 points[(index + 1) % points.size()]);
             if (first.Distance(second) < Precision::PConfusion()) continue;
-            const auto pcurve = GC_MakeSegment2d{first, second}.Value();
+            const auto pcurve = GCE2d_MakeSegment{first, second}.Value();
             BRepBuilderAPI_MakeEdge edgeBuilder{
                 points[index], points[(index + 1) % points.size()]};
             if (!edgeBuilder.IsDone())
