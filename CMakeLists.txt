@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.1.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -11,6 +11,12 @@ set_property(CACHE DESIGNRC_LINUX_PACKAGE_GENERATOR
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(MSVC)
+  # Several Debug targets compile sources concurrently into one program
+  # database. Serialize PDB writes so clean/parallel builds cannot race.
+  add_compile_options(/FS)
+endif()
 
 if(NOT DEFINED OpenCASCADE_DIR)
   set(_designrc_occt "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/occt/install-debug/cmake")
@@ -112,7 +118,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="July 27, 2026"
+  DESIGNRC_RELEASE_DATE="August 11, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain

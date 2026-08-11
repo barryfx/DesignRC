@@ -1,12 +1,14 @@
 #include "geometry/OcctRibBuilder.h"
 
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_Copy.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepAdaptor_Surface.hxx>
+#include <BRepAdaptor_Curve.hxx>
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
@@ -17,11 +19,18 @@
 #include <BRepBndLib.hxx>
 #include <BRepGProp.hxx>
 #include <BRepTools.hxx>
+#include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <Bnd_Box.hxx>
 #include <GProp_GProps.hxx>
+#include <GCPnts_QuasiUniformDeflection.hxx>
+#include <GC_MakeSegment2d.hxx>
+#include <Geom_Plane.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Precision.hxx>
+#include <Poly_Triangle.hxx>
+#include <Poly_Triangulation.hxx>
+#include <Standard_Failure.hxx>
 #include <Standard_Version.hxx>
 #if OCC_VERSION_HEX >= 0x080000
 #include <NCollection_HArray1.hxx>
@@ -29,14 +38,18 @@
 #include <TColgp_HArray1OfPnt.hxx>
 #endif
 #include <ShapeFix_Shape.hxx>
+#include <ShapeFix_Face.hxx>
+#include <ShapeFix_Wire.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
 #include <GeomAbs_SurfaceType.hxx>
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Pnt2d.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
 #include <gp_Pln.hxx>
@@ -45,10 +58,14 @@
 
 #include <stdexcept>
 #include <sstream>
+#include <string_view>
 #include <atomic>
 #include <future>
 #include <vector>
 #include <numbers>
+#include <numeric>
+#include <optional>
+#include <limits>
 #include <cmath>
 #include <chrono>
 #include <thread>
@@ -381,6 +398,10 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     return name == "Spoiler" || name.starts_with("Spoiler Frame Rail") ||
         name.starts_with("Spoiler Support Rail");
   };
+  const auto isTrailingEdgePart = [](const std::string& name) {
+    return name.starts_with("TE") ||
+        name.find("trailing edge") != std::string::npos;
+  };
   const auto isSparMember = [&](const std::string& name) {
     return !isShearWebPart(name) &&
         (name.find("Spar") != std::string::npos ||
@@ -397,8 +418,22 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
          name.starts_with("Removable Joiner") ||
          name.starts_with("Alignment Pin"));
   };
+  const auto joinerDefinitionName = [](const std::string& name) {
+    const auto numberedPrefix = [&name](const std::string_view prefix) {
+      if (!name.starts_with(prefix)) return std::string{};
+      std::size_t end = prefix.size();
+      while (end < name.size() && name[end] >= '0' && name[end] <= '9') ++end;
+      return name.substr(0, end);
+    };
+    if (auto definition = numberedPrefix("Fixed Joiner "); !definition.empty())
+      return definition;
+    if (auto definition = numberedPrefix("Removable Joiner "); !definition.empty())
+      return definition;
+    return numberedPrefix("Alignment Pin ");
+  };
   const auto isJoinerCollisionTarget = [&](const std::string& name) {
-    return isSparMember(name) || name == "CF tube" || name == "CF rod" ||
+    return isCheckedJoiner(name) || isSparMember(name) ||
+        name == "CF tube" || name == "CF rod" ||
         name.starts_with("LE") || name.starts_with("TE") ||
         name.find("leading edge") != std::string::npos ||
         name.find("trailing edge") != std::string::npos ||
@@ -416,33 +451,81 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       const bool intendedWebContact =
           (isShearWebPart(name) && isSparMember(other.name)) ||
           (isShearWebPart(other.name) && isSparMember(name));
-      const bool joinerCollision =
-          (isCheckedJoiner(name) && isJoinerCollisionTarget(other.name)) ||
-          (isCheckedJoiner(other.name) && isJoinerCollisionTarget(name));
+      const bool sameJoinerDefinition =
+          isCheckedJoiner(name) && isCheckedJoiner(other.name) &&
+          joinerDefinitionName(name) == joinerDefinitionName(other.name);
+      const bool woodJoinerCollision = name != other.name &&
+          isWoodJoiner(name) && isWoodJoiner(other.name);
+      const bool joinerCollision = woodJoinerCollision ||
+          (!sameJoinerDefinition &&
+           ((isCheckedJoiner(name) && isJoinerCollisionTarget(other.name)) ||
+            (isCheckedJoiner(other.name) && isJoinerCollisionTarget(name))));
       const bool newSparCollision = isNewSparPart(name) || isNewSparPart(other.name);
       const bool spoilerCollision =
           (isSpoilerPart(name) || isSpoilerPart(other.name)) &&
           !(isSpoilerPart(name) && isSpoilerPart(other.name));
       if (isSheetingPart(name) || isSheetingPart(other.name) ||
-          ((isWoodJoiner(name) || isWoodJoiner(other.name)) && !spoilerCollision) ||
+          ((isWoodJoiner(name) || isWoodJoiner(other.name)) &&
+           !woodJoinerCollision && !spoilerCollision) ||
           intendedWebContact ||
           (!newSparCollision && !joinerCollision && !spoilerCollision) ||
           other.name == name || bounds.IsOut(other.bounds))
         continue;
-      BRepAlgoAPI_Common common{shape, other.shape};
-      common.SetRunParallel(true);
-      common.Build();
+      BRepAlgoAPI_Common common;
+      try {
+        TopTools_ListOfShape arguments;
+        arguments.Append(shape);
+        common.SetArguments(arguments);
+        TopTools_ListOfShape tools;
+        tools.Append(other.shape);
+        common.SetTools(tools);
+        common.SetRunParallel(true);
+        common.Build();
+      } catch (const Standard_Failure&) {
+        if (spoilerCollision) {
+          const auto& spoilerName = isSpoilerPart(name) ? name : other.name;
+          const auto& obstructionName = isSpoilerPart(name) ? other.name : name;
+          throw std::runtime_error(
+              "Unable to check clearance between " + spoilerName + " and " +
+              (obstructionName.empty()
+                  ? std::string{"the adjoining wing part"}
+                  : obstructionName) +
+              ". Adjust the spoiler position or dimensions and try again.");
+        }
+        throw;
+      }
       if (!common.IsDone())
-        throw std::runtime_error("Unable to check collision between " + name +
-            " and " + other.name);
+        throw std::runtime_error(spoilerCollision
+            ? "Unable to check spoiler clearance between " + name + " and " +
+                other.name + ". Adjust the spoiler position or dimensions and try again."
+            : "Unable to check collision between " + name + " and " + other.name);
       GProp_GProps properties;
       BRepGProp::VolumeProperties(common.Shape(), properties);
       // Boolean commons at intentionally shared faces can contain microscopic
       // tolerance slivers. Ignore sub-cubic-millimetre artifacts while still
       // rejecting any manufacturable solid overlap.
-      if (properties.Mass() > 1.0e-3)
+      if (properties.Mass() > 1.0e-3) {
+        if (spoilerCollision) {
+          const auto& spoilerName = isSpoilerPart(name) ? name : other.name;
+          const auto& obstructionName = isSpoilerPart(name) ? other.name : name;
+          const std::string obstruction = obstructionName.empty()
+              ? "an adjoining wing part" : obstructionName;
+          const std::string category = isSparMember(obstructionName) ||
+                  obstructionName == "CF tube" || obstructionName == "CF rod"
+              ? "spar" : isTrailingEdgePart(obstructionName)
+              ? "trailing edge" : "wing part";
+          throw std::invalid_argument(
+              "Spoiler collision: " + spoilerName + " intersects " +
+              obstruction + ". Adjust the spoiler position or dimensions so " +
+              "it clears the " + category + ".");
+        }
+        if (joinerCollision)
+          throw std::invalid_argument(
+              "Joiner collision: " + name + " intersects " + other.name +
+              ". Adjust the joiner positions or dimensions so they do not overlap.");
         throw std::invalid_argument("Geometric collision between " + name +
-            " and " + other.name);
+                                    " and " + other.name);
+      }
     }
     nonRibShapes.push_back({name, shape, bounds});
     addShape(shape, material, mirrorInAssembly, name);
@@ -675,8 +758,568 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           ? resultingSolids.front() : TopoDS_Shape{ribPart};
     };
 
-    const auto positiveRibShape =
+    // Some valid spline-bounded planar cap faces are rejected by OCCT's
+    // mesher even though their adjoining side faces triangulate correctly.
+    // Supply those faces with a polygonal triangulation derived from their
+    // final boundary wires so Boolean holes and split joiner ribs are retained.
+    const auto ensureRibCapTriangulation = [&](TopoDS_Shape& ribShape) {
+      BRep_Builder triangulationBuilder;
+      for (TopExp_Explorer faces{ribShape, TopAbs_FACE};
+           faces.More(); faces.Next()) {
+        const auto capFace = TopoDS::Face(faces.Current());
+        const BRepAdaptor_Surface surface{capFace};
+        if (surface.GetType() != GeomAbs_Plane ||
+            std::abs(surface.Plane().Axis().Direction().Dot(gp_Dir{ribNormal})) <
+                0.99)
+          continue;
+        TopLoc_Location existingLocation;
+        if (!BRep_Tool::Triangulation(capFace, existingLocation).IsNull())
+          continue;
+        // Boolean results can leave a valid planar cap unmeshed when OCCT
+        // processes the complete rib solid. Meshing an isolated copy avoids
+        // that coupled-face failure while preserving every exact boundary and
+        // hole. The copied face uses the same geometry/location, so its mesh
+        // can be attached directly to the original cap.
+        BRepBuilderAPI_Copy isolatedCopy{capFace};
+        auto isolatedFace = TopoDS::Face(isolatedCopy.Shape());
+        BRepTools::Clean(isolatedFace);
+        BRepMesh_IncrementalMesh isolatedMesh{
+            isolatedFace, 0.5, false, 0.25, false};
+        TopLoc_Location isolatedLocation;
+        const auto isolatedTriangulation =
+            BRep_Tool::Triangulation(isolatedFace, isolatedLocation);
+        if (isolatedMesh.IsDone() && !isolatedTriangulation.IsNull()) {
+          triangulationBuilder.UpdateFace(capFace, isolatedTriangulation);
+          continue;
+        }
+        struct SampledWire {
+          TopoDS_Wire wire;
+          std::vector<gp_Pnt> points;
+        };
+        const auto polygonalWire = [&](const TopoDS_Wire& source) {
+          BRepBuilderAPI_MakePolygon polygon;
+          std::vector<gp_Pnt> polygonPoints;
+          std::optional<gp_Pnt> previous;
+          const auto append = [&](const gp_Pnt& point) {
+            if (!previous || previous->Distance(point) > Precision::Confusion()) {
+              polygon.Add(point);
+              polygonPoints.push_back(point);
+              previous = point;
+            }
+          };
+          for (BRepTools_WireExplorer edges{source, capFace};
+               edges.More(); edges.Next()) {
+            const auto edge = edges.Current();
+            BRepAdaptor_Curve curve{edge};
+            GCPnts_QuasiUniformDeflection samples{curve, 0.05};
+            std::vector<gp_Pnt> edgePoints;
+            if (!samples.IsDone() || samples.NbPoints() < 2) {
+              edgePoints = {curve.Value(curve.FirstParameter()),
+                            curve.Value(curve.LastParameter())};
+            } else {
+              for (int index = 1; index <= samples.NbPoints(); ++index)
+                edgePoints.push_back(samples.Value(index));
+            }
+            const bool reverse = previous
+                ? previous->Distance(edgePoints.back()) <
+                      previous->Distance(edgePoints.front())
+                : edge.Orientation() == TopAbs_REVERSED;
+            if (reverse)
+              for (auto point = edgePoints.rbegin();
+                   point != edgePoints.rend(); ++point)
+                append(*point);
+            else
+              for (const auto& point : edgePoints) append(point);
+          }
+          polygon.Close();
+          if (!polygon.IsDone())
+            throw std::runtime_error(
+                "Unable to construct a polygonal structured-rib cap wire");
+          return SampledWire{polygon.Wire(), std::move(polygonPoints)};
+        };
+        std::size_t earFailureRemaining = 0;
+        double earFailureMinimumCross = 0.0;
+        std::string earFailureCoordinates;
+        const auto simpleTriangulation =
+            [&](std::vector<gp_Pnt> nodes,
+               const std::vector<gp_Pnt>& bridgeHolePoints = {}) {
+          if (nodes.size() > 1 &&
+              nodes.front().Distance(nodes.back()) < Precision::Confusion())
+            nodes.pop_back();
+          const auto axes = surface.Plane().Position();
+          struct Point2d { double x{}; double y{}; };
+          const auto project = [&](const gp_Pnt& point) {
+            const gp_Vec offset{axes.Location(), point};
+            return Point2d{offset.Dot(gp_Vec{axes.XDirection()}),
+                           offset.Dot(gp_Vec{axes.YDirection()})};
+          };
+          std::vector<Point2d> flat;
+          flat.reserve(nodes.size());
+          for (const auto& point : nodes) flat.push_back(project(point));
+          const auto cross = [](const Point2d a, const Point2d b,
+                                const Point2d c) {
+            return (b.x - a.x) * (c.y - a.y) -
+                   (b.y - a.y) * (c.x - a.x);
+          };
+          bool removed = true;
+          while (removed && nodes.size() > 3) {
+            removed = false;
+            for (std::size_t index = 0; index < nodes.size(); ++index) {
+              const std::size_t before =
+                  (index + nodes.size() - 1) % nodes.size();
+              const std::size_t after = (index + 1) % nodes.size();
+              if (std::abs(cross(flat[before], flat[index], flat[after])) >
+                  1.0e-9)
+                continue;
+              bool bridgeEndpoint = false;
+              for (std::size_t other = 0; other < nodes.size(); ++other) {
+                if (other == index || other == before || other == after)
+                  continue;
+                if (nodes[index].Distance(nodes[other]) <
+                    Precision::Confusion()) {
+                  bridgeEndpoint = true;
+                  break;
+                }
+              }
+              if (bridgeEndpoint) continue;
+              nodes.erase(nodes.begin() + static_cast<std::ptrdiff_t>(index));
+              flat.erase(flat.begin() + static_cast<std::ptrdiff_t>(index));
+              removed = true;
+              break;
+            }
+          }
+          if (nodes.size() < 3)
+            return Handle(Poly_Triangulation){};
+          double signedArea = 0.0;
+          for (std::size_t index = 0; index < flat.size(); ++index) {
+            const auto& next = flat[(index + 1) % flat.size()];
+            signedArea += flat[index].x * next.y - next.x * flat[index].y;
+          }
+          double orientation = signedArea >= 0.0 ? 1.0 : -1.0;
+          std::vector<int> remaining(nodes.size());
+          std::iota(remaining.begin(), remaining.end(), 0);
+          std::vector<std::array<int, 3>> triangles;
+          triangles.reserve(nodes.size() - 2);
+          while (remaining.size() > 3) {
+            bool clipped = false;
+            for (std::size_t position = 0; position < remaining.size(); ++position) {
+              const int before = remaining[(position + remaining.size() - 1) %
+                                           remaining.size()];
+              const int current = remaining[position];
+              const int after = remaining[(position + 1) % remaining.size()];
+              if (orientation * cross(flat[before], flat[current], flat[after]) <=
+                  1.0e-10)
+                continue;
+              bool containsPoint = false;
+              for (const int candidate : remaining) {
+                if (candidate == before || candidate == current ||
+                    candidate == after)
+                  continue;
+                if (orientation * cross(flat[before], flat[current],
+                                        flat[candidate]) > 1.0e-9 &&
+                    orientation * cross(flat[current], flat[after],
+                                        flat[candidate]) > 1.0e-9 &&
+                    orientation * cross(flat[after], flat[before],
+                                        flat[candidate]) > 1.0e-9) {
+                  containsPoint = true;
+                  break;
+                }
+              }
+              if (containsPoint) continue;
+              triangles.push_back({before, current, after});
+              remaining.erase(remaining.begin() +
+                              static_cast<std::ptrdiff_t>(position));
+              clipped = true;
+              break;
+            }
+            if (!clipped) {
+              for (std::size_t position = 0;
+                   position < remaining.size(); ++position) {
+                const int before = remaining[
+                    (position + remaining.size() - 1) % remaining.size()];
+                const int current = remaining[position];
+                const int after =
+                    remaining[(position + 1) % remaining.size()];
+                if (std::abs(cross(flat[before], flat[current], flat[after])) >
+                    1.0e-7)
+                  continue;
+                remaining.erase(remaining.begin() +
+                                static_cast<std::ptrdiff_t>(position));
+                clipped = true;
+                break;
+              }
+              if (!clipped) {
+                // A bridged hole is represented by two occurrences of each
+                // bridge endpoint. Once the surrounding ears are removed,
+                // discard a repeated index rather than treating the
+                // zero-width bridge as real cap area.
+                for (std::size_t first = 0;
+                     first < remaining.size() && !clipped; ++first) {
+                  for (std::size_t second = first + 1;
+                       second < remaining.size(); ++second) {
+                    if (nodes[remaining[first]].Distance(
+                            nodes[remaining[second]]) >= Precision::Confusion())
+                      continue;
+                    remaining.erase(remaining.begin() +
+                                    static_cast<std::ptrdiff_t>(second));
+                    clipped = true;
+                    break;
+                  }
+                }
+              }
+              if (!clipped) {
+                // After all hole arcs have been consumed, one copy of the
+                // hole-side bridge endpoint can remain in the weak polygon.
+                // It bounds no cap area and may be dropped safely.
+                for (std::size_t position = 0;
+                     position < remaining.size() && !clipped; ++position) {
+                  for (const auto& bridgePoint : bridgeHolePoints) {
+                    if (nodes[remaining[position]].Distance(bridgePoint) >=
+                        Precision::Confusion())
+                      continue;
+                    remaining.erase(remaining.begin() +
+                                    static_cast<std::ptrdiff_t>(position));
+                    clipped = true;
+                    break;
+                  }
+                }
+              }
+              if (!clipped) {
+                double remainingArea = 0.0;
+                for (std::size_t position = 0;
+                     position < remaining.size(); ++position) {
+                  const auto& current = flat[remaining[position]];
+                  const auto& next = flat[remaining[
+                      (position + 1) % remaining.size()]];
+                  remainingArea += current.x * next.y - next.x * current.y;
+                }
+                const double remainingOrientation =
+                    remainingArea >= 0.0 ? 1.0 : -1.0;
+                if (remainingOrientation != orientation) {
+                  orientation = remainingOrientation;
+                  clipped = true;
+                }
+              }
+              if (!clipped) {
+                double minimumCross =
+                    std::numeric_limits<double>::infinity();
+                std::size_t minimumPosition = 0;
+                for (std::size_t position = 0;
+                     position < remaining.size(); ++position) {
+                  const int before = remaining[
+                      (position + remaining.size() - 1) % remaining.size()];
+                  const int current = remaining[position];
+                  const int after =
+                      remaining[(position + 1) % remaining.size()];
+                  const double value =
+                      std::abs(cross(flat[before], flat[current], flat[after]));
+                  if (value < minimumCross) {
+                    minimumCross = value;
+                    minimumPosition = position;
+                  }
+                }
+                // A sampled spline can leave a tiny kink after most ears have
+                // been clipped. Removing a display sliver of at most 5 mm^2
+                // lets the remaining cap triangulate without changing the
+                // underlying solid or exported geometry.
+                if (minimumCross <= 10.0) {
+                  remaining.erase(remaining.begin() +
+                      static_cast<std::ptrdiff_t>(minimumPosition));
+                  clipped = true;
+                } else {
+                  earFailureRemaining = remaining.size();
+                  earFailureMinimumCross = minimumCross;
+                  std::ostringstream coordinates;
+                  for (const int node : remaining)
+                    coordinates << " [" << flat[node].x << ','
+                                << flat[node].y << ']';
+                  earFailureCoordinates = coordinates.str();
+                  return Handle(Poly_Triangulation){};
+                }
+              }
+            }
+          }
+          triangles.push_back(
+              {remaining[0], remaining[1], remaining[2]});
+          Handle(Poly_Triangulation) triangulation =
+              new Poly_Triangulation(
+                  static_cast<int>(nodes.size()),
+                  static_cast<int>(triangles.size()), false);
+          for (std::size_t index = 0; index < nodes.size(); ++index)
+            triangulation->SetNode(static_cast<int>(index + 1), nodes[index]);
+          for (std::size_t index = 0; index < triangles.size(); ++index)
+            triangulation->SetTriangle(static_cast<int>(index + 1),
+                Poly_Triangle{triangles[index][0] + 1,
+                              triangles[index][1] + 1,
+                              triangles[index][2] + 1});
+          triangulation->Deflection(0.25);
+          return triangulation;
+        };
+        const auto triangulationWithHoles = [&simpleTriangulation, &surface](
+            std::vector<gp_Pnt> outer,
+            std::vector<std::vector<gp_Pnt>> holes) {
+          const auto axes = surface.Plane().Position();
+          struct FlatPoint { double x{}; double y{}; };
+          const auto project = [&](const gp_Pnt& point) {
+            const gp_Vec offset{axes.Location(), point};
+            return FlatPoint{offset.Dot(gp_Vec{axes.XDirection()}),
+                             offset.Dot(gp_Vec{axes.YDirection()})};
+          };
+          const auto removeClosingDuplicate = [](std::vector<gp_Pnt>& points) {
+            if (points.size() > 1 &&
+                points.front().Distance(points.back()) < Precision::Confusion())
+              points.pop_back();
+          };
+          removeClosingDuplicate(outer);
+          for (auto& hole : holes) removeClosingDuplicate(hole);
+          const auto signedArea = [&](const std::vector<gp_Pnt>& points) {
+            double area = 0.0;
+            for (std::size_t index = 0; index < points.size(); ++index) {
+              const auto current = project(points[index]);
+              const auto next = project(points[(index + 1) % points.size()]);
+              area += current.x * next.y - next.x * current.y;
+            }
+            return area * 0.5;
+          };
+          const auto orientation = [](const FlatPoint a, const FlatPoint b,
+                                      const FlatPoint c) {
+            return (b.x - a.x) * (c.y - a.y) -
+                   (b.y - a.y) * (c.x - a.x);
+          };
+          const auto properIntersection = [&](const FlatPoint a,
+                                              const FlatPoint b,
+                                              const FlatPoint c,
+                                              const FlatPoint d) {
+            constexpr double tolerance = 1.0e-9;
+            const double abC = orientation(a, b, c);
+            const double abD = orientation(a, b, d);
+            const double cdA = orientation(c, d, a);
+            const double cdB = orientation(c, d, b);
+            return ((abC > tolerance && abD < -tolerance) ||
+                    (abC < -tolerance && abD > tolerance)) &&
+                   ((cdA > tolerance && cdB < -tolerance) ||
+                    (cdA < -tolerance && cdB > tolerance));
+          };
+          const auto pointInside = [&](const FlatPoint point,
+                                       const std::vector<gp_Pnt>& polygon) {
+            bool inside = false;
+            for (std::size_t index = 0, previous = polygon.size() - 1;
+                 index < polygon.size(); previous = index++) {
+              const auto a = project(polygon[index]);
+              const auto b = project(polygon[previous]);
+              if ((a.y > point.y) == (b.y > point.y)) continue;
+              const double crossingX = (b.x - a.x) * (point.y - a.y) /
+                  (b.y - a.y) + a.x;
+              if (point.x < crossingX) inside = !inside;
+            }
+            return inside;
+          };
+          if (outer.size() < 3) return Handle(Poly_Triangulation){};
+          const std::vector<gp_Pnt> originalOuter = outer;
+          const double outerArea = signedArea(outer);
+          std::vector<gp_Pnt> bridgeHolePoints;
+          for (auto& hole : holes) {
+            if (hole.size() < 3) continue;
+            if ((signedArea(hole) >= 0.0) == (outerArea >= 0.0))
+              std::reverse(hole.begin(), hole.end());
+            bridgeHolePoints.insert(
+                bridgeHolePoints.end(), hole.begin(), hole.end());
+            std::size_t holeVertex = 0;
+            for (std::size_t index = 1; index < hole.size(); ++index) {
+              const auto candidate = project(hole[index]);
+              const auto selected = project(hole[holeVertex]);
+              if (candidate.x > selected.x ||
+                  (std::abs(candidate.x - selected.x) < 1.0e-9 &&
+                   candidate.y < selected.y))
+                holeVertex = index;
+            }
+            const auto holePoint = project(hole[holeVertex]);
+            std::size_t bridgeVertex = outer.size();
+            double bridgeDistance = std::numeric_limits<double>::infinity();
+            for (std::size_t candidateIndex = 0;
+                 candidateIndex < outer.size(); ++candidateIndex) {
+              const auto candidate = project(outer[candidateIndex]);
+              bool blocked = false;
+              for (std::size_t edge = 0; edge < outer.size(); ++edge) {
+                const std::size_t next = (edge + 1) % outer.size();
+                if (edge == candidateIndex || next == candidateIndex) continue;
+                if (properIntersection(holePoint, candidate,
+                                       project(outer[edge]),
+                                       project(outer[next]))) {
+                  blocked = true;
+                  break;
+                }
+              }
+              if (blocked) continue;
+              for (std::size_t edge = 0; edge < hole.size(); ++edge) {
+                const std::size_t next = (edge + 1) % hole.size();
+                if (edge == holeVertex || next == holeVertex) continue;
+                if (properIntersection(holePoint, candidate,
+                                       project(hole[edge]),
+                                       project(hole[next]))) {
+                  blocked = true;
+                  break;
+                }
+              }
+              if (blocked) continue;
+              for (int sample = 1; sample < 10 && !blocked; ++sample) {
+                const double t = static_cast<double>(sample) / 10.0;
+                const FlatPoint point{
+                    holePoint.x + (candidate.x - holePoint.x) * t,
+                    holePoint.y + (candidate.y - holePoint.y) * t};
+                if (!pointInside(point, originalOuter)) {
+                  blocked = true;
+                  break;
+                }
+                for (const auto& otherHole : holes) {
+                  if (pointInside(point, otherHole)) {
+                    blocked = true;
+                    break;
+                  }
+                }
+              }
+              if (blocked) continue;
+              const double distance = std::hypot(
+                  candidate.x - holePoint.x, candidate.y - holePoint.y);
+              if (distance < bridgeDistance) {
+                bridgeDistance = distance;
+                bridgeVertex = candidateIndex;
+              }
+            }
+            if (bridgeVertex == outer.size())
+              return Handle(Poly_Triangulation){};
+            std::vector<gp_Pnt> merged;
+            merged.reserve(outer.size() + hole.size() + 2);
+            merged.insert(merged.end(), outer.begin(),
+                          outer.begin() + static_cast<std::ptrdiff_t>(bridgeVertex + 1));
+            merged.push_back(hole[holeVertex]);
+            for (std::size_t offset = 1; offset < hole.size(); ++offset)
+              merged.push_back(hole[(holeVertex + offset) % hole.size()]);
+            merged.push_back(hole[holeVertex]);
+            merged.push_back(outer[bridgeVertex]);
+            merged.insert(merged.end(),
+                          outer.begin() + static_cast<std::ptrdiff_t>(bridgeVertex + 1),
+                          outer.end());
+            outer = std::move(merged);
+          }
+          return simpleTriangulation(
+              std::move(outer), bridgeHolePoints);
+        };
+        const auto outerWire = BRepTools::OuterWire(capFace);
+        const auto sampledOuter = polygonalWire(outerWire);
+        std::size_t innerWireCount = 0;
+        std::vector<std::vector<gp_Pnt>> sampledInnerWires;
+        for (TopExp_Explorer wires{capFace, TopAbs_WIRE};
+             wires.More(); wires.Next()) {
+          const auto wire = TopoDS::Wire(wires.Current());
+          if (!wire.IsSame(outerWire)) {
+            sampledInnerWires.push_back(polygonalWire(wire).points);
+            ++innerWireCount;
+          }
+        }
+        const auto planeAxes = surface.Plane().Position();
+        Handle(Geom_Plane) fallbackSurface = new Geom_Plane(surface.Plane());
+        const auto parametricWire = [&](std::vector<gp_Pnt> points) {
+          if (points.size() > 1 &&
+              points.front().Distance(points.back()) < Precision::Confusion())
+            points.pop_back();
+          BRepBuilderAPI_MakeWire wireBuilder;
+          for (std::size_t index = 0; index < points.size(); ++index) {
+            const auto parameterPoint = [&](const gp_Pnt& point) {
+              const gp_Vec offset{planeAxes.Location(), point};
+              return gp_Pnt2d{
+                  offset.Dot(gp_Vec{planeAxes.XDirection()}),
+                  offset.Dot(gp_Vec{planeAxes.YDirection()})};
+            };
+            const auto first = parameterPoint(points[index]);
+            const auto second = parameterPoint(
+                points[(index + 1) % points.size()]);
+            if (first.Distance(second) < Precision::PConfusion()) continue;
+            const auto pcurve = GC_MakeSegment2d{first, second}.Value();
+            BRepBuilderAPI_MakeEdge edgeBuilder{
+                points[index], points[(index + 1) % points.size()]};
+            if (!edgeBuilder.IsDone())
+              throw std::runtime_error(
+                  "Unable to construct a parametric rib-cap edge");
+            auto edge = edgeBuilder.Edge();
+            BRep_Builder edgeBuilderWithPcurve;
+            edgeBuilderWithPcurve.UpdateEdge(
+                edge, pcurve, fallbackSurface, TopLoc_Location{},
+                Precision::Confusion());
+            wireBuilder.Add(edge);
+          }
+          if (!wireBuilder.IsDone())
+            throw std::runtime_error(
+                "Unable to construct a parametric rib-cap wire");
+          return wireBuilder.Wire();
+        };
+        const auto parametricOuter = parametricWire(sampledOuter.points);
+        BRepBuilderAPI_MakeFace outerOnly{
+            fallbackSurface, parametricOuter, true};
+        const bool outerOnlyValid = outerOnly.IsDone() &&
+            BRepCheck_Analyzer{outerOnly.Face(), false}.IsValid();
+        std::vector<TopoDS_Wire> parametricInnerWires;
+        for (const auto& inner : sampledInnerWires)
+          parametricInnerWires.push_back(parametricWire(inner));
+        const auto makeFallbackFace = [&](const TopAbs_Orientation orientation) {
+          BRepBuilderAPI_MakeFace faceBuilder{
+              fallbackSurface, parametricOuter, true};
+          for (auto innerWire : parametricInnerWires) {
+            innerWire.Orientation(orientation);
+            faceBuilder.Add(innerWire);
+          }
+          return faceBuilder.Face();
+        };
+        auto fallbackFace = makeFallbackFace(TopAbs_FORWARD);
+        if (!BRepCheck_Analyzer{fallbackFace, false}.IsValid())
+          fallbackFace = makeFallbackFace(TopAbs_REVERSED);
+        ShapeFix_Face fallbackFix{fallbackFace};
+        fallbackFix.FixWireTool()->FixAddPCurveMode() = 1;
+        fallbackFix.FixOrientationMode() = 1;
+        fallbackFix.Perform();
+        fallbackFace = fallbackFix.Face();
+        BRepMesh_IncrementalMesh fallbackMesh{
+            fallbackFace, 0.75, false, 0.35, false};
+        TopLoc_Location fallbackLocation;
+        auto triangulation =
+            BRep_Tool::Triangulation(fallbackFace, fallbackLocation);
+        if (triangulation.IsNull() && innerWireCount == 0)
+          triangulation = simpleTriangulation(sampledOuter.points);
+        if (triangulation.IsNull() && innerWireCount > 0)
+          triangulation = triangulationWithHoles(
+              sampledOuter.points, sampledInnerWires);
+        if (!fallbackMesh.IsDone() || triangulation.IsNull()) {
+          GProp_GProps capProperties;
+          BRepGProp::SurfaceProperties(capFace, capProperties);
+          std::ostringstream detail;
+          detail << "Unable to triangulate structured rib cap "
+                 << structuredIndex + 1 << " (area="
+                 << capProperties.Mass() << " mm^2, fallbackValid="
+                 << BRepCheck_Analyzer{fallbackFace, false}.IsValid()
+                 << ", outerOnlyValid=" << outerOnlyValid
+                 << ", capOrientation=" << static_cast<int>(capFace.Orientation())
+                 << ", outerOrientation=" << static_cast<int>(outerWire.Orientation())
+                 << ", innerWires=" << innerWireCount
+                 << ", sampledNodes=" << sampledOuter.points.size()
+                 << ", earRemaining=" << earFailureRemaining
+                 << ", minCross=" << earFailureMinimumCross
+                 << ", remaining=" << earFailureCoordinates << ")";
+          throw std::runtime_error(detail.str());
+        }
+        triangulationBuilder.UpdateFace(capFace, triangulation);
+      }
+    };
+
+    auto positiveRibShape =
         finishRib(structured.positiveHalfBooleanHoles);
+    BRepTools::Clean(positiveRibShape);
+    BRepMesh_IncrementalMesh positiveRibMesh{
+        positiveRibShape, 0.75, false, 0.35, true};
+    if (!positiveRibMesh.IsDone())
+      throw std::runtime_error(
+          "Unable to create the shaded mesh for structured rib " +
+          std::to_string(structuredIndex + 1));
+    ensureRibCapTriangulation(positiveRibShape);
     const std::string ribName = structured.name.empty()
         ? "Rib " + std::to_string(structuredIndex + 1) : structured.name;
     const bool hasHalfSpecificHoles =
@@ -696,8 +1339,16 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       gp_Trsf mirror;
       mirror.SetMirror(
           gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
-      const auto negativeRibShape =
+      auto negativeRibShape =
           finishRib(structured.negativeHalfBooleanHoles);
+      BRepTools::Clean(negativeRibShape);
+      BRepMesh_IncrementalMesh negativeRibMesh{
+          negativeRibShape, 0.75, false, 0.35, true};
+      if (!negativeRibMesh.IsDone())
+        throw std::runtime_error(
+            "Unable to create the shaded mesh for structured rib " +
+            std::to_string(structuredIndex + 1) + " left variant");
+      ensureRibCapTriangulation(negativeRibShape);
       builtRibs[structuredIndex].push_back(
           {BRepBuilderAPI_Transform{
                negativeRibShape, mirror, true, true}.Shape(),
@@ -872,8 +1523,10 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (timings) timings->controlsMs = elapsedMs(stageStart);
 
   const auto buildMemberShape = [&](const domain::SpanMember& member) {
-    if (member.kind != domain::SpanMemberKind::Tube &&
-        member.kind != domain::SpanMemberKind::Rod)
+    const bool circular = member.kind == domain::SpanMemberKind::Tube ||
+        member.kind == domain::SpanMemberKind::Rod;
+    const bool endpointDefinedSpar = member.name.starts_with("Spar ");
+    if (!circular && !endpointDefinedSpar)
       return makeRectangularSpanMember(structuredWing, member, ribThickness);
     const auto start = transformLocal(
         structuredWing.ribs.front().rib, member.centers.front());
@@ -885,6 +1538,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     const gp_Vec extension = axis * (ribThickness * 0.5 / std::abs(axis.Y()));
     extendedStart.Translate(-extension);
     extendedEnd.Translate(extension);
+    if (!circular)
+      return makeRectangularSegment(
+          extendedStart, extendedEnd, member.width, member.height);
     return makeTubeSegment(extendedStart, extendedEnd, member.width,
         member.kind == domain::SpanMemberKind::Tube ? member.innerDiameter : 0.0);
   };
@@ -1197,11 +1853,13 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           structuredWing.ribs[i].rib, profile.back(), yOffset);
       const auto outerStart = transformLocal(
           structuredWing.ribs[i].rib, profile.front(), yOffset);
-      BRepBuilderAPI_MakeWire wire;
-      wire.Add(splineEdge(0, contourSize - 1));
-      wire.Add(BRepBuilderAPI_MakeEdge{outerEnd, innerStart}.Edge());
-      wire.Add(splineEdge(contourSize, profile.size() - 1));
-      wire.Add(BRepBuilderAPI_MakeEdge{innerEnd, outerStart}.Edge());
+       BRepBuilderAPI_MakeWire wire;
+       wire.Add(splineEdge(0, contourSize - 1));
+       if (outerEnd.Distance(innerStart) > Precision::Confusion())
+         wire.Add(BRepBuilderAPI_MakeEdge{outerEnd, innerStart}.Edge());
+       wire.Add(splineEdge(contourSize, profile.size() - 1));
+       if (innerEnd.Distance(outerStart) > Precision::Confusion())
+         wire.Add(BRepBuilderAPI_MakeEdge{innerEnd, outerStart}.Edge());
       if (!wire.IsDone())
         throw std::runtime_error(
             "Unable to construct a spline sheeting profile");

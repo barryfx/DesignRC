@@ -19,21 +19,253 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <numbers>
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
+  const auto stage = [](const char* name) {
+    std::cerr << "Geometry regression stage: " << name << '\n';
+  };
+  const bool teSheetingSolidOnly = argc > 1 &&
+      std::string{argv[1]} == "--te-sheeting-solid";
+  const bool multiSparSheetingSolidOnly = argc > 1 &&
+      std::string{argv[1]} == "--multi-spar-sheeting-solid";
+  const bool woodJoinerCollisionOnly = argc > 1 &&
+      std::string{argv[1]} == "--wood-joiner-collision";
+  const bool focusedGeometryOnly =
+      teSheetingSolidOnly || multiSparSheetingSolidOnly ||
+      woodJoinerCollisionOnly;
   const auto cappedGeometryWorkers =
       designrc::geometry::ribGeometryWorkerCount(100, 3);
   if (cappedGeometryWorkers < 1 || cappedGeometryWorkers > 3) return 42;
-  const auto root = argc > 1
+  const auto root = argc > 1 && !focusedGeometryOnly
       ? AirfoilProfile::fromDatFile(std::filesystem::path{argv[1]})
       : AirfoilProfile::nacaSymmetric(0.15);
-  const auto tip = argc > 2
+  const auto tip = argc > 2 && !focusedGeometryOnly
       ? AirfoilProfile::fromDatFile(std::filesystem::path{argv[2]})
       : AirfoilProfile::nacaSymmetric(0.10);
 
   designrc::domain::WingParameters parameters;
   const auto ribs = designrc::domain::generateRibs(parameters, root, tip);
+  const auto verifyWoodJoinerCollision = [&] {
+    designrc::domain::StructureParameters structure;
+    structure.topSpar = true;
+    structure.bottomSpar = true;
+    structure.centerSparWoodJoiner = true;
+    auto wing = designrc::domain::applyWingStructure(ribs, structure);
+    if (wing.joiners.size() != 1) return 116;
+    wing.joiners.front().name = "Joiner 1";
+    auto second = wing.joiners.front();
+    second.name = "Joiner 2";
+    wing.joiners.push_back(std::move(second));
+    try {
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(
+          wing, parameters.ribThickness));
+    } catch (const std::invalid_argument& error) {
+      const std::string message = error.what();
+      if (message.find("Joiner collision") != std::string::npos &&
+          message.find("Joiner 1") != std::string::npos &&
+          message.find("Joiner 2") != std::string::npos)
+        return 0;
+    }
+    return 117;
+  };
+  if (woodJoinerCollisionOnly) return verifyWoodJoinerCollision();
+  const auto verifyMultiSparSheetingSolid = [&] {
+    designrc::domain::StructureParameters structure;
+    structure.spars = {
+        {30, 0, 0, 0, 4.0, 8.0, 6.0, 5.0, 6.0, 6.0, 1.0},
+        {45, 2, 1, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0},
+        {65, 1, 1, 2, 5.0, 9.0, 6.0, 5.0, 6.0, 7.0, 1.5},
+        {30, 1, 0, 0, 4.0, 8.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
+    structure.sparShearWebs = true;
+    structure.sparShearWebThickness = 3.0;
+    structure.leTopSheet = structure.teTopSheet = true;
+    structure.leBottomSheet = structure.teBottomSheet = true;
+    structure.leTopSheetStopRib = structure.teTopSheetStopRib = 3;
+    structure.leBottomSheetStopRib = structure.teBottomSheetStopRib = 3;
+    const auto wing = designrc::domain::applyWingStructure(ribs, structure);
+    designrc::geometry::MaterialShapeSet materials;
+    const auto shape = designrc::geometry::buildStructuredWingPreview(
+        wing, parameters.ribThickness, nullptr, &materials);
+    if (shape.IsNull()) return 52;
+    std::size_t ribIndex = 0;
+    for (const auto& part : materials.parts) {
+      if (!part.name.starts_with("Rib ")) continue;
+      if (ribIndex >= wing.ribs.size()) return 53;
+      const double angle = wing.ribs[ribIndex].rib.ribPlaneAngleDegrees *
+          std::numbers::pi / 180.0;
+      const gp_Dir normal{0.0, std::cos(angle), std::sin(angle)};
+      std::size_t meshedCaps = 0;
+      for (TopExp_Explorer faces{part.shape, TopAbs_FACE};
+           faces.More(); faces.Next()) {
+        const auto face = TopoDS::Face(faces.Current());
+        const BRepAdaptor_Surface faceSurface{face};
+        if (faceSurface.GetType() != GeomAbs_Plane ||
+            std::abs(faceSurface.Plane().Axis().Direction().Dot(normal)) < 0.99)
+          continue;
+        TopLoc_Location location;
+        if (!BRep_Tool::Triangulation(face, location).IsNull()) ++meshedCaps;
+      }
+      if (meshedCaps < 2) return 54;
+      ++ribIndex;
+    }
+    return ribIndex == ribs.size() ? 0 : 55;
+  };
+  if (multiSparSheetingSolidOnly)
+    return verifyMultiSparSheetingSolid();
+  const auto verifyTeSheetingRibSolids = [&] {
+    auto teParameters = parameters;
+    teParameters.halfSpan = 698.5;
+    teParameters.rootChord = 254.0;
+    teParameters.tipChord = 152.4;
+    teParameters.sweep = 25.4;
+    teParameters.dihedralDegrees = 4.0;
+    teParameters.ribCount = 11;
+    teParameters.ribThickness = 2.38125;
+    const auto teRibs = designrc::domain::generateRibs(
+        teParameters, root, tip);
+    designrc::domain::StructureParameters structure;
+    structure.ribThickness = teParameters.ribThickness;
+    structure.spars = {
+        {25.0, 0, 0, 2, 3.175, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0, 25.0},
+        {25.0, 1, 0, 0, 3.175, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0, 25.0}};
+    structure.leadingEdgeType = 2;
+    structure.leadingEdgeWidth = 4.7625;
+    structure.leadingEdgeHeight = 15.875;
+    structure.leTopSheet = true;
+    structure.leBottomSheet = true;
+    structure.leTopSheetThickness = 1.5875;
+    structure.leBottomSheetThickness = 1.5875;
+    structure.leTopSheetStopRib = 2;
+    structure.leBottomSheetStopRib = 2;
+    structure.teTopSheet = true;
+    structure.teBottomSheet = true;
+    structure.teTopSheetThickness = 1.5875;
+    structure.teBottomSheetThickness = 1.5875;
+    structure.teTopSheetStopRib = 2;
+    structure.teBottomSheetStopRib = 2;
+    structure.topTeSheeting = true;
+    // TESheetingTest.designrc used a 70%-chord start at its 254 mm root,
+    // which migrates to a constant 76.2 mm width.
+    structure.topTeSheetingWidth = 76.2;
+    structure.topTeSheetingThickness = 1.5875;
+    structure.topTeSheetingTaper = false;
+    auto wing = designrc::domain::applyWingStructure(teRibs, structure);
+    // Exercise the same repeated V-joiner cut found in
+    // TESheetingTest.designrc: it connects the inner faces of matching top
+    // and bottom spars and separates the root rib into two solids.
+    const auto topSpar = std::find_if(wing.members.begin(), wing.members.end(),
+        [](const auto& member) {
+          return member.name.starts_with("Spar ") &&
+              member.verticalLocation == 0;
+        });
+    const auto bottomSpar = std::find_if(
+        wing.members.begin(), wing.members.end(), [](const auto& member) {
+          return member.name.starts_with("Spar ") &&
+              member.verticalLocation == 1;
+        });
+    if (topSpar == wing.members.end() || bottomSpar == wing.members.end())
+      return 51;
+    const double joinerX = 0.25 * wing.ribs.front().rib.chord;
+    const double joinerHalfThickness = 3.175 * 0.5;
+    const double joinerBottom =
+        bottomSpar->centers.front().y + bottomSpar->height * 0.5;
+    const double joinerTop =
+        topSpar->centers.front().y - topSpar->height * 0.5;
+    const std::vector<designrc::domain::Point2> joinerCut{
+        {joinerX - joinerHalfThickness, joinerBottom},
+        {joinerX + joinerHalfThickness, joinerBottom},
+        {joinerX + joinerHalfThickness, joinerTop},
+        {joinerX - joinerHalfThickness, joinerTop}};
+    wing.ribs.front().booleanCutouts.push_back(joinerCut);
+    wing.ribs.front().booleanCutouts.push_back(joinerCut);
+    designrc::geometry::MaterialShapeSet materials;
+    const auto shape = designrc::geometry::buildStructuredWingPreview(
+        wing, teParameters.ribThickness, nullptr, &materials);
+    if (shape.IsNull()) return 47;
+    std::size_t solidRibs = 0;
+    for (const auto& part : materials.parts) {
+      if (!part.name.starts_with("Rib ")) continue;
+      std::size_t ribSolids = 0;
+      for (TopExp_Explorer solids{part.shape, TopAbs_SOLID};
+           solids.More(); solids.Next())
+        ++ribSolids;
+      if (ribSolids == 0) return 48;
+      const double ribAngle = wing.ribs[solidRibs].rib.ribPlaneAngleDegrees *
+          std::numbers::pi / 180.0;
+      const auto& rib = wing.ribs[solidRibs].rib;
+      const bool centerRoot = std::abs(rib.spanPosition) < 1.0e-9 &&
+          std::abs(rib.ribThicknessStartFactor) < 1.0e-9;
+      const gp_Dir ribNormal = centerRoot
+          ? gp_Dir{0.0, 1.0, 0.0}
+          : gp_Dir{0.0, std::cos(ribAngle), std::sin(ribAngle)};
+      std::size_t meshedCaps = 0;
+      for (TopExp_Explorer faces{part.shape, TopAbs_FACE};
+           faces.More(); faces.Next()) {
+        const auto face = TopoDS::Face(faces.Current());
+        const BRepAdaptor_Surface surface{face};
+        if (surface.GetType() != GeomAbs_Plane ||
+            std::abs(surface.Plane().Axis().Direction().Dot(ribNormal)) < 0.99)
+          continue;
+        TopLoc_Location location;
+        if (!BRep_Tool::Triangulation(face, location).IsNull()) ++meshedCaps;
+      }
+      if (meshedCaps < 2 * ribSolids) {
+        std::cerr << part.name << " has " << meshedCaps
+                  << " triangulated end caps\n";
+        for (TopExp_Explorer faces{part.shape, TopAbs_FACE};
+             faces.More(); faces.Next()) {
+          const auto face = TopoDS::Face(faces.Current());
+          const BRepAdaptor_Surface surface{face};
+          TopLoc_Location location;
+          std::cerr << "  face type=" << static_cast<int>(surface.GetType())
+                    << " meshed="
+                    << !BRep_Tool::Triangulation(face, location).IsNull();
+          if (surface.GetType() == GeomAbs_Plane)
+            std::cerr << " normal-dot="
+                      << surface.Plane().Axis().Direction().Dot(ribNormal);
+          std::cerr << '\n';
+        }
+        return 50;
+      }
+      ++solidRibs;
+    }
+    if (solidRibs != teRibs.size()) return 49;
+    const auto verifyAdditionalTeVariant = [&](const bool top,
+                                               const bool bottom) {
+      auto variant = structure;
+      variant.topTeSheeting = top;
+      variant.bottomTeSheeting = bottom;
+      variant.topTeSheetingWidth = 25.4;
+      variant.bottomTeSheetingWidth = 25.4;
+      variant.topTeSheetingThickness = 1.5875;
+      variant.bottomTeSheetingThickness = 1.5875;
+      variant.topTeSheetingTaper = false;
+      variant.bottomTeSheetingTaper = false;
+      const auto variantWing = designrc::domain::applyWingStructure(
+          teRibs, variant);
+      designrc::geometry::MaterialShapeSet variantMaterials;
+      const auto variantShape = designrc::geometry::buildStructuredWingPreview(
+          variantWing, teParameters.ribThickness, nullptr, &variantMaterials);
+      if (variantShape.IsNull()) return false;
+      std::size_t variantSolidRibs = 0;
+      for (const auto& part : variantMaterials.parts) {
+        if (!part.name.starts_with("Rib ")) continue;
+        bool hasSolid = false;
+        for (TopExp_Explorer solids{part.shape, TopAbs_SOLID};
+             solids.More(); solids.Next())
+          hasSolid = true;
+        if (!hasSolid) return false;
+        ++variantSolidRibs;
+      }
+      return variantSolidRibs == teRibs.size();
+    };
+    if (!verifyAdditionalTeVariant(false, true)) return 124;
+    if (!verifyAdditionalTeVariant(true, true)) return 125;
+    return 0;
+  };
+  if (teSheetingSolidOnly) return verifyTeSheetingRibSolids();
   designrc::domain::StructureParameters earlyCfLeadingSheeting;
   earlyCfLeadingSheeting.leadingEdgeType = 3;
   earlyCfLeadingSheeting.leTopSheet = true;
@@ -68,9 +300,10 @@ int runTest(int argc, char* argv[]) {
         }
         return true;
       };
-  if (!sheetingOverlapsLeadingEdgeNotch("LE top sheeting") ||
-      !sheetingOverlapsLeadingEdgeNotch("LE bottom sheeting"))
+  if (!sheetingOverlapsLeadingEdgeNotch("Front top sheeting") ||
+      !sheetingOverlapsLeadingEdgeNotch("Front bottom sheeting"))
     return 29;
+  stage("early CF leading-edge sheeting");
   const auto earlyCfSheetedShape = designrc::geometry::buildStructuredWingPreview(
       earlyCfSheeted, parameters.ribThickness);
   if (earlyCfSheetedShape.IsNull()) return 8;
@@ -79,6 +312,7 @@ int runTest(int argc, char* argv[]) {
   controlSheeting.teTopSheetStopRib = static_cast<int>(ribs.size());
   const auto controlSheetedWing = designrc::domain::applyWingStructure(ribs, controlSheeting);
   designrc::geometry::MaterialShapeSet controlSheetingMaterials;
+  stage("rear sheeting spline loft");
   const auto controlSheetedShape = designrc::geometry::buildStructuredWingPreview(
       controlSheetedWing, parameters.ribThickness, nullptr, &controlSheetingMaterials);
   if (controlSheetedShape.IsNull()) return 11;
@@ -131,9 +365,13 @@ int runTest(int argc, char* argv[]) {
       !savedProjectWing.ribs[0].holes.empty() ||
       !savedProjectWing.ribs[1].holes.empty() ||
       !savedProjectWing.ribs[2].holes.empty()) return 9;
+  stage("saved project exposed leading edge");
   const auto savedProjectShape = designrc::geometry::buildStructuredWingPreview(
       savedProjectWing, savedProjectParameters.ribThickness);
   if (savedProjectShape.IsNull()) return 10;
+  stage("TE sheeting solids");
+  if (const int result = verifyTeSheetingRibSolids(); result != 0)
+    return result;
   const auto shape = designrc::geometry::buildWingPreview(ribs, parameters.ribThickness, false);
   std::size_t solidCount = 0;
   std::size_t meshedCapCount = 0;
@@ -197,6 +435,7 @@ int runTest(int argc, char* argv[]) {
   std::atomic_bool reportedRibs{false};
   std::atomic_bool reportedSheeting{false};
   std::atomic_bool reportedMeshing{false};
+  stage("full structured wing");
   const auto structuredShape =
       designrc::geometry::buildStructuredWingPreview(
           structured, parameters.ribThickness, nullptr, &structuredMaterials,
@@ -270,10 +509,12 @@ int runTest(int argc, char* argv[]) {
   for (auto& member : numberedCarbon.members)
     if (member.name.find("leading edge") != std::string::npos) member.name = "LE1";
   designrc::geometry::MaterialShapeSet carbonMaterials;
+  stage("numbered carbon members");
   const auto numberedCarbonShape = designrc::geometry::buildStructuredWingPreview(
       numberedCarbon, parameters.ribThickness, nullptr, &carbonMaterials);
   if (numberedCarbonShape.IsNull() ||
       !TopExp_Explorer{carbonMaterials.carbonFiber, TopAbs_FACE}.More()) return 12;
+  stage("carbon members");
   const auto carbonShape = designrc::geometry::buildStructuredWingPreview(carbon, parameters.ribThickness);
   if (carbonShape.IsNull()) return 5;
   std::size_t carbonSolids = 0;
@@ -309,6 +550,7 @@ int runTest(int argc, char* argv[]) {
   multiSparParameters.leBottomSheetStopRib = multiSparParameters.teBottomSheetStopRib = 3;
   const auto multiSparWing = designrc::domain::applyWingStructure(
       ribs, multiSparParameters);
+  stage("multiple spars and sheeting");
   const auto multiSparShape = designrc::geometry::buildStructuredWingPreview(
       multiSparWing, parameters.ribThickness);
   if (multiSparShape.IsNull()) return 13;
@@ -357,6 +599,53 @@ int runTest(int argc, char* argv[]) {
         message.find("Spar 1") != std::string::npos;
   }
   if (!namedJoinerCollision) return 15;
+
+  auto overlappingJoinerWing = designrc::domain::applyWingStructure(ribs, {});
+  collidingJoiner.name = "Fixed Joiner 1 CF Tube";
+  collidingJoiner.kind = designrc::domain::SpanMemberKind::Tube;
+  collidingJoiner.outerDiameter = 6.0;
+  collidingJoiner.innerDiameter = 5.0;
+  overlappingJoinerWing.joiners.push_back(collidingJoiner);
+  collidingJoiner.name = "Fixed Joiner 2 CF Rod";
+  collidingJoiner.kind = designrc::domain::SpanMemberKind::Rod;
+  collidingJoiner.innerDiameter = 0.0;
+  overlappingJoinerWing.joiners.push_back(collidingJoiner);
+  bool namedJoinerPairCollision = false;
+  try {
+    static_cast<void>(designrc::geometry::buildStructuredWingPreview(
+        overlappingJoinerWing, parameters.ribThickness));
+  } catch (const std::invalid_argument& error) {
+    const std::string message = error.what();
+    namedJoinerPairCollision =
+        message.find("Joiner collision") != std::string::npos &&
+        message.find("Fixed Joiner 1") != std::string::npos &&
+        message.find("Fixed Joiner 2") != std::string::npos;
+  }
+  if (!namedJoinerPairCollision) return 115;
+
+  designrc::domain::StructureParameters woodJoinerPairParameters;
+  woodJoinerPairParameters.topSpar = true;
+  woodJoinerPairParameters.bottomSpar = true;
+  woodJoinerPairParameters.centerSparWoodJoiner = true;
+  auto overlappingWoodJoinerWing = designrc::domain::applyWingStructure(
+      ribs, woodJoinerPairParameters);
+  if (overlappingWoodJoinerWing.joiners.size() != 1) return 116;
+  overlappingWoodJoinerWing.joiners.front().name = "Joiner 1";
+  auto secondWoodJoiner = overlappingWoodJoinerWing.joiners.front();
+  secondWoodJoiner.name = "Joiner 2";
+  overlappingWoodJoinerWing.joiners.push_back(std::move(secondWoodJoiner));
+  bool namedWoodJoinerPairCollision = false;
+  try {
+    static_cast<void>(designrc::geometry::buildStructuredWingPreview(
+        overlappingWoodJoinerWing, parameters.ribThickness));
+  } catch (const std::invalid_argument& error) {
+    const std::string message = error.what();
+    namedWoodJoinerPairCollision =
+        message.find("Joiner collision") != std::string::npos &&
+        message.find("Joiner 1") != std::string::npos &&
+        message.find("Joiner 2") != std::string::npos;
+  }
+  if (!namedWoodJoinerPairCollision) return 117;
 
   auto woodJoinerContactWing = joinerCollisionWing;
   woodJoinerContactWing.joiners.back().name = "Wood Fixed Joiner 1";

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.0 User Help</title>
+  <title>DesignRC 1.1.0 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,13 +44,14 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.0 User Help</h1>
+    <h1>DesignRC 1.1.0 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
+      <a href="#new-1-1">What's new in 1.1.0</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
       <a href="#units">Units and value entry</a>
@@ -86,6 +87,16 @@
         <li>Saves editable projects as <code>.designrc</code> files.</li>
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
+
+      <h2 id="new-1-1">What's new in 1.1.0</h2>
+      <ul>
+        <li>Spars can run between independent root and tip chord locations.</li>
+        <li>Front sheeting has configurable stop locations and spar-aware recessing; independent top and bottom TE sheeting supports constant width, thickness, and taper controls.</li>
+        <li>Spoilers can be positioned immediately behind the top spar and have expanded collision detection and clearer error messages.</li>
+        <li>Joiners have improved dihedral alignment, removable rod/sleeve engagement, and joiner-to-joiner collision checking.</li>
+        <li>Percent fields accept two decimal places, while spinner arrows continue to move in one-percent increments.</li>
+        <li>Rib, DXF, SVG, plan, and STEP output has been refined, including sharper TE-sheeting rib points without fragile slivers.</li>
+      </ul>
 
       <h2 id="workspace">The main window</h2>
       <dl>
@@ -124,7 +135,7 @@
         <li>Inch controls accept decimals, fractions such as <code>3/16</code>, and mixed values such as <code>1 1/2</code>.</li>
         <li>Spinner arrows advance inch fields by 1/32 inch. Exact 1/32-inch values display as reduced fractions.</li>
         <li>You may type an explicit suffix such as <code>12 mm</code>, <code>0.5 in</code>, or <code>1/4"</code>. The field converts the value and adopts that explicit unit override.</li>
-        <li>Angle fields are always displayed in degrees. Percent fields represent chordwise position.</li>
+        <li>Angle fields are always displayed in degrees. Percent fields represent chordwise position, accept manually entered values with up to two decimal places, and retain one-percent arrow increments.</li>
       </ul>
 
       <h2 id="projects">Menus and project files</h2>
@@ -181,21 +192,24 @@
       <h2 id="spars">Spars tab</h2>
       <p>Use <strong>Add Spar</strong> to create any number of spar definitions. Check spar headings and press <strong>Delete Checked</strong> to remove selected rows.</p>
       <dl>
-        <dt>Chord Location</dt><dd>Position as a percentage of local airfoil chord.</dd>
+        <dt>Root Chord Location</dt><dd>Position as a percentage of the root airfoil chord.</dd>
+        <dt>Tip Chord Location</dt><dd>Position as a percentage of the tip airfoil chord. The spar is extruded in a straight line between the root and tip positions.</dd>
         <dt>Top / Bottom / Mid</dt><dd>Places the spar against the upper surface, against the lower surface, or through the airfoil interior.</dd>
         <dt>Wood</dt><dd>Creates a rectangular spar using Height and Width and cuts matching rib notches.</dd>
         <dt>CF Tube</dt><dd>Creates a carbon tube with OD and ID and cuts aligned rib holes.</dd>
         <dt>CF Rod</dt><dd>Creates a solid carbon rod with the selected OD.</dd>
         <dt>CF Strip</dt><dd>Creates rectangular carbon strip stock using Width and Thickness.</dd>
-        <dt>Shear Webs</dt><dd>Available when matching top and bottom wood spars share a chord location. Creates individual web parts between rib faces using the selected thickness.</dd>
+        <dt>Shear Webs</dt><dd>Available when matching top and bottom wood spars share the same root and tip chord locations. Creates individual web parts between rib faces using the selected thickness.</dd>
       </dl>
 
       <h2 id="sheeting">Sheeting tab</h2>
       <dl>
-        <dt>LE Top / Bottom Sheeting</dt><dd>Recesses the matching rib surface and builds curved sheeting between the leading-edge system and the applicable spar boundary.</dd>
-        <dt>TE Top / Bottom Sheeting</dt><dd>Builds recessed curved sheeting from the spar region toward the trailing-edge system.</dd>
+        <dt>Front Top / Bottom Sheeting</dt><dd>Recesses the matching rib surface and builds curved sheeting from the leading-edge system. Front sheeting is resolved before rear sheeting and spar solids so adjoining sheets meet cleanly. When Front sheeting extends beyond a spar, DesignRC recesses the spar beneath the sheeting so the sheeting covers it while remaining on the airfoil surface.</dd>
+        <dt>Stop Chord Location</dt><dd>Ends Front sheeting at the entered percentage of chord. If the location intersects a spar, DesignRC moves the boundary to the far edge of that spar.</dd>
+        <dt>Up To Spar</dt><dd>Ends Front sheeting at the applicable spar instead of the Stop Chord Location. Clear this option to enter the stop location manually.</dd>
+        <dt>Rear Top / Bottom Sheeting</dt><dd>Builds recessed curved sheeting aft from the spar region and butts it against TE sheeting where their ranges meet.</dd>
         <dt>Stop Rib Number</dt><dd>Last rib covered by a sheet that begins at the panel root.</dd>
-        <dt>Turbulators</dt><dd>Adds 1–4 longitudinal square-section strips. LE sheeting is divided around enabled turbulators.</dd>
+        <dt>Turbulators</dt><dd>Adds 1–4 longitudinal square-section strips. Front sheeting is divided around enabled turbulators.</dd>
       </dl>
 
       <h2 id="joiners">Joiners tab</h2>
@@ -209,23 +223,25 @@
       </ul>
       <h3>Removable Panel</h3>
       <dl>
-        <dt>Sleeve/Rod Joiner</dt><dd>Defines which side of the joint carries the sleeve and rod, their materials, diameters, and corresponding adjoining-panel parts.</dd>
+        <dt>Sleeve/Rod Joiner</dt><dd>Defines which side of the joint carries the sleeve and rod, their materials, diameters, and corresponding adjoining-panel parts. The rod remains straight through the joint and extends into the sleeve so the panels can slide together for flight and apart for transport.</dd>
         <dt>Alignment Pin</dt><dd>Defines either a sleeve/pin arrangement or a pin/hole arrangement, including side, material, and diameter.</dd>
         <dt>Delete Checked</dt><dd>Removes the selected fixed or removable rows.</dd>
       </dl>
-      <p>Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. At the wing center, a wood joiner passes through R1 and also R1a when that optional rib is present, then stops against the inner face of R2. At an outboard panel joint, it extends one rib bay into each panel, passes through only the two ribs at the joint, and stops against the inner faces of the next ribs. Each rib the wood joiner passes through is bisected into two manufacturing pieces. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint.</p>
+      <p>Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. At the wing center, a wood joiner passes through R1 and also R1a when that optional rib is present, then stops against the inner face of R2. At an outboard panel joint, it extends one rib bay into each panel, passes through only the two ribs at the joint, and stops against the inner faces of the next ribs. Each rib the wood joiner passes through is bisected into two manufacturing pieces. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint. Joiners are also checked against other joiners, including overlapping wood joiners.</p>
 
       <h2 id="lete">LE/TE tab</h2>
       <h3>Leading edge</h3>
       <dl>
-        <dt>Block LE Stock</dt><dd>Removes the rib noses at the selected width and lofts smooth wood stock from the airfoil profiles at the member ends. Height must accommodate every cut rib.</dd>
+        <dt>Block LE Stock</dt><dd>Removes the rib noses at the selected width and lofts smooth wood stock from the airfoil profiles at the member ends. Height must accommodate every cut rib; after an undersized-height warning is acknowledged, the Height control is reset to the required cut-face height.</dd>
         <dt>CF Tube LE</dt><dd>Creates an exposed carbon tube and circular rib cradles. OD defines the outside; ID defines the bore.</dd>
         <dt>CF Rod LE</dt><dd>Creates a solid exposed carbon rod and matching rib cradles.</dd>
       </dl>
       <h3>Trailing edge</h3>
       <dl>
-        <dt>Sheet TE Stock</dt><dd>Removes the rear rib profile and lofts smooth sheet stock matching the airfoil-derived top and bottom surfaces.</dd>
+        <dt>Sheet TE Stock</dt><dd>Removes the rear rib profile and lofts smooth sheet stock matching the airfoil-derived top and bottom surfaces. It cannot be combined with Top or Bottom TE Sheeting. An undersized Height is reset to the required cut-face height after the warning is acknowledged.</dd>
         <dt>Slotted for Ribs</dt><dd>Extends ribs into open-ended slots in the trailing-edge stock for keyed assembly.</dd>
+        <dt>Top / Bottom TE Sheeting</dt><dd>Builds independent trailing-edge sheets of constant panel-wide Width and the selected Thickness. These options are mutually exclusive with Sheet TE Stock; top and bottom TE sheets may be used together.</dd>
+        <dt>Taper Sheeting</dt><dd>Tapers the TE sheet from its Taper Start Location to the trailing edge. Taper Start Location is a percentage of the sheet width measured aft from its front edge. When both TE sheets are enabled, both taper options are required automatically.</dd>
       </dl>
 
       <h2 id="controls">Ailerons/Flaps tab</h2>
@@ -247,12 +263,14 @@
       <dl>
         <dt>Spoilers</dt><dd>Builds a recessed spoiler panel, forward and aft frame rails, and end support rails over the selected rib range.</dd>
         <dt>Start / End Rib</dt><dd>Defines the spoiler span. A center spoiler requires zero dihedral.</dd>
-        <dt>Start Chord Location</dt><dd>Positions the spoiler assembly as a percentage of local chord.</dd>
+        <dt>Start Chord Location</dt><dd>Positions the spoiler assembly as a percentage of local chord. With a top spar present, a spoiler cannot be placed ahead of that spar.</dd>
+        <dt>Immediately Behind Spar</dt><dd>Shown when a top spar exists. Places the spoiler forward frame rail directly behind and touching the spar, including when the spar uses fractional-percent or different root and tip locations.</dd>
         <dt>Chordwise Length / Thickness</dt><dd>Defines the spoiler panel.</dd>
         <dt>Frame Rail Width</dt><dd>Width of the surrounding frame rails. Support Rail Height is calculated and displayed.</dd>
         <dt>Lightening Holes</dt><dd>Adds optimized holes to the spoiler using minimum border and circle spacing.</dd>
         <dt>Wiring Holes</dt><dd>The same synchronized wiring-hole definition shown on the Ailerons/Flaps page.</dd>
       </dl>
+      <p>Spoiler panels, frame rails, and support rails are checked against spars, the trailing edge, and the other spoiler parts. Collision messages identify both conflicting components.</p>
 
       <h2 id="generate">Generate Wing</h2>
       <p><strong>Generate Wing</strong> validates every panel and then builds ribs, openings, members, controls, joiners, material solids, the mirrored assembly, and display meshes. Progress messages identify the active stage. <strong>Cancel</strong> requests a safe stop after the current geometry operation.</p>
@@ -269,7 +287,7 @@
       <p>Parts are colored by material: wood, carbon fiber, aluminum, steel, and fiberglass are visually distinct. Part edges remain visible for assembly inspection.</p>
 
       <h2 id="plans">Plan View and plan PDF</h2>
-      <p><strong>Generate Plan</strong> creates a flattened drawing of both wing halves at manufacturing dimensions. It includes rib outlines and labels, spars, sheeting, edge stock, controls, spoilers, hinge posts, joiners, dimensions, panel spans, dihedral and twist notes, metrics, borders, and a title block.</p>
+      <p><strong>Generate Plan</strong> creates a flattened drawing of both wing halves at manufacturing dimensions. It includes rib outlines and labels, spars, sheeting, edge stock, controls, spoilers, hinge posts, joiners, dimensions, panel spans, dihedral and twist notes, metrics, borders, and a title block. Sheeting leaders are routed to open areas between ribs and spars so labels do not obscure parts.</p>
       <dl>
         <dt>Left drag</dt><dd>Pans the drawing.</dd>
         <dt>Mouse wheel</dt><dd>Zooms the drawing.</dd>
@@ -287,7 +305,7 @@
         <dt>Select All / None</dt><dd>Checks or clears the entire list.</dd>
         <dt>Individual parts</dt><dd>Creates a separate file named from each checked part.</dd>
       </dl>
-      <p>DXF and SVG use millimeters for reliable CAD import. Exported ribs include generated holes, notches, slots, lightening geometry, and split-piece outlines.</p>
+      <p>DXF and SVG use millimeters for reliable CAD import. Exported ribs include generated holes, notches, slots, lightening geometry, and split-piece outlines. Curved outlines are exported without the occasional large corner loops produced by earlier spline handling.</p>
 
       <h2 id="step">STEP assembly export</h2>
       <p><strong>Export STEP</strong> writes the current generated 3D model as a named assembly. Individual wood, carbon-fiber, aluminum, steel, and fiberglass components remain separate assembly parts with material colors. STEP export requires a current successful Generate Wing operation.</p>
@@ -301,10 +319,10 @@
         <li>complete parameter defaults for every panel; and</li>
         <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
       </ul>
-      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.0 installed defaults.</p>
+      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.1.0 installed defaults.</p>
 
       <h2 id="validation">Validation and automatic corrections</h2>
-      <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler range and center-dihedral rules, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
+      <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler-to-spar and spoiler-to-TE collisions, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, joiner-to-joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
       <p>When only one valid correction exists, DesignRC may adjust a related field and explain the change. Otherwise generation stops with a message identifying what must be corrected.</p>
       <div class="note warning"><strong>Manufacturing responsibility:</strong> inspect exported geometry, material choices, clearances, structural loads, and machine settings before cutting or flying. DesignRC does not certify structural strength or airworthiness.</div>
 
@@ -320,7 +338,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.0 &middot; Release date: July 27, 2026</footer>
+  <footer>DesignRC 1.1.0 &middot; Release date: August 11, 2026</footer>
 </div>
 </body>
 </html>

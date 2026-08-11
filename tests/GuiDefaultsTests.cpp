@@ -21,6 +21,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 int main(int argc, char* argv[]) {
   QApplication application{argc, argv};
@@ -256,18 +257,24 @@ int main(int argc, char* argv[]) {
   spacingEditor.hide();
   WingPanelData spoilerDefaults;
   spoilerDefaults.spoilers = true;
+  spoilerDefaults.spoilerChordLocationPercent = 30.25;
   spoilerDefaults.spoilerLighteningHoles = true;
+  spoilerDefaults.spoilerImmediatelyBehindSpar = true;
+  spoilerDefaults.spars = {
+      {25, 0, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
   spoilerDefaults.spoilerMinimumWoodMargin = 6.0;
   spoilerDefaults.spoilerMinimumCircleDistance = 12.0;
   const auto restoredSpoilers = panelDataFromJson(panelDataToJson(spoilerDefaults));
   assert(restoredSpoilers.spoilers);
   assert(restoredSpoilers.spoilerLighteningHoles);
+  assert(restoredSpoilers.spoilerImmediatelyBehindSpar);
   assert(std::abs(restoredSpoilers.spoilerMinimumWoodMargin - 6.0) <
          1.0e-8);
   assert(std::abs(restoredSpoilers.spoilerMinimumCircleDistance - 12.0) <
          1.0e-8);
   assert(restoredSpoilers.spoilerStartRib == 3 && restoredSpoilers.spoilerEndRib == 7);
-  assert(restoredSpoilers.spoilerChordLocationPercent == 30);
+  assert(std::abs(restoredSpoilers.spoilerChordLocationPercent - 30.25) <
+         1.0e-8);
   WingPanelData dihedralSpoilerData = spoilerDefaults;
   dihedralSpoilerData.dihedral = 5.0;
   WingPanelEditor dihedralSpoilerEditor{dihedralSpoilerData};
@@ -318,8 +325,11 @@ int main(int argc, char* argv[]) {
   auto* spoilerEnd =
       dihedralSpoilerEditor.findChild<QSpinBox*>("spoilerEndRib");
   auto* spoilerChordLocationWidget =
-      dihedralSpoilerEditor.findChild<QSpinBox*>(
+      dihedralSpoilerEditor.findChild<QDoubleSpinBox*>(
       "spoilerChordLocationPercent");
+  auto* immediatelyBehindSpar =
+      dihedralSpoilerEditor.findChild<QCheckBox*>(
+          "spoilerImmediatelyBehindSpar");
   auto* spoilerWidth =
       dihedralSpoilerEditor.findChild<LengthInput*>("spoilerWidth");
   auto* spoilerThickness =
@@ -334,21 +344,29 @@ int main(int argc, char* argv[]) {
       dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleStartRibSpoilers");
   auto* spoilerWiringEnd =
       dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleEndRibSpoilers");
-  auto* spoilerWiringChord = dihedralSpoilerEditor.findChild<QSpinBox*>(
+  auto* spoilerWiringChord = dihedralSpoilerEditor.findChild<QDoubleSpinBox*>(
       "wiringHoleChordLocationPercentSpoilers");
   auto* spoilerWiringWidth = dihedralSpoilerEditor.findChild<LengthInput*>(
       "wiringHoleWidthSpoilers");
   auto* spoilerWiringHeight = dihedralSpoilerEditor.findChild<LengthInput*>(
       "wiringHoleHeightSpoilers");
-  assert(spoilerEnd && spoilerChordLocationWidget &&
+  assert(spoilerEnd && spoilerChordLocationWidget && immediatelyBehindSpar &&
          spoilerWidth && spoilerThickness);
   assert(spoilerFrameRail && spoilerSupportRail && spoilerWiring);
   assert(spoilerWiringStart && spoilerWiringEnd && spoilerWiringChord);
   assert(spoilerWiringWidth && spoilerWiringHeight);
+  assert(spoilerChordLocationWidget->decimals() == 2);
+  assert(std::abs(spoilerChordLocationWidget->singleStep() - 1.0) < 1.0e-8);
+  spoilerChordLocationWidget->setValue(37.25);
+  assert(std::abs(dihedralSpoilerEditor.data().spoilerChordLocationPercent -
+                  37.25) < 1.0e-8);
   spoilerWiring->setChecked(true);
   dihedralSpoilerEditor.resize(800, 900);
   dihedralSpoilerEditor.show();
   QApplication::processEvents();
+  assert(immediatelyBehindSpar->isVisible());
+  assert(immediatelyBehindSpar->text() == "Immediately Behind Spar");
+  assert(immediatelyBehindSpar->isChecked());
   const auto verticalPosition = [&](const QWidget* widget) {
     return widget->mapTo(&dihedralSpoilerEditor, QPoint{}).y();
   };
@@ -391,7 +409,11 @@ int main(int argc, char* argv[]) {
   assert(restoredWiring.wiringHoles);
   assert(restoredWiring.wiringHoleStartRib == 2);
   assert(restoredWiring.wiringHoleEndRib == 10);
-  assert(restoredWiring.wiringHoleChordLocationPercent == 50);
+  wiringDefaults.wiringHoleChordLocationPercent = 50.5;
+  const auto fractionalWiring =
+      panelDataFromJson(panelDataToJson(wiringDefaults));
+  assert(std::abs(fractionalWiring.wiringHoleChordLocationPercent - 50.5) <
+         1.0e-8);
   assert(std::abs(restoredWiring.wiringHoleWidth / 25.4 - 3.0 / 8.0) < 1.0e-8);
   assert(std::abs(restoredWiring.wiringHoleHeight / 25.4 - 1.0 / 4.0) < 1.0e-8);
   WingPanelEditor wiringEditor{wiringDefaults, DisplayUnit::Inches};
@@ -400,14 +422,16 @@ int main(int argc, char* argv[]) {
   auto* controlsStart = wiringEditor.findChild<QSpinBox*>("wiringHoleStartRibControls");
   auto* controlsEnd = wiringEditor.findChild<QSpinBox*>("wiringHoleEndRibControls");
   auto* spoilerChord =
-      wiringEditor.findChild<QSpinBox*>("wiringHoleChordLocationPercentSpoilers");
+      wiringEditor.findChild<QDoubleSpinBox*>(
+          "wiringHoleChordLocationPercentSpoilers");
   assert(controlsWiring && spoilersWiring && controlsWiring->isChecked() &&
          spoilersWiring->isChecked());
   assert(controlsStart && controlsStart->text() == "R1a");
   assert(controlsEnd && controlsEnd->text() == "R9");
-  spoilerChord->setValue(63);
-  assert(wiringEditor.findChild<QSpinBox*>("wiringHoleChordLocationPercentControls")
-             ->value() == 63);
+  spoilerChord->setValue(63.75);
+  assert(std::abs(wiringEditor.findChild<QDoubleSpinBox*>(
+             "wiringHoleChordLocationPercentControls")->value() - 63.75) <
+         1.0e-8);
   assert(wiringEditor.findChild<LengthInput*>("wiringHoleWidthControls")
              ->findChild<QDoubleSpinBox*>()->text() == "3/8 in");
   assert(wiringEditor.findChild<LengthInput*>("wiringHoleHeightControls")
@@ -425,9 +449,24 @@ int main(int argc, char* argv[]) {
   QApplication::processEvents();
   auto sparRows = sparEditor.findChildren<QWidget*>("sparEditorRow");
   assert(sparRows.size() == 1);
-  auto* firstChord = sparRows[0]->findChild<QSpinBox*>("sparChordLocation");
-  assert(firstChord != nullptr && firstChord->minimum() == 0 &&
-         firstChord->maximum() == 90 && firstChord->value() == 25);
+  auto* firstRootChord =
+      sparRows[0]->findChild<QDoubleSpinBox*>("sparRootChordLocation");
+  auto* firstTipChord =
+      sparRows[0]->findChild<QDoubleSpinBox*>("sparTipChordLocation");
+  assert(firstRootChord != nullptr && firstTipChord != nullptr &&
+         firstRootChord->minimum() == 0 && firstRootChord->maximum() == 90 &&
+         firstRootChord->value() == 25 && firstTipChord->value() == 25);
+  assert(firstRootChord->decimals() == 2 && firstTipChord->decimals() == 2 &&
+         std::abs(firstRootChord->singleStep() - 1.0) < 1.0e-8 &&
+         std::abs(firstTipChord->singleStep() - 1.0) < 1.0e-8);
+  firstRootChord->setValue(25.5);
+  firstTipChord->setValue(30.75);
+  assert(std::abs(sparEditor.data().spars.front().chordLocationPercent - 25.5) <
+         1.0e-8);
+  assert(std::abs(sparEditor.data().spars.front().tipChordLocationPercent -
+                  30.75) < 1.0e-8);
+  firstRootChord->setValue(25.0);
+  firstTipChord->setValue(25.0);
   const auto radioWithText = [](QWidget* parent, const QString& text) {
     for (auto* radio : parent->findChildren<QRadioButton*>())
       if (radio->text() == text) return radio;
@@ -478,6 +517,8 @@ int main(int argc, char* argv[]) {
   assert(migratedIntermediateSpars.spars.size() == 1);
   assert(migratedIntermediateSpars.spars.front().chordLocationPercent ==
          migratedIntermediateSpars.sparDefaults.chordLocationPercent);
+  assert(migratedIntermediateSpars.spars.front().tipChordLocationPercent ==
+         migratedIntermediateSpars.sparDefaults.tipChordLocationPercent);
   WingPanelEditor migratedIntermediateEditor{migratedIntermediateSpars};
   assert(migratedIntermediateEditor.findChildren<QWidget*>("sparEditorRow").size() == 1);
   assert(shearWebs->isHidden() && !shearWebs->isChecked());
@@ -485,13 +526,37 @@ int main(int argc, char* argv[]) {
   QApplication::processEvents();
   auto* leTopSheetCheck = [&sparEditor]() {
     for (auto* check : sparEditor.findChildren<QCheckBox*>())
-      if (check->text() == "LE Top Sheeting") return check;
+      if (check->text() == "Front Top Sheeting") return check;
     return static_cast<QCheckBox*>(nullptr);
   }();
   assert(leTopSheetCheck != nullptr && leTopSheetCheck->isVisible());
   leTopSheetCheck->click();
   QApplication::processEvents();
   assert(sparEditor.findChild<LengthInput*>("leTopSheetThickness")->isVisible());
+  auto* frontTopStop =
+      sparEditor.findChild<QDoubleSpinBox*>("leTopSheetStopChordPercent");
+  auto* frontTopUpToSpar =
+      sparEditor.findChild<QCheckBox*>("leTopSheetUpToSpar");
+  assert(frontTopStop != nullptr && frontTopStop->value() == 30.0 &&
+         frontTopStop->decimals() == 2);
+  assert(frontTopUpToSpar != nullptr && frontTopUpToSpar->isChecked());
+  assert(!frontTopStop->isEnabled());
+  frontTopUpToSpar->click();
+  assert(frontTopStop->isEnabled());
+  frontTopStop->setValue(37.25);
+  const auto frontSheetData = sparEditor.data();
+  assert(!frontSheetData.leTopSheetUpToSpar);
+  assert(std::abs(frontSheetData.leTopSheetStopChordPercent - 37.25) < 1.0e-8);
+  const auto frontSheetJson = panelDataToJson(frontSheetData);
+  assert(!frontSheetJson.value("leTopSheetUpToSpar").toBool(true));
+  assert(std::abs(frontSheetJson.value("leTopSheetStopChordPercent").toDouble() -
+                  37.25) < 1.0e-8);
+  auto legacyFrontSheetJson = frontSheetJson;
+  legacyFrontSheetJson.remove("leTopSheetUpToSpar");
+  legacyFrontSheetJson.remove("leTopSheetStopChordPercent");
+  const auto migratedFrontSheet = panelDataFromJson(legacyFrontSheetJson);
+  assert(migratedFrontSheet.leTopSheetUpToSpar);
+  assert(migratedFrontSheet.leTopSheetStopChordPercent == 30.0);
   sparEditor.hide();
 
   WingPanelEditor sparDefaultsEditor{
@@ -534,18 +599,28 @@ int main(int argc, char* argv[]) {
   defaultsAddSpar->click();
   auto defaultSparRows = sparDefaultsEditor.findChildren<QWidget*>("sparEditorRow");
   assert(defaultSparRows.size() == 2);
-  auto* secondChord = defaultSparRows[1]->findChild<QSpinBox*>("sparChordLocation");
-  secondChord->setValue(55);
+  auto* secondRootChord = defaultSparRows[1]->findChild<QDoubleSpinBox*>(
+      "sparRootChordLocation");
+  auto* secondTipChord = defaultSparRows[1]->findChild<QDoubleSpinBox*>(
+      "sparTipChordLocation");
+  secondRootChord->setValue(55.25);
+  secondTipChord->setValue(60.75);
   const auto savedSparDefaults = sparDefaultsEditor.data();
   assert(savedSparDefaults.spars.size() == 2);
-  assert(savedSparDefaults.spars[1].chordLocationPercent == 55);
+  assert(std::abs(savedSparDefaults.spars[1].chordLocationPercent - 55.25) <
+         1.0e-8);
+  assert(std::abs(savedSparDefaults.spars[1].tipChordLocationPercent - 60.75) <
+         1.0e-8);
   assert(std::abs(savedSparDefaults.sparDefaults.tubeOd - 8.0) < 1.0e-8);
   assert(std::abs(savedSparDefaults.sparDefaults.rodOd - 7.0) < 1.0e-8);
   assert(savedSparDefaults.unitOverrides.value("sparTubeOd") == UnitOverride::Inches);
   assert(savedSparDefaults.unitOverrides.value("sparRodOd") == UnitOverride::Millimeters);
   const auto restoredSparDefaults = panelDataFromJson(panelDataToJson(savedSparDefaults));
   assert(restoredSparDefaults.spars.size() == 2);
-  assert(restoredSparDefaults.spars[1].chordLocationPercent == 55);
+  assert(std::abs(restoredSparDefaults.spars[1].chordLocationPercent - 55.25) <
+         1.0e-8);
+  assert(std::abs(restoredSparDefaults.spars[1].tipChordLocationPercent -
+                  60.75) < 1.0e-8);
   assert(std::abs(restoredSparDefaults.sparDefaults.tubeOd - 8.0) < 1.0e-8);
   assert(restoredSparDefaults.unitOverrides.value("sparTubeOd") == UnitOverride::Inches);
 
@@ -572,8 +647,14 @@ int main(int argc, char* argv[]) {
   assert(defaultSparRows.size() == 1);
   const auto defaultsAfterDelete = sparDefaultsEditor.data();
   assert(defaultsAfterDelete.spars.size() == 1);
-  assert(defaultsAfterDelete.spars.front().chordLocationPercent == 55);
-  assert(defaultsAfterDelete.sparDefaults.chordLocationPercent == 55);
+  assert(std::abs(defaultsAfterDelete.spars.front().chordLocationPercent -
+                  55.25) < 1.0e-8);
+  assert(std::abs(defaultsAfterDelete.spars.front().tipChordLocationPercent -
+                  60.75) < 1.0e-8);
+  assert(std::abs(defaultsAfterDelete.sparDefaults.chordLocationPercent -
+                  55.25) < 1.0e-8);
+  assert(std::abs(defaultsAfterDelete.sparDefaults.tipChordLocationPercent -
+                  60.75) < 1.0e-8);
 
   const auto inchDefaults = roundedInchPanelData(WingPanelData{});
   assert(std::abs(inchDefaults.panelSpan / 25.4 - 27.5625) < 1.0e-8);
@@ -592,6 +673,74 @@ int main(int argc, char* argv[]) {
          1.0e-8);
   assert(installedMetric.spars.size() == 1);
   assert(installedMetric.fixedJoiners.empty() && installedMetric.removableJoiners.empty());
+  assert(std::abs(installedMetric.topTeSheetingWidth - 25.4) < 1.0e-8);
+  assert(std::abs(installedMetric.bottomTeSheetingWidth - 25.4) < 1.0e-8);
+  assert(std::abs(installedMetric.topTeSheetingThickness - 1.5875) < 1.0e-8);
+  assert(std::abs(installedMetric.bottomTeSheetingThickness - 1.5875) < 1.0e-8);
+  WingPanelEditor teSheetingEditor{installedMetric};
+  auto* topTeSheeting =
+      teSheetingEditor.findChild<QCheckBox*>("topTeSheeting");
+  auto* bottomTeSheeting =
+      teSheetingEditor.findChild<QCheckBox*>("bottomTeSheeting");
+  auto* topTeWidth =
+      teSheetingEditor.findChild<LengthInput*>("topTeSheetingWidth");
+  auto* topTeTaperStart = teSheetingEditor.findChild<QDoubleSpinBox*>(
+      "topTeSheetingTaperStartLocationPercent");
+  auto* topTeThickness =
+      teSheetingEditor.findChild<LengthInput*>("topTeSheetingThickness");
+  assert(topTeSheeting && bottomTeSheeting && topTeWidth &&
+         topTeTaperStart && topTeThickness);
+  assert(topTeTaperStart->decimals() == 2 &&
+         topTeTaperStart->singleStep() == 1.0);
+  QRadioButton* sheetTeStock = nullptr;
+  for (auto* radio : teSheetingEditor.findChildren<QRadioButton*>())
+    if (radio->text() == "Sheet TE Stock") sheetTeStock = radio;
+  assert(sheetTeStock != nullptr && sheetTeStock->isChecked());
+  topTeSheeting->setChecked(true);
+  assert(!sheetTeStock->isChecked());
+  QCheckBox* topTaper = nullptr;
+  QCheckBox* bottomTaper = nullptr;
+  bool hasRearTopLabel = false;
+  bool hasRearBottomLabel = false;
+  for (auto* check : teSheetingEditor.findChildren<QCheckBox*>()) {
+    if (check->text() == "Taper Sheeting") {
+      if (!topTaper) topTaper = check;
+      else if (!bottomTaper) bottomTaper = check;
+    }
+    hasRearTopLabel = hasRearTopLabel || check->text() == "Rear Top Sheeting";
+    hasRearBottomLabel = hasRearBottomLabel || check->text() == "Rear Bottom Sheeting";
+  }
+  assert(topTaper && bottomTaper && hasRearTopLabel && hasRearBottomLabel);
+  bottomTeSheeting->setChecked(true);
+  assert(topTaper->isChecked() && bottomTaper->isChecked());
+  assert(!topTaper->isEnabled() && !bottomTaper->isEnabled());
+  bottomTeSheeting->setChecked(false);
+  assert(topTaper->isEnabled());
+  topTeWidth->setValueMm(31.75);
+  topTeTaperStart->setValue(62.25);
+  topTeThickness->setValueMm(1.5875);
+  const auto savedTeSheeting = teSheetingEditor.data();
+  const auto restoredTeSheeting =
+      panelDataFromJson(panelDataToJson(savedTeSheeting));
+  assert(restoredTeSheeting.topTeSheeting);
+  assert(std::abs(restoredTeSheeting.topTeSheetingWidth - 31.75) <
+         1.0e-8);
+  assert(std::abs(
+      restoredTeSheeting.topTeSheetingTaperStartLocationPercent - 62.25) <
+         1.0e-8);
+  assert(std::abs(restoredTeSheeting.topTeSheetingThickness - 1.5875) <
+         1.0e-8);
+  QJsonObject legacyTeSheeting;
+  legacyTeSheeting.insert("rootChord", 254.0);
+  legacyTeSheeting.insert("topTeSheeting", true);
+  legacyTeSheeting.insert("topTeSheetingStartPercent", 70.0);
+  legacyTeSheeting.insert("topTeSheetingTaper", true);
+  legacyTeSheeting.insert("topTeSheetingTaperStartPercent", 85.0);
+  const auto migratedTeSheeting = panelDataFromJson(legacyTeSheeting);
+  assert(std::abs(migratedTeSheeting.topTeSheetingWidth - 76.2) < 1.0e-8);
+  assert(std::abs(
+      migratedTeSheeting.topTeSheetingTaperStartLocationPercent - 50.0) <
+      1.0e-8);
   QJsonObject legacyShapedStock;
   legacyShapedStock.insert("leadingEdgeType", 1);
   legacyShapedStock.insert("trailingEdgeType", 1);
@@ -600,8 +749,48 @@ int main(int argc, char* argv[]) {
   assert(migratedStock.trailingEdgeType == 2);
   assert(std::abs(installedMetric.leadingEdgeHeight - 7.0) < 1.0e-8);
   assert(std::abs(installedMetric.trailingEdgeHeight - 3.0) < 1.0e-8);
-  assert(installedMetric.unitOverrides.value("leadingEdgeWidth") == UnitOverride::Inches);
+  assert(installedMetric.unitOverrides.value("leadingEdgeWidth") == UnitOverride::Global);
+  WingPanelEditor metricLeTeDefaults{
+      installedMetric, DisplayUnit::Inches, true};
+  auto* inchTeWidth =
+      metricLeTeDefaults.findChild<LengthInput*>("topTeSheetingWidth");
+  auto* inchTeThickness =
+      metricLeTeDefaults.findChild<LengthInput*>("topTeSheetingThickness");
+  assert(inchTeWidth && inchTeThickness);
+  assert(inchTeWidth->findChild<QDoubleSpinBox*>()->text() == "1 in");
+  assert(inchTeThickness->findChild<QDoubleSpinBox*>()->text() == "1/16 in");
+  auto* metricLeStockWidth =
+      metricLeTeDefaults.findChild<LengthInput*>("leadingEdgeWidth");
+  assert(metricLeStockWidth != nullptr);
+  assert(metricLeStockWidth->unitOverride() == UnitOverride::Global);
+  auto* metricLeStockWidthSpin =
+      metricLeStockWidth->findChild<QDoubleSpinBox*>();
+  assert(metricLeStockWidthSpin != nullptr);
+  assert(metricLeStockWidthSpin->suffix() == " in");
+  metricLeTeDefaults.setGlobalUnit(DisplayUnit::Millimeters);
+  assert(metricLeStockWidth->unitOverride() == UnitOverride::Global);
+  assert(metricLeStockWidthSpin->suffix() == " mm");
+  assert(std::abs(metricLeStockWidthSpin->value() -
+                  installedMetric.leadingEdgeWidth) < 1.0e-8);
+  auto* metricLeStockHeight =
+      metricLeTeDefaults.findChild<LengthInput*>("leadingEdgeHeight");
+  assert(metricLeStockHeight != nullptr);
+  metricLeStockHeight->setUnitOverride(UnitOverride::Global);
+  metricLeTeDefaults.setLeadingEdgeHeightMm(12.345);
+  assert(std::abs(metricLeTeDefaults.data().leadingEdgeHeight - 12.345) <
+         1.0e-8);
+  assert(metricLeStockHeight->unitOverride() == UnitOverride::Global);
+  auto* metricTeStockHeight =
+      metricLeTeDefaults.findChild<LengthInput*>("trailingEdgeHeight");
+  assert(metricTeStockHeight != nullptr);
+  metricTeStockHeight->setUnitOverride(UnitOverride::Global);
+  metricLeTeDefaults.setTrailingEdgeHeightMm(6.789);
+  assert(std::abs(metricLeTeDefaults.data().trailingEdgeHeight - 6.789) <
+         1.0e-8);
+  assert(metricTeStockHeight->unitOverride() == UnitOverride::Global);
   const auto installedInches = installedDefaultPanelData(DisplayUnit::Inches);
+  assert(installedInches.unitOverrides.value("leadingEdgeWidth") ==
+         UnitOverride::Global);
   assert(std::abs(installedInches.panelSpan / 25.4 - 27.5) < 1.0e-8);
   assert(std::abs(installedInches.rootChord / 25.4 - 10.0) < 1.0e-8);
   assert(std::abs(installedInches.tipChord / 25.4 - 6.0) < 1.0e-8);
@@ -627,18 +816,19 @@ int main(int argc, char* argv[]) {
              installedInches.spoilerMinimumCircleDistance / 25.4 - 0.5) <
          1.0e-8);
   assert(installedInches.leadingEdgeType == 2 && installedInches.trailingEdgeType == 2);
+  assert(std::abs(installedInches.topTeSheetingThickness / 25.4 - 1.0 / 16.0) <
+         1.0e-8);
+  assert(std::abs(installedInches.bottomTeSheetingThickness / 25.4 - 1.0 / 16.0) <
+         1.0e-8);
   assert(std::abs(installedInches.leadingEdgeHeight / 25.4 - 0.625) < 1.0e-8);
   assert(std::abs(installedInches.trailingEdgeHeight / 25.4 - 0.375) < 1.0e-8);
   assert(installedInches.behindSparJoinerType == 3);
   assert(installedInches.joinerPanelMode == 1);
-  assert(installedInches.fixedJoiners.size() == 2);
+  assert(installedInches.fixedJoiners.size() == 1);
   assert(installedInches.fixedJoiners.front().material == 0);
   assert(installedInches.fixedJoiners.front().chordLocationPercent == 25);
   assert(installedInches.fixedJoiners.front().carbonTubeOdUnit ==
          UnitOverride::Millimeters);
-  assert(installedInches.fixedJoiners[1].carbonType == 1);
-  assert(installedInches.fixedJoiners[1].steelRodOdUnit ==
-         UnitOverride::Global);
   assert(installedInches.removableJoiners.size() == 2);
   assert(installedInches.removableJoiners[0].kind == 0 &&
          installedInches.removableJoiners[0].chordLocationPercent == 35);
@@ -673,7 +863,7 @@ int main(int argc, char* argv[]) {
   controls.behindSparJoinerType = 3;
   controls.behindSparJoinerOd = 7.0;
   controls.joinerPanelMode = 1;
-  controls.fixedJoiners = {{42, 2, 4.0, 1, 7.0, 5.5, 6.5, 8.0}};
+  controls.fixedJoiners = {{42.25, 2, 4.0, 1, 7.0, 5.5, 6.5, 8.0}};
   const auto restored = panelDataFromJson(panelDataToJson(controls));
   assert(std::abs(restored.aileronHingePostWidth - 7.0) < 1.0e-8);
   assert(std::abs(restored.flapHingePostHeight - 11.0) < 1.0e-8);
@@ -681,7 +871,8 @@ int main(int argc, char* argv[]) {
   assert(!restored.behindSparJoiner && restored.behindSparJoinerType == 3);
   assert(std::abs(restored.behindSparJoinerOd - 7.0) < 1.0e-8);
   assert(restored.joinerPanelMode == 1 && restored.fixedJoiners.size() == 1);
-  assert(restored.fixedJoiners.front().chordLocationPercent == 42);
+  assert(std::abs(restored.fixedJoiners.front().chordLocationPercent - 42.25) <
+         1.0e-8);
   assert(restored.fixedJoiners.front().material == 2);
   assert(std::abs(restored.fixedJoiners.front().steelRodOd - 8.0) < 1.0e-8);
   WingPanelEditor controlsLayoutEditor{controls};
@@ -847,6 +1038,13 @@ int main(int argc, char* argv[]) {
   assert(availableWood != nullptr && !availableWood->isHidden());
   availableWood->click();
   assert(eligibleWoodJoinerPanel.data().fixedJoiners.front().chordLocationPercent == 25);
+  auto* fixedJoinerChord = eligibleWoodJoinerPanel.findChild<QDoubleSpinBox*>(
+      "fixedJoinerChordLocationPercent");
+  assert(fixedJoinerChord && fixedJoinerChord->decimals() == 2 &&
+         std::abs(fixedJoinerChord->singleStep() - 1.0) < 1.0e-8);
+  fixedJoinerChord->setValue(25.75);
+  assert(std::abs(eligibleWoodJoinerPanel.data().fixedJoiners.front()
+                      .chordLocationPercent - 25.75) < 1.0e-8);
   WingPanelEditor removableJoinerPanel{WingPanelData{}, DisplayUnit::Millimeters, false, true};
   auto* removablePanelButton = removableJoinerPanel.findChild<QPushButton*>("removablePanelButton");
   auto* addSleeveRodButton = removableJoinerPanel.findChild<QPushButton*>("addSleeveRodJoinerButton");
@@ -867,6 +1065,19 @@ int main(int argc, char* argv[]) {
   assert(defaultRemovableJoiners.removableJoiners[1].thisPanelPart == 0);
   assert(defaultRemovableJoiners.removableJoiners[1].pinHoleThisPart == 0);
   assert(defaultRemovableJoiners.removableJoiners[1].pinMaterial == 0);
+  auto* removableChord = removableJoinerPanel.findChild<QDoubleSpinBox*>(
+      "removableJoinerChordLocationPercent");
+  auto* alignmentChord = removableJoinerPanel.findChild<QDoubleSpinBox*>(
+      "alignmentPinChordLocationPercent");
+  assert(removableChord && alignmentChord);
+  assert(removableChord->decimals() == 2 && alignmentChord->decimals() == 2);
+  assert(std::abs(removableChord->singleStep() - 1.0) < 1.0e-8 &&
+         std::abs(alignmentChord->singleStep() - 1.0) < 1.0e-8);
+  removableChord->setValue(35.25);
+  alignmentChord->setValue(70.75);
+  const auto fractionalJoiners = removableJoinerPanel.data().removableJoiners;
+  assert(std::abs(fractionalJoiners[0].chordLocationPercent - 35.25) < 1.0e-8);
+  assert(std::abs(fractionalJoiners[1].chordLocationPercent - 70.75) < 1.0e-8);
   auto* adjoiningRod = removableJoinerPanel.findChild<QRadioButton*>("removableAdjoiningPanelRod");
   assert(adjoiningRod != nullptr);
   adjoiningRod->click();
@@ -874,6 +1085,10 @@ int main(int argc, char* argv[]) {
   assert(twoRodJoiner.thisPanelPart == 1 && twoRodJoiner.adjoiningPanelPart == 1);
   const auto twoRodRestored = panelDataFromJson(panelDataToJson(removableJoinerPanel.data()));
   assert(twoRodRestored.removableJoiners.front().adjoiningPanelPart == 1);
+  assert(std::abs(twoRodRestored.removableJoiners[0].chordLocationPercent -
+                  35.25) < 1.0e-8);
+  assert(std::abs(twoRodRestored.removableJoiners[1].chordLocationPercent -
+                  70.75) < 1.0e-8);
   WingPanelEditor joinerDefaults{WingPanelData{}, DisplayUnit::Millimeters, true, true};
   auto* defaultRemovableButton = joinerDefaults.findChild<QPushButton*>("removablePanelButton");
   auto* defaultFixedButton = joinerDefaults.findChild<QPushButton*>("fixedPanelButton");
@@ -1426,8 +1641,8 @@ int main(int argc, char* argv[]) {
   planSheeting.name = "TE top sheeting";
   planSheeting.stopRibIndex = 1;
   planSheeting.profiles = {
-      {{50.0, 0.0}, {100.0, 0.0}, {100.0, 2.0}, {50.0, 2.0}},
-      {{40.0, 0.0}, {80.0, 0.0}, {80.0, 2.0}, {40.0, 2.0}}};
+      {{40.0, 0.0}, {80.0, 0.0}, {80.0, 2.0}, {40.0, 2.0}},
+      {{-10.0, 0.0}, {30.0, 0.0}, {30.0, 2.0}, {-10.0, 2.0}}};
   sheetingPlanWing.sheeting.push_back(planSheeting);
   const auto sheetingPlanDocument = buildFlattenedWingPlan(
       {sheetingPlanWing}, {3.0}, {WingPanelData{}}, false,
@@ -1444,6 +1659,39 @@ int main(int argc, char* argv[]) {
     }
   }
   assert(sheetingReachesTipFace);
+  bool sheetingLeaderTargetsBay = false;
+  for (const auto& path : sheetingPlanDocument.paths) {
+    if (path.fill != QColor{62, 52, 45} || path.path.elementCount() < 3)
+      continue;
+    sheetingLeaderTargetsBay = sheetingLeaderTargetsBay ||
+        std::abs(path.path.elementAt(0).x - flattenedBayCenter) < 1.0e-8;
+  }
+  assert(sheetingLeaderTargetsBay);
+
+  auto sheetingAndSparPlanWing = sheetingPlanWing;
+  sheetingAndSparPlanWing.members.push_back(planSpar);
+  const auto sheetingAndSparPlan = buildFlattenedWingPlan(
+      {sheetingAndSparPlanWing}, {3.0}, {WingPanelData{}}, false,
+      "sheeting-leader-clearance.designrc");
+  double lowerSheetingTargetY = std::numeric_limits<double>::lowest();
+  for (const auto& path : sheetingAndSparPlan.paths) {
+    if (path.fill == QColor{62, 52, 45} && path.path.elementCount() >= 3 &&
+        std::abs(path.path.elementAt(0).x - flattenedBayCenter) < 1.0e-8)
+      lowerSheetingTargetY = std::max(
+          lowerSheetingTargetY, path.path.elementAt(0).y);
+  }
+  assert(lowerSheetingTargetY > std::numeric_limits<double>::lowest());
+  bool targetClearOfLowerSpar = false;
+  for (const auto& path : sheetingAndSparPlan.paths) {
+    if (path.fill != QColor{212, 189, 165, 105}) continue;
+    const auto sparBounds = path.path.boundingRect();
+    if (!sparBounds.contains({flattenedBayCenter, sparBounds.center().y()}))
+      continue;
+    if (lowerSheetingTargetY < sparBounds.top() - 1.0 ||
+        lowerSheetingTargetY > sparBounds.bottom() + 1.0)
+      targetClearOfLowerSpar = true;
+  }
+  assert(targetClearOfLowerSpar);
 
   auto outerPlanWing = planWing;
   const double jointY = planRibs.back().spanPosition;

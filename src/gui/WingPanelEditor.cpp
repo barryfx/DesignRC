@@ -372,19 +372,28 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(ribletsPerBay);
   PUT(topSpar); PUT(topSparHeight); PUT(topSparWidth); PUT(bottomSpar); PUT(bottomSparHeight);
   PUT(bottomSparWidth); PUT(shearWebs); PUT(shearWebWidth); PUT(carbonSpar); PUT(cfTubeOd);
-  PUT(cfTubeId); PUT(cfRodOd); PUT(leTopSheet); PUT(leTopSheetThickness); PUT(leTopSheetStopRib); PUT(leBottomSheet);
-  PUT(leBottomSheetThickness); PUT(leBottomSheetStopRib); PUT(teTopSheet); PUT(teTopSheetThickness); PUT(teTopSheetStopRib); PUT(teBottomSheet);
+  PUT(cfTubeId); PUT(cfRodOd); PUT(leTopSheet); PUT(leTopSheetThickness); PUT(leTopSheetStopRib);
+  PUT(leTopSheetStopChordPercent); PUT(leTopSheetUpToSpar); PUT(leBottomSheet);
+  PUT(leBottomSheetThickness); PUT(leBottomSheetStopRib);
+  PUT(leBottomSheetStopChordPercent); PUT(leBottomSheetUpToSpar);
+  PUT(teTopSheet); PUT(teTopSheetThickness); PUT(teTopSheetStopRib); PUT(teBottomSheet);
   PUT(teBottomSheetThickness); PUT(teBottomSheetStopRib); PUT(turbulators); PUT(turbulatorCount); PUT(turbulatorHeight);
   PUT(turbulatorWidth); PUT(topRearSpar); PUT(topRearSparHeight); PUT(topRearSparWidth);
   PUT(bottomRearSpar); PUT(bottomRearSparHeight); PUT(bottomRearSparWidth);
   PUT(leadingEdgeWidth); PUT(leadingEdgeHeight); PUT(leadingEdgeTubeOd); PUT(leadingEdgeTubeId);
   PUT(leadingEdgeRodOd); PUT(trailingEdgeWidth); PUT(trailingEdgeHeight);
-  PUT(slottedForRibs); PUT(ailerons); PUT(aileronWidth); PUT(aileronHeight); PUT(aileronStartRib);
+  PUT(slottedForRibs); PUT(topTeSheeting); PUT(topTeSheetingWidth);
+  PUT(topTeSheetingThickness); PUT(topTeSheetingTaper);
+  PUT(topTeSheetingTaperStartLocationPercent); PUT(bottomTeSheeting);
+  PUT(bottomTeSheetingWidth); PUT(bottomTeSheetingThickness);
+  PUT(bottomTeSheetingTaper); PUT(bottomTeSheetingTaperStartLocationPercent);
+  PUT(ailerons); PUT(aileronWidth); PUT(aileronHeight); PUT(aileronStartRib);
   PUT(aileronStopRib); PUT(aileronHingePostWidth); PUT(aileronHingePostHeight);
   PUT(flaps); PUT(flapWidth); PUT(flapHeight); PUT(flapStartRib); PUT(flapStopRib);
   PUT(flapHingePostWidth); PUT(flapHingePostHeight);
   PUT(spoilers); PUT(spoilerStartRib); PUT(spoilerEndRib);
-  PUT(spoilerChordLocationPercent); PUT(spoilerWidth); PUT(spoilerThickness);
+  PUT(spoilerChordLocationPercent); PUT(spoilerImmediatelyBehindSpar);
+  PUT(spoilerWidth); PUT(spoilerThickness);
   PUT(spoilerFrameRailWidth); PUT(spoilerSupportRailHeight);
   PUT(spoilerLighteningHoles); PUT(spoilerMinimumWoodMargin);
   PUT(spoilerMinimumCircleDistance);
@@ -397,7 +406,13 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
 #undef PUT
   QJsonObject sparDefaults;
 #define PUT_SPAR(name) sparDefaults.insert(#name, d.sparDefaults.name)
-  PUT_SPAR(chordLocationPercent); PUT_SPAR(verticalLocation); PUT_SPAR(material);
+  sparDefaults.insert("rootChordLocationPercent",
+                      d.sparDefaults.chordLocationPercent);
+  sparDefaults.insert("tipChordLocationPercent",
+      d.sparDefaults.tipChordLocationPercent >= 0.0
+          ? d.sparDefaults.tipChordLocationPercent
+          : d.sparDefaults.chordLocationPercent);
+  PUT_SPAR(verticalLocation); PUT_SPAR(material);
   PUT_SPAR(type); PUT_SPAR(woodHeight); PUT_SPAR(woodWidth); PUT_SPAR(tubeOd);
   PUT_SPAR(tubeId); PUT_SPAR(rodOd); PUT_SPAR(stripWidth); PUT_SPAR(stripThickness);
   PUT_SPAR(shearWebThickness);
@@ -407,7 +422,11 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   for (const auto& spar : d.spars) {
     QJsonObject item;
 #define PUT_ITEM(name) item.insert(#name, spar.name)
-    PUT_ITEM(chordLocationPercent); PUT_ITEM(verticalLocation); PUT_ITEM(material);
+    item.insert("rootChordLocationPercent", spar.chordLocationPercent);
+    item.insert("tipChordLocationPercent",
+        spar.tipChordLocationPercent >= 0.0
+            ? spar.tipChordLocationPercent : spar.chordLocationPercent);
+    PUT_ITEM(verticalLocation); PUT_ITEM(material);
     PUT_ITEM(type); PUT_ITEM(woodHeight); PUT_ITEM(woodWidth); PUT_ITEM(tubeOd);
     PUT_ITEM(tubeId); PUT_ITEM(rodOd); PUT_ITEM(stripWidth); PUT_ITEM(stripThickness);
 #undef PUT_ITEM
@@ -473,24 +492,34 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_B(topSpar); READ_D(topSparHeight); READ_D(topSparWidth); READ_B(bottomSpar);
   READ_D(bottomSparHeight); READ_D(bottomSparWidth); READ_B(shearWebs); READ_D(shearWebWidth);
   READ_I(carbonSpar); READ_D(cfTubeOd); READ_D(cfTubeId); READ_D(cfRodOd); READ_B(leTopSheet);
-  READ_D(leTopSheetThickness); READ_I(leTopSheetStopRib); READ_B(leBottomSheet); READ_D(leBottomSheetThickness); READ_I(leBottomSheetStopRib); READ_B(teTopSheet);
+  READ_D(leTopSheetThickness); READ_I(leTopSheetStopRib);
+  READ_D(leTopSheetStopChordPercent); READ_B(leTopSheetUpToSpar);
+  READ_B(leBottomSheet); READ_D(leBottomSheetThickness); READ_I(leBottomSheetStopRib);
+  READ_D(leBottomSheetStopChordPercent); READ_B(leBottomSheetUpToSpar); READ_B(teTopSheet);
   READ_D(teTopSheetThickness); READ_I(teTopSheetStopRib); READ_B(teBottomSheet); READ_D(teBottomSheetThickness); READ_I(teBottomSheetStopRib); READ_B(turbulators);
   READ_I(turbulatorCount); READ_D(turbulatorHeight); READ_D(turbulatorWidth); READ_B(topRearSpar);
   READ_D(topRearSparHeight); READ_D(topRearSparWidth); READ_B(bottomRearSpar); READ_D(bottomRearSparHeight);
   READ_D(bottomRearSparWidth); READ_I(leadingEdgeType); READ_D(leadingEdgeWidth); READ_D(leadingEdgeHeight);
   READ_D(leadingEdgeTubeOd); READ_D(leadingEdgeTubeId); READ_D(leadingEdgeRodOd); READ_I(trailingEdgeType);
-  READ_D(trailingEdgeWidth); READ_D(trailingEdgeHeight); READ_B(slottedForRibs); READ_B(ailerons);
+  READ_D(trailingEdgeWidth); READ_D(trailingEdgeHeight); READ_B(slottedForRibs);
+  READ_B(topTeSheeting); READ_D(topTeSheetingWidth);
+  READ_D(topTeSheetingThickness); READ_B(topTeSheetingTaper);
+  READ_D(topTeSheetingTaperStartLocationPercent); READ_B(bottomTeSheeting);
+  READ_D(bottomTeSheetingWidth); READ_D(bottomTeSheetingThickness);
+  READ_B(bottomTeSheetingTaper); READ_D(bottomTeSheetingTaperStartLocationPercent);
+  READ_B(ailerons);
   READ_D(aileronWidth); READ_D(aileronHeight); READ_I(aileronStartRib); READ_I(aileronStopRib);
   READ_D(aileronHingePostWidth); READ_D(aileronHingePostHeight);
   READ_B(flaps); READ_D(flapWidth); READ_D(flapHeight); READ_I(flapStartRib); READ_I(flapStopRib);
   READ_D(flapHingePostWidth); READ_D(flapHingePostHeight);
   READ_B(spoilers); READ_I(spoilerStartRib); READ_I(spoilerEndRib);
-  READ_I(spoilerChordLocationPercent); READ_D(spoilerWidth); READ_D(spoilerThickness);
+  READ_D(spoilerChordLocationPercent); READ_B(spoilerImmediatelyBehindSpar);
+  READ_D(spoilerWidth); READ_D(spoilerThickness);
   READ_D(spoilerFrameRailWidth); READ_D(spoilerSupportRailHeight);
   READ_B(spoilerLighteningHoles); READ_D(spoilerMinimumWoodMargin);
   READ_D(spoilerMinimumCircleDistance);
   READ_B(wiringHoles); READ_I(wiringHoleStartRib); READ_I(wiringHoleEndRib);
-  READ_I(wiringHoleChordLocationPercent); READ_D(wiringHoleWidth); READ_D(wiringHoleHeight);
+  READ_D(wiringHoleChordLocationPercent); READ_D(wiringHoleWidth); READ_D(wiringHoleHeight);
   READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
   READ_I(behindSparJoinerType); READ_D(behindSparJoinerOd); READ_D(behindSparJoinerId);
   READ_B(fiftyPercentJoiner); READ_I(fiftyPercentJoinerType);
@@ -499,10 +528,42 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
 #undef READ_D
 #undef READ_I
 #undef READ_B
+  if (!o.contains("topTeSheetingWidth") &&
+      o.contains("topTeSheetingStartPercent"))
+    d.topTeSheetingWidth = d.rootChord *
+        (1.0 - o.value("topTeSheetingStartPercent").toDouble(70.0) / 100.0);
+  if (!o.contains("bottomTeSheetingWidth") &&
+      o.contains("bottomTeSheetingStartPercent"))
+    d.bottomTeSheetingWidth = d.rootChord *
+        (1.0 - o.value("bottomTeSheetingStartPercent").toDouble(70.0) / 100.0);
+  const auto migratedTaperLocation = [&o](const char* sheetStartKey,
+                                          const char* taperStartKey) {
+    const double sheetStart = o.value(sheetStartKey).toDouble(70.0);
+    const double taperStart = o.value(taperStartKey).toDouble(85.0);
+    return std::clamp(100.0 * (taperStart - sheetStart) /
+        std::max(1.0e-8, 100.0 - sheetStart), 0.0, 100.0);
+  };
+  if (!o.contains("topTeSheetingTaperStartLocationPercent") &&
+      o.contains("topTeSheetingTaperStartPercent"))
+    d.topTeSheetingTaperStartLocationPercent = migratedTaperLocation(
+        "topTeSheetingStartPercent", "topTeSheetingTaperStartPercent");
+  if (!o.contains("bottomTeSheetingTaperStartLocationPercent") &&
+      o.contains("bottomTeSheetingTaperStartPercent"))
+    d.bottomTeSheetingTaperStartLocationPercent = migratedTaperLocation(
+        "bottomTeSheetingStartPercent", "bottomTeSheetingTaperStartPercent");
   const auto sparDefaults = o.value("sparDefaults").toObject();
 #define READ_SPAR_D(name) if (sparDefaults.contains(#name)) d.sparDefaults.name = sparDefaults.value(#name).toDouble(d.sparDefaults.name)
 #define READ_SPAR_I(name) if (sparDefaults.contains(#name)) d.sparDefaults.name = sparDefaults.value(#name).toInt(d.sparDefaults.name)
-  READ_SPAR_I(chordLocationPercent); READ_SPAR_I(verticalLocation);
+  if (sparDefaults.contains("rootChordLocationPercent"))
+    d.sparDefaults.chordLocationPercent =
+        sparDefaults.value("rootChordLocationPercent").toDouble(
+            d.sparDefaults.chordLocationPercent);
+  else
+    READ_SPAR_D(chordLocationPercent);
+  d.sparDefaults.tipChordLocationPercent =
+      sparDefaults.value("tipChordLocationPercent").toDouble(
+          d.sparDefaults.chordLocationPercent);
+  READ_SPAR_I(verticalLocation);
   READ_SPAR_I(material); READ_SPAR_I(type); READ_SPAR_D(woodHeight);
   READ_SPAR_D(woodWidth); READ_SPAR_D(tubeOd); READ_SPAR_D(tubeId);
   READ_SPAR_D(rodOd); READ_SPAR_D(stripWidth); READ_SPAR_D(stripThickness);
@@ -516,7 +577,16 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
       const auto item = value.toObject();
 #define READ_ITEM_D(name) if (item.contains(#name)) spar.name = item.value(#name).toDouble(spar.name)
 #define READ_ITEM_I(name) if (item.contains(#name)) spar.name = item.value(#name).toInt(spar.name)
-      READ_ITEM_I(chordLocationPercent); READ_ITEM_I(verticalLocation);
+      if (item.contains("rootChordLocationPercent"))
+        spar.chordLocationPercent =
+            item.value("rootChordLocationPercent").toDouble(
+                spar.chordLocationPercent);
+      else
+        READ_ITEM_D(chordLocationPercent);
+      spar.tipChordLocationPercent =
+          item.value("tipChordLocationPercent").toDouble(
+              spar.chordLocationPercent);
+      READ_ITEM_I(verticalLocation);
       READ_ITEM_I(material); READ_ITEM_I(type); READ_ITEM_D(woodHeight);
       READ_ITEM_D(woodWidth); READ_ITEM_D(tubeOd); READ_ITEM_D(tubeId);
       READ_ITEM_D(rodOd); READ_ITEM_D(stripWidth); READ_ITEM_D(stripThickness);
@@ -568,12 +638,18 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
       d.sparDefaults.shearWebThickness = d.shearWebWidth;
     }
   }
+  if (d.sparDefaults.tipChordLocationPercent < 0.0)
+    d.sparDefaults.tipChordLocationPercent =
+        d.sparDefaults.chordLocationPercent;
+  for (auto& spar : d.spars)
+    if (spar.tipChordLocationPercent < 0.0)
+      spar.tipChordLocationPercent = spar.chordLocationPercent;
   for (const auto value : o.value("fixedJoiners").toArray()) {
     FixedJoinerData joiner;
     const auto item = value.toObject();
 #define READ_FIXED_D(name) if (item.contains(#name)) joiner.name = item.value(#name).toDouble(joiner.name)
 #define READ_FIXED_I(name) if (item.contains(#name)) joiner.name = item.value(#name).toInt(joiner.name)
-    READ_FIXED_I(chordLocationPercent); READ_FIXED_I(material); READ_FIXED_D(woodThickness);
+    READ_FIXED_D(chordLocationPercent); READ_FIXED_I(material); READ_FIXED_D(woodThickness);
     READ_FIXED_I(carbonType); READ_FIXED_D(carbonTubeOd); READ_FIXED_D(carbonTubeId);
     READ_FIXED_D(carbonRodOd); READ_FIXED_D(steelRodOd);
     if (item.contains("woodThicknessUnit"))
@@ -600,7 +676,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
     const auto item = value.toObject();
 #define READ_REMOVABLE_D(name) if (item.contains(#name)) joiner.name = item.value(#name).toDouble(joiner.name)
 #define READ_REMOVABLE_I(name) if (item.contains(#name)) joiner.name = item.value(#name).toInt(joiner.name)
-    READ_REMOVABLE_I(kind); READ_REMOVABLE_I(chordLocationPercent);
+    READ_REMOVABLE_I(kind); READ_REMOVABLE_D(chordLocationPercent);
     READ_REMOVABLE_I(thisPanelPart);
     if (item.contains("adjoiningPanelPart"))
       joiner.adjoiningPanelPart = item.value("adjoiningPanelPart").toInt(joiner.adjoiningPanelPart);
@@ -691,6 +767,11 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   // Preserve those designs by loading them as the remaining wood-stock types.
   if (d.leadingEdgeType == 1) d.leadingEdgeType = 2;
   if (d.trailingEdgeType == 1) d.trailingEdgeType = 2;
+  if (d.topTeSheeting || d.bottomTeSheeting) d.trailingEdgeType = 0;
+  if (d.topTeSheeting && d.bottomTeSheeting) {
+    d.topTeSheetingTaper = true;
+    d.bottomTeSheetingTaper = true;
+  }
   return d;
 }
 
@@ -713,6 +794,8 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
   ROUND_LENGTH(leadingEdgeWidth); ROUND_LENGTH(leadingEdgeHeight);
   ROUND_LENGTH(leadingEdgeTubeOd); ROUND_LENGTH(leadingEdgeTubeId); ROUND_LENGTH(leadingEdgeRodOd);
   ROUND_LENGTH(trailingEdgeWidth); ROUND_LENGTH(trailingEdgeHeight);
+  ROUND_LENGTH(topTeSheetingWidth); ROUND_LENGTH(bottomTeSheetingWidth);
+  ROUND_LENGTH(topTeSheetingThickness); ROUND_LENGTH(bottomTeSheetingThickness);
   ROUND_LENGTH(aileronWidth); ROUND_LENGTH(aileronHeight);
   ROUND_LENGTH(aileronHingePostWidth); ROUND_LENGTH(aileronHingePostHeight);
   ROUND_LENGTH(flapWidth); ROUND_LENGTH(flapHeight);
@@ -771,11 +854,14 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "aileronHeight", "aileronWidth", "bottomRearSparHeight",
            "bottomRearSparWidth", "bottomSparHeight", "bottomSparWidth",
            "flapHeight", "flapWidth", "leBottomSheetThickness",
-           "leTopSheetThickness", "leadingEdgeHeight", "panelSpan",
+           "leTopSheetThickness", "leadingEdgeHeight", "leadingEdgeWidth",
+           "panelSpan",
            "ribLighteningMinimumHoleDistance",
            "ribLighteningMinimumWoodMargin", "ribThickness", "rootChord",
            "shearWebWidth", "sweep",
-           "teBottomSheetThickness", "teTopSheetThickness", "tipChord",
+           "teBottomSheetThickness", "teTopSheetThickness",
+           "topTeSheetingWidth", "bottomTeSheetingWidth",
+           "topTeSheetingThickness", "bottomTeSheetingThickness", "tipChord",
            "topRearSparHeight", "topRearSparWidth", "topSparHeight",
            "topSparWidth", "trailingEdgeHeight", "trailingEdgeWidth",
            "turbulatorHeight", "turbulatorWidth", "wiringHoleWidth",
@@ -785,7 +871,6 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "cfRodOd", "cfTubeId", "cfTubeOd", "leadingEdgeRodOd",
            "leadingEdgeTubeId", "leadingEdgeTubeOd"})
     defaults.unitOverrides.insert(key, UnitOverride::Millimeters);
-  defaults.unitOverrides.insert("leadingEdgeWidth", UnitOverride::Inches);
   if (unit == DisplayUnit::Millimeters) return defaults;
 
   defaults.panelSpan = 698.5;
@@ -827,6 +912,8 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   defaults.leBottomSheetThickness = 1.5875;
   defaults.teTopSheetThickness = 1.5875;
   defaults.teBottomSheetThickness = 1.5875;
+  defaults.topTeSheetingThickness = 1.5875;
+  defaults.bottomTeSheetingThickness = 1.5875;
   defaults.leTopSheetStopRib = 2;
   defaults.leBottomSheetStopRib = 2;
   defaults.teTopSheetStopRib = 2;
@@ -872,10 +959,7 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   fixedJoiner.carbonTubeIdUnit = UnitOverride::Millimeters;
   fixedJoiner.carbonRodOdUnit = UnitOverride::Millimeters;
   fixedJoiner.steelRodOdUnit = UnitOverride::Millimeters;
-  auto carbonRodJoiner = fixedJoiner;
-  carbonRodJoiner.carbonType = 1;
-  carbonRodJoiner.steelRodOdUnit = UnitOverride::Global;
-  defaults.fixedJoiners = {fixedJoiner, carbonRodJoiner};
+  defaults.fixedJoiners = {fixedJoiner};
 
   RemovableJoinerData sleeveRod;
   sleeveRod.kind = 0;
@@ -925,6 +1009,7 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "bottomSparHeight", "bottomSparWidth", "flapHeight",
            "flapHingePostHeight", "flapHingePostWidth", "flapWidth",
            "leBottomSheetThickness", "leTopSheetThickness", "leadingEdgeHeight",
+           "leadingEdgeWidth",
            "panelSpan", "ribLighteningMinimumHoleDistance",
            "ribLighteningMinimumWoodMargin", "ribThickness", "rootChord",
            "shearWebWidth",
@@ -932,7 +1017,9 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "spoilerFrameRailWidth", "spoilerMinimumCircleDistance",
            "spoilerMinimumWoodMargin",
            "spoilerThickness", "spoilerWidth",
-           "teBottomSheetThickness", "teTopSheetThickness", "tipChord",
+            "teBottomSheetThickness", "teTopSheetThickness",
+            "topTeSheetingWidth", "bottomTeSheetingWidth",
+            "topTeSheetingThickness", "bottomTeSheetingThickness", "tipChord",
            "topRearSparHeight", "topRearSparWidth", "topSparHeight",
            "topSparWidth", "trailingEdgeHeight", "trailingEdgeWidth",
            "turbulatorHeight", "turbulatorWidth", "wiringHoleHeight",
@@ -945,7 +1032,6 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "sparRodOd", "sparStripThickness", "sparStripWidth", "sparTubeId",
            "sparTubeOd"})
     defaults.unitOverrides.insert(key, UnitOverride::Millimeters);
-  defaults.unitOverrides.insert("leadingEdgeWidth", UnitOverride::Inches);
   return defaults;
 }
 
@@ -1299,13 +1385,44 @@ QWidget* WingPanelEditor::makeSheetingPage() {
   };
   const auto addSheet = [&, this](const QString& label, const QString& key,
                                   QCheckBox*& check, LengthInput*& value,
-                                  QSpinBox*& stopRib, QWidget*& details) {
+                                  QSpinBox*& stopRib, QWidget*& details,
+                                  QDoubleSpinBox** stopChord = nullptr,
+                                  QCheckBox** upToSpar = nullptr) {
     check = new QCheckBox{label};
     value = makeLength(key, 2.0);
     stopRib = new QSpinBox;
     stopRib->setRange(2, 100);
     stopRib->setValue(2);
-    details = detailRow({{"Thickness", value}, {"Stop Rib Number", stopRib}});
+    if (stopChord && upToSpar) {
+      *stopChord = new QDoubleSpinBox;
+      (*stopChord)->setObjectName(key.startsWith("leTop")
+          ? "leTopSheetStopChordPercent" : "leBottomSheetStopChordPercent");
+      (*stopChord)->setRange(0.0, 100.0);
+      (*stopChord)->setDecimals(2);
+      (*stopChord)->setSingleStep(1.0);
+      (*stopChord)->setSuffix("%");
+      (*stopChord)->setValue(30.0);
+      *upToSpar = new QCheckBox{"Up To Spar"};
+      (*upToSpar)->setObjectName(key.startsWith("leTop")
+          ? "leTopSheetUpToSpar" : "leBottomSheetUpToSpar");
+      (*upToSpar)->setChecked(true);
+      auto* detailContainer = new QWidget;
+      auto* detailLayout = new QVBoxLayout{detailContainer};
+      detailLayout->setContentsMargins(0, 0, 0, 0);
+      detailLayout->addWidget(detailRow(
+          {{"Thickness", value}, {"Stop Rib Number", stopRib}}));
+      detailLayout->addWidget(detailRow(
+          {{"Stop Chord Location", *stopChord}, {"", *upToSpar}}));
+      details = detailContainer;
+      connect(*stopChord, &QDoubleSpinBox::valueChanged,
+              this, &WingPanelEditor::emitChanged);
+      connect(*upToSpar, &QCheckBox::toggled, this, [this] {
+        updateConditionalControls();
+        emitChanged();
+      });
+    } else {
+      details = detailRow({{"Thickness", value}, {"Stop Rib Number", stopRib}});
+    }
     layout->addWidget(check);
     layout->addWidget(details);
     connect(check, &QCheckBox::toggled, this, [this] {
@@ -1314,13 +1431,15 @@ QWidget* WingPanelEditor::makeSheetingPage() {
     });
     connect(stopRib, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
   };
-  addSheet("LE Top Sheeting", "leTopSheetThickness", leTopSheet_,
-           leTopSheetThickness_, leTopSheetStopRib_, leTopSheetDetails_);
-  addSheet("LE Bottom Sheeting", "leBottomSheetThickness", leBottomSheet_,
-           leBottomSheetThickness_, leBottomSheetStopRib_, leBottomSheetDetails_);
-  addSheet("TE Top Sheeting", "teTopSheetThickness", teTopSheet_,
+  addSheet("Front Top Sheeting", "leTopSheetThickness", leTopSheet_,
+           leTopSheetThickness_, leTopSheetStopRib_, leTopSheetDetails_,
+           &leTopSheetStopChordPercent_, &leTopSheetUpToSpar_);
+  addSheet("Front Bottom Sheeting", "leBottomSheetThickness", leBottomSheet_,
+           leBottomSheetThickness_, leBottomSheetStopRib_, leBottomSheetDetails_,
+           &leBottomSheetStopChordPercent_, &leBottomSheetUpToSpar_);
+  addSheet("Rear Top Sheeting", "teTopSheetThickness", teTopSheet_,
            teTopSheetThickness_, teTopSheetStopRib_, teTopSheetDetails_);
-  addSheet("TE Bottom Sheeting", "teBottomSheetThickness", teBottomSheet_,
+  addSheet("Rear Bottom Sheeting", "teBottomSheetThickness", teBottomSheet_,
            teBottomSheetThickness_, teBottomSheetStopRib_, teBottomSheetDetails_);
   layout->addStretch();
   return scrollPage(content);
@@ -1338,14 +1457,21 @@ void WingPanelEditor::addSparEditor() {
   row.deleteSelection->setObjectName("sparDeleteSelection");
   layout->addWidget(row.deleteSelection);
 
-  row.chordLocation = new QSpinBox;
-  row.chordLocation->setObjectName("fixedJoinerChordLocation");
-  row.chordLocation->setObjectName("sparChordLocation");
-  row.chordLocation->setRange(0, 90);
-  row.chordLocation->setSingleStep(1);
-  row.chordLocation->setSuffix("%");
-  row.chordLocation->setValue(25);
-  layout->addWidget(detailRow({{"Chord Location", row.chordLocation}}));
+  const auto makeChordLocation = [](const char* objectName) {
+    auto* location = new QDoubleSpinBox;
+    location->setObjectName(objectName);
+    location->setRange(0.0, 90.0);
+    location->setDecimals(2);
+    location->setSingleStep(1.0);
+    location->setSuffix("%");
+    location->setValue(25);
+    return location;
+  };
+  row.rootChordLocation = makeChordLocation("sparRootChordLocation");
+  row.tipChordLocation = makeChordLocation("sparTipChordLocation");
+  layout->addWidget(detailRow(
+      {{"Root Chord Location", row.rootChordLocation},
+       {"Tip Chord Location", row.tipChordLocation}}));
 
   row.top = new QRadioButton{"Top"};
   row.bottom = new QRadioButton{"Bottom"};
@@ -1409,10 +1535,11 @@ void WingPanelEditor::addSparEditor() {
       updateSparEditorControls();
       emitChanged();
     });
-  connect(row.chordLocation, &QSpinBox::valueChanged, this, [this] {
-    updateSparEditorControls();
-    emitChanged();
-  });
+  for (auto* location : {row.rootChordLocation, row.tipChordLocation})
+    connect(location, &QDoubleSpinBox::valueChanged, this, [this] {
+      updateSparEditorControls();
+      emitChanged();
+    });
 
   sparEditorsLayout_->addWidget(group);
   sparEditors_.push_back(row);
@@ -1439,7 +1566,9 @@ void WingPanelEditor::applySparDefaults(SparEditorWidgets& row) {
 }
 
 void WingPanelEditor::applySparData(SparEditorWidgets& row, const SparDefaults& spar) {
-  row.chordLocation->setValue(spar.chordLocationPercent);
+  row.rootChordLocation->setValue(spar.chordLocationPercent);
+  row.tipChordLocation->setValue(spar.tipChordLocationPercent >= 0.0
+      ? spar.tipChordLocationPercent : spar.chordLocationPercent);
   row.top->setChecked(spar.verticalLocation == 0);
   row.bottom->setChecked(spar.verticalLocation == 1);
   row.mid->setChecked(spar.verticalLocation < 0 || spar.verticalLocation > 1);
@@ -1476,7 +1605,7 @@ void WingPanelEditor::renumberSparEditors() {
 }
 
 void WingPanelEditor::updateSparEditorControls() {
-  QHash<int, int> woodLocations;
+  QHash<QString, int> woodLocations;
   for (auto& row : sparEditors_) {
     const bool wood = row.wood->isChecked();
     const bool shapedMaterial = row.carbonFiber->isChecked();
@@ -1485,10 +1614,11 @@ void WingPanelEditor::updateSparEditorControls() {
     row.tubeDetails->setVisible(shapedMaterial && row.tube->isChecked());
     row.rodDetails->setVisible(shapedMaterial && row.rod->isChecked());
     row.stripDetails->setVisible(shapedMaterial && row.strip->isChecked());
-    if (wood && row.top->isChecked())
-      woodLocations[row.chordLocation->value()] |= 1;
-    if (wood && row.bottom->isChecked())
-      woodLocations[row.chordLocation->value()] |= 2;
+    const QString locationKey = QString{"%1:%2"}
+        .arg(qRound64(row.rootChordLocation->value() * 100.0))
+        .arg(qRound64(row.tipChordLocation->value() * 100.0));
+    if (wood && row.top->isChecked()) woodLocations[locationKey] |= 1;
+    if (wood && row.bottom->isChecked()) woodLocations[locationKey] |= 2;
   }
   bool shearWebsAvailable = showUnitOverrides_;
   for (auto it = woodLocations.constBegin(); it != woodLocations.constEnd(); ++it)
@@ -1504,6 +1634,7 @@ void WingPanelEditor::updateSparEditorControls() {
     if (ribletDetails_)
       ribletDetails_->setVisible(available && riblets_->isChecked());
   }
+  if (spoilerImmediatelyBehindSpar_) updateConditionalControls();
 }
 
 bool WingPanelEditor::ribletsAvailable() const {
@@ -1514,9 +1645,11 @@ bool WingPanelEditor::ribletsAvailable() const {
   return std::any_of(
       sparEditors_.begin(), sparEditors_.end(),
       [](const SparEditorWidgets& row) {
-        const int chord = row.chordLocation->value();
+        const double rootChord = row.rootChordLocation->value();
+        const double tipChord = row.tipChordLocation->value();
         return row.carbonFiber->isChecked() && row.mid->isChecked() &&
-            chord >= 20 && chord <= 40;
+            rootChord >= 20.0 && rootChord <= 40.0 &&
+            tipChord >= 20.0 && tipChord <= 40.0;
       });
 }
 
@@ -1540,14 +1673,74 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
   layout->addWidget(rodLe_);
   leRodOd_ = makeLength("leadingEdgeRodOd", 2); rodLeDetails_ = detailRow({{"OD", leRodOd_}}); layout->addWidget(rodLeDetails_);
   auto* line = new QFrame; line->setFrameShape(QFrame::HLine); layout->addWidget(line);
-  auto* teGroup = new QButtonGroup{this}; teGroup->setExclusive(true);
+  auto* teGroup = new QButtonGroup{this}; teGroup->setExclusive(false);
   sheetTe_ = new QRadioButton{"Sheet TE Stock"};
   teGroup->addButton(sheetTe_); layout->addWidget(sheetTe_);
   teWidth_ = makeLength("trailingEdgeWidth", 20); teHeight_ = makeLength("trailingEdgeHeight", 3);
   stockTeDetails_ = detailRow({{"Width", teWidth_}, {"Height", teHeight_}}); layout->addWidget(stockTeDetails_);
   slottedForRibs_ = new QCheckBox{"Slotted for Ribs"}; slottedDetails_ = detailRow({{"", slottedForRibs_}}); layout->addWidget(slottedDetails_);
+  const auto makePercent = [](const char* objectName, const double value) {
+    auto* spin = new QDoubleSpinBox;
+    spin->setObjectName(objectName);
+    spin->setRange(0.0, 100.0);
+    spin->setDecimals(2);
+    spin->setSingleStep(1.0);
+    spin->setSuffix("%");
+    spin->setValue(value);
+    return spin;
+  };
+  const auto addTeSheeting = [&, this](const QString& title,
+      const QString& widthKey, const QString& thicknessKey,
+      const char* taperStartName, QCheckBox*& enabled,
+      LengthInput*& width, LengthInput*& thickness, QCheckBox*& taper,
+      QDoubleSpinBox*& taperStart, QWidget*& details,
+      QWidget*& taperDetails) {
+    enabled = new QCheckBox{title};
+    enabled->setObjectName(title.startsWith("Top")
+        ? "topTeSheeting" : "bottomTeSheeting");
+    layout->addWidget(enabled);
+    details = new QWidget;
+    auto* detailsLayout = new QVBoxLayout{details};
+    detailsLayout->setContentsMargins(24, 0, 0, 0);
+    width = makeLength(widthKey, 25.4);
+    thickness = makeLength(thicknessKey, 1.5875);
+    detailsLayout->addWidget(detailRow(
+        {{"Width", width}, {"Thickness", thickness}}));
+    taper = new QCheckBox{"Taper Sheeting"};
+    detailsLayout->addWidget(taper);
+    taperStart = makePercent(taperStartName, 50.0);
+    taperDetails = detailRow({{"Taper Start Location", taperStart}});
+    taperDetails->setContentsMargins(24, 0, 0, 0);
+    detailsLayout->addWidget(taperDetails);
+    layout->addWidget(details);
+    connect(enabled, &QCheckBox::toggled, this, [this](const bool checked) {
+      if (checked && sheetTe_->isChecked()) sheetTe_->setChecked(false);
+      updateConditionalControls();
+      emitChanged();
+    });
+    connect(taper, &QCheckBox::toggled, this, [this] {
+      updateConditionalControls();
+      emitChanged();
+    });
+    connect(taperStart, &QDoubleSpinBox::valueChanged,
+            this, &WingPanelEditor::emitChanged);
+  };
+  addTeSheeting("Top TE Sheeting", "topTeSheetingWidth",
+      "topTeSheetingThickness", "topTeSheetingTaperStartLocationPercent",
+      topTeSheeting_, topTeWidth_, topTeThickness_, topTeTaper_,
+      topTeTaperStart_, topTeSheetingDetails_, topTeTaperDetails_);
+  addTeSheeting("Bottom TE Sheeting", "bottomTeSheetingWidth",
+      "bottomTeSheetingThickness", "bottomTeSheetingTaperStartLocationPercent",
+      bottomTeSheeting_, bottomTeWidth_, bottomTeThickness_, bottomTeTaper_,
+      bottomTeTaperStart_, bottomTeSheetingDetails_, bottomTeTaperDetails_);
   for (auto* button : {blockLe_, tubeLe_, rodLe_, sheetTe_})
-    connect(button, &QRadioButton::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
+    connect(button, &QRadioButton::toggled, this, [this, button](const bool checked) {
+      if (button == sheetTe_ && checked) {
+        topTeSheeting_->setChecked(false);
+        bottomTeSheeting_->setChecked(false);
+      }
+      updateConditionalControls(); emitChanged();
+    });
   connect(slottedForRibs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   layout->addStretch(); return scrollPage(content);
 }
@@ -1618,10 +1811,16 @@ QWidget* WingPanelEditor::makeSpoilersPage() {
   spoilerStartRib_->setObjectName("spoilerStartRib");
   spoilerEndRib_ = new QSpinBox;
   spoilerEndRib_->setObjectName("spoilerEndRib");
-  spoilerChordLocation_ = new QSpinBox;
+  spoilerChordLocation_ = new QDoubleSpinBox;
   spoilerChordLocation_->setObjectName("spoilerChordLocationPercent");
-  spoilerChordLocation_->setRange(1, 95);
+  spoilerChordLocation_->setRange(1.0, 95.0);
+  spoilerChordLocation_->setDecimals(2);
+  spoilerChordLocation_->setSingleStep(1.0);
   spoilerChordLocation_->setSuffix(" %");
+  spoilerImmediatelyBehindSpar_ =
+      new QCheckBox{"Immediately Behind Spar"};
+  spoilerImmediatelyBehindSpar_->setObjectName(
+      "spoilerImmediatelyBehindSpar");
   spoilerWidth_ = makeLength("spoilerWidth", 25.4);
   spoilerThickness_ = makeLength("spoilerThickness", 3.0);
   spoilerFrameRailWidth_ = makeLength("spoilerFrameRailWidth", 6.0);
@@ -1640,7 +1839,9 @@ QWidget* WingPanelEditor::makeSpoilersPage() {
   spoilerLighteningHoles_->setObjectName("spoilerLighteningHoles");
   detailLayout->addWidget(detailRow({{"Start Rib", spoilerStartRib_}}));
   detailLayout->addWidget(detailRow({{"End Rib", spoilerEndRib_}}));
-  detailLayout->addWidget(detailRow({{"Start Chord Location", spoilerChordLocation_}}));
+  detailLayout->addWidget(detailRow(
+      {{"Start Chord Location", spoilerChordLocation_},
+       {"", spoilerImmediatelyBehindSpar_}}));
   detailLayout->addWidget(detailRow({{"Spoiler Chordwise Length", spoilerWidth_}}));
   detailLayout->addWidget(detailRow({{"Spoiler Thickness", spoilerThickness_}}));
   detailLayout->addWidget(detailRow({{"Frame Rail Width", spoilerFrameRailWidth_}}));
@@ -1662,10 +1863,14 @@ QWidget* WingPanelEditor::makeSpoilersPage() {
   connect(spoilerLighteningHoles_, &QCheckBox::toggled, this, [this] {
     updateConditionalControls(); emitChanged();
   });
-  for (auto* input : {spoilerStartRib_, spoilerEndRib_, spoilerChordLocation_})
+  connect(spoilerImmediatelyBehindSpar_, &QCheckBox::toggled,
+          this, &WingPanelEditor::emitChanged);
+  for (auto* input : {spoilerStartRib_, spoilerEndRib_})
     connect(input, &QSpinBox::valueChanged, this, [this] {
       updateConditionalControls(); emitChanged();
     });
+  connect(spoilerChordLocation_, &QDoubleSpinBox::valueChanged,
+          this, &WingPanelEditor::emitChanged);
   connect(spoilerStartRib_, &QSpinBox::editingFinished, this, [this] {
     if (spoilers_->isChecked() && spoilerStartRib_->value() < 2 &&
         std::abs(dihedral_->value()) > 1.0e-8) {
@@ -1693,9 +1898,11 @@ QWidget* WingPanelEditor::makeWiringHolesSection(const QString& suffix) {
   row.endRib = new RibStationSpinBox;
   row.startRib->setObjectName("wiringHoleStartRib" + suffix);
   row.endRib->setObjectName("wiringHoleEndRib" + suffix);
-  row.chordLocation = new QSpinBox;
+  row.chordLocation = new QDoubleSpinBox;
   row.chordLocation->setObjectName("wiringHoleChordLocationPercent" + suffix);
-  row.chordLocation->setRange(1, 95);
+  row.chordLocation->setRange(1.0, 95.0);
+  row.chordLocation->setDecimals(2);
+  row.chordLocation->setSingleStep(1.0);
   row.chordLocation->setSuffix(" %");
   row.width = new LengthInput{"wiringHoleWidth" + suffix, 9.525};
   row.height = new LengthInput{"wiringHoleHeight" + suffix, 6.35};
@@ -1725,10 +1932,12 @@ QWidget* WingPanelEditor::makeWiringHolesSection(const QString& suffix) {
   connect(row.enabled, &QCheckBox::toggled, this, [this, index] {
     synchronizeWiringHoleControls(index);
   });
-  for (auto* input : {row.startRib, row.endRib, row.chordLocation})
+  for (auto* input : {row.startRib, row.endRib})
     connect(input, &QSpinBox::valueChanged, this, [this, index] {
       synchronizeWiringHoleControls(index);
     });
+  connect(row.chordLocation, &QDoubleSpinBox::valueChanged,
+          this, [this, index] { synchronizeWiringHoleControls(index); });
   for (auto* input : {row.width, row.height})
     connect(input, &LengthInput::valueChanged, this, [this, index] {
       synchronizeWiringHoleControls(index);
@@ -1945,8 +2154,10 @@ void WingPanelEditor::addFixedJoinerEditor(const FixedJoinerData& data) {
   auto* layout = new QVBoxLayout{group};
   row.deleteSelection = new QCheckBox;
   layout->addWidget(row.deleteSelection);
-  row.chordLocation = new QSpinBox;
-  row.chordLocation->setRange(0, 90); row.chordLocation->setSingleStep(1);
+  row.chordLocation = new QDoubleSpinBox;
+  row.chordLocation->setObjectName("fixedJoinerChordLocationPercent");
+  row.chordLocation->setRange(0.0, 90.0);
+  row.chordLocation->setDecimals(2); row.chordLocation->setSingleStep(1.0);
   row.chordLocation->setSuffix("%"); row.chordLocation->setValue(data.chordLocationPercent);
   layout->addWidget(detailRow({{"Chord Location", row.chordLocation}}));
   row.wood = new QRadioButton{"Wood"}; row.carbonFiber = new QRadioButton{"CF"};
@@ -1981,14 +2192,16 @@ void WingPanelEditor::addFixedJoinerEditor(const FixedJoinerData& data) {
   types->button(std::clamp(data.carbonType, 0, 1))->setChecked(true);
   connect(row.wood, &QRadioButton::toggled, this,
       [this, chordLocation = row.chordLocation](const bool checked) {
-        if (checked && chordLocation->value() == 35) chordLocation->setValue(25);
+        if (checked && std::abs(chordLocation->value() - 35.0) < 1.0e-8)
+          chordLocation->setValue(25.0);
         updateJoinerEditorControls(); emitChanged();
       });
   for (auto* button : {row.carbonFiber, row.steelRod, row.tube, row.rod})
     connect(button, &QRadioButton::toggled, this, [this] {
       updateJoinerEditorControls(); emitChanged();
     });
-  connect(row.chordLocation, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+  connect(row.chordLocation, &QDoubleSpinBox::valueChanged,
+          this, &WingPanelEditor::emitChanged);
   joinerEditorsLayout_->addWidget(group);
   fixedJoinerEditors_.push_back(row);
   renumberJoinerEditors(); updateJoinerEditorControls();
@@ -2004,12 +2217,17 @@ void WingPanelEditor::addRemovableJoinerEditor(const int kind,
   auto* layout = new QVBoxLayout{group};
   row.deleteSelection = new QCheckBox;
   layout->addWidget(row.deleteSelection);
-  row.chordLocation = new QSpinBox;
-  row.chordLocation->setRange(0, 90); row.chordLocation->setSingleStep(1);
+  row.chordLocation = new QDoubleSpinBox;
+  row.chordLocation->setObjectName(kind == 1
+      ? "alignmentPinChordLocationPercent"
+      : "removableJoinerChordLocationPercent");
+  row.chordLocation->setRange(0.0, 90.0);
+  row.chordLocation->setDecimals(2); row.chordLocation->setSingleStep(1.0);
   row.chordLocation->setSuffix("%");
   row.chordLocation->setValue(newAlignmentPin ? 70 : data.chordLocationPercent);
   layout->addWidget(detailRow({{"Chord Location", row.chordLocation}}));
-  connect(row.chordLocation, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+  connect(row.chordLocation, &QDoubleSpinBox::valueChanged,
+          this, &WingPanelEditor::emitChanged);
   const auto addMaterial = [&](QWidget* parent, const QString& label,
                                const QStringList& choices, const int selected,
                                const QString& key, const double od,
@@ -2162,11 +2380,13 @@ void WingPanelEditor::renumberJoinerEditors() {
 }
 
 void WingPanelEditor::updateJoinerEditorControls() {
-  QHash<int, int> matchingWoodSpars;
+  QHash<qint64, int> matchingWoodSpars;
   for (const auto& spar : sparEditors_) {
     if (!spar.wood->isChecked()) continue;
-    if (spar.top->isChecked()) matchingWoodSpars[spar.chordLocation->value()] |= 1;
-    if (spar.bottom->isChecked()) matchingWoodSpars[spar.chordLocation->value()] |= 2;
+    const qint64 location =
+        qRound64(spar.rootChordLocation->value() * 100.0);
+    if (spar.top->isChecked()) matchingWoodSpars[location] |= 1;
+    if (spar.bottom->isChecked()) matchingWoodSpars[location] |= 2;
   }
   bool fixedWoodAvailable = false;
   for (auto it = matchingWoodSpars.constBegin(); it != matchingWoodSpars.constEnd(); ++it)
@@ -2235,7 +2455,8 @@ WingPanelData WingPanelEditor::data() const {
   d.ribletsPerBay = ribletsPerBay_->value();
   const auto sparData = [](const SparEditorWidgets& row) {
     SparDefaults spar;
-    spar.chordLocationPercent = row.chordLocation->value();
+    spar.chordLocationPercent = row.rootChordLocation->value();
+    spar.tipChordLocationPercent = row.tipChordLocation->value();
     spar.verticalLocation = row.top->isChecked() ? 0 : row.bottom->isChecked() ? 1 : 2;
     spar.material = row.wood->isChecked() ? 0 : 1;
     spar.type = row.tube->isChecked() ? 0 : row.rod->isChecked() ? 1 : 2;
@@ -2271,7 +2492,9 @@ WingPanelData WingPanelEditor::data() const {
   d.carbonSpar = cfTube_->isChecked() ? 1 : cfRod_->isChecked() ? 2 : 0;
   d.cfTubeOd = cfTubeOd_->valueMm(); d.cfTubeId = cfTubeId_->valueMm(); d.cfRodOd = cfRodOd_->valueMm();
   d.leTopSheet = leTopSheet_->isChecked(); d.leTopSheetThickness = leTopSheetThickness_->valueMm(); d.leTopSheetStopRib = leTopSheetStopRib_->value();
+  d.leTopSheetStopChordPercent = leTopSheetStopChordPercent_->value(); d.leTopSheetUpToSpar = leTopSheetUpToSpar_->isChecked();
   d.leBottomSheet = leBottomSheet_->isChecked(); d.leBottomSheetThickness = leBottomSheetThickness_->valueMm(); d.leBottomSheetStopRib = leBottomSheetStopRib_->value();
+  d.leBottomSheetStopChordPercent = leBottomSheetStopChordPercent_->value(); d.leBottomSheetUpToSpar = leBottomSheetUpToSpar_->isChecked();
   d.teTopSheet = teTopSheet_->isChecked(); d.teTopSheetThickness = teTopSheetThickness_->valueMm(); d.teTopSheetStopRib = teTopSheetStopRib_->value();
   d.teBottomSheet = teBottomSheet_->isChecked(); d.teBottomSheetThickness = teBottomSheetThickness_->valueMm(); d.teBottomSheetStopRib = teBottomSheetStopRib_->value();
   d.turbulators = turbulators_->isChecked(); d.turbulatorCount = turbulatorCount_->value();
@@ -2283,6 +2506,16 @@ WingPanelData WingPanelEditor::data() const {
   d.leadingEdgeTubeId = leTubeId_->valueMm(); d.leadingEdgeRodOd = leRodOd_->valueMm();
   d.trailingEdgeType = sheetTe_->isChecked() ? 2 : 0;
   d.trailingEdgeWidth = teWidth_->valueMm(); d.trailingEdgeHeight = teHeight_->valueMm(); d.slottedForRibs = slottedForRibs_->isChecked();
+  d.topTeSheeting = topTeSheeting_->isChecked();
+  d.topTeSheetingWidth = topTeWidth_->valueMm();
+  d.topTeSheetingThickness = topTeThickness_->valueMm();
+  d.topTeSheetingTaper = topTeTaper_->isChecked();
+  d.topTeSheetingTaperStartLocationPercent = topTeTaperStart_->value();
+  d.bottomTeSheeting = bottomTeSheeting_->isChecked();
+  d.bottomTeSheetingWidth = bottomTeWidth_->valueMm();
+  d.bottomTeSheetingThickness = bottomTeThickness_->valueMm();
+  d.bottomTeSheetingTaper = bottomTeTaper_->isChecked();
+  d.bottomTeSheetingTaperStartLocationPercent = bottomTeTaperStart_->value();
   d.ailerons = ailerons_->isChecked(); d.aileronWidth = aileronWidth_->valueMm(); d.aileronHeight = aileronHeight_->valueMm();
   d.aileronStartRib = aileronStart_->value(); d.aileronStopRib = aileronStop_->value();
   d.aileronHingePostWidth = aileronHingePostWidth_->valueMm(); d.aileronHingePostHeight = aileronHingePostHeight_->valueMm();
@@ -2294,6 +2527,8 @@ WingPanelData WingPanelEditor::data() const {
     d.spoilerStartRib = spoilerStartRib_->value();
     d.spoilerEndRib = spoilerEndRib_->value();
     d.spoilerChordLocationPercent = spoilerChordLocation_->value();
+    d.spoilerImmediatelyBehindSpar =
+        spoilerImmediatelyBehindSpar_->isChecked();
     d.spoilerWidth = spoilerWidth_->valueMm();
     d.spoilerThickness = spoilerThickness_->valueMm();
     d.spoilerFrameRailWidth = spoilerFrameRailWidth_->valueMm();
@@ -2416,7 +2651,9 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   shearWebs_->setChecked(d.shearWebs); SET_LENGTH(shearWebWidth_, shearWebWidth);
   cfTube_->setChecked(d.carbonSpar == 1); cfRod_->setChecked(d.carbonSpar == 2); SET_LENGTH(cfTubeOd_, cfTubeOd); SET_LENGTH(cfTubeId_, cfTubeId); SET_LENGTH(cfRodOd_, cfRodOd);
   leTopSheet_->setChecked(d.leTopSheet); SET_LENGTH(leTopSheetThickness_, leTopSheetThickness); leTopSheetStopRib_->setValue(d.leTopSheetStopRib);
+  leTopSheetStopChordPercent_->setValue(d.leTopSheetStopChordPercent); leTopSheetUpToSpar_->setChecked(d.leTopSheetUpToSpar);
   leBottomSheet_->setChecked(d.leBottomSheet); SET_LENGTH(leBottomSheetThickness_, leBottomSheetThickness); leBottomSheetStopRib_->setValue(d.leBottomSheetStopRib);
+  leBottomSheetStopChordPercent_->setValue(d.leBottomSheetStopChordPercent); leBottomSheetUpToSpar_->setChecked(d.leBottomSheetUpToSpar);
   teTopSheet_->setChecked(d.teTopSheet); SET_LENGTH(teTopSheetThickness_, teTopSheetThickness); teTopSheetStopRib_->setValue(d.teTopSheetStopRib);
   teBottomSheet_->setChecked(d.teBottomSheet); SET_LENGTH(teBottomSheetThickness_, teBottomSheetThickness); teBottomSheetStopRib_->setValue(d.teBottomSheetStopRib);
   turbulators_->setChecked(d.turbulators); turbulatorCount_->setValue(d.turbulatorCount); SET_LENGTH(turbulatorHeight_, turbulatorHeight); SET_LENGTH(turbulatorWidth_, turbulatorWidth);
@@ -2425,6 +2662,16 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   blockLe_->setChecked(d.leadingEdgeType == 1 || d.leadingEdgeType == 2); tubeLe_->setChecked(d.leadingEdgeType == 3); rodLe_->setChecked(d.leadingEdgeType == 4);
   SET_LENGTH(leWidth_, leadingEdgeWidth); SET_LENGTH(leHeight_, leadingEdgeHeight); SET_LENGTH(leTubeOd_, leadingEdgeTubeOd); SET_LENGTH(leTubeId_, leadingEdgeTubeId); SET_LENGTH(leRodOd_, leadingEdgeRodOd);
   sheetTe_->setChecked(d.trailingEdgeType == 1 || d.trailingEdgeType == 2); SET_LENGTH(teWidth_, trailingEdgeWidth); SET_LENGTH(teHeight_, trailingEdgeHeight); slottedForRibs_->setChecked(d.slottedForRibs);
+  topTeSheeting_->setChecked(d.topTeSheeting);
+  SET_LENGTH(topTeWidth_, topTeSheetingWidth);
+  SET_LENGTH(topTeThickness_, topTeSheetingThickness);
+  topTeTaper_->setChecked(d.topTeSheetingTaper);
+  topTeTaperStart_->setValue(d.topTeSheetingTaperStartLocationPercent);
+  bottomTeSheeting_->setChecked(d.bottomTeSheeting);
+  SET_LENGTH(bottomTeWidth_, bottomTeSheetingWidth);
+  SET_LENGTH(bottomTeThickness_, bottomTeSheetingThickness);
+  bottomTeTaper_->setChecked(d.bottomTeSheetingTaper);
+  bottomTeTaperStart_->setValue(d.bottomTeSheetingTaperStartLocationPercent);
   ailerons_->setChecked(d.ailerons); SET_LENGTH(aileronWidth_, aileronWidth); SET_LENGTH(aileronHeight_, aileronHeight); aileronStart_->setValue(d.aileronStartRib); aileronStop_->setValue(d.aileronStopRib); SET_LENGTH(aileronHingePostWidth_, aileronHingePostWidth); SET_LENGTH(aileronHingePostHeight_, aileronHingePostHeight);
   flaps_->setChecked(d.flaps); SET_LENGTH(flapWidth_, flapWidth); SET_LENGTH(flapHeight_, flapHeight); flapStart_->setValue(d.flapStartRib); flapStop_->setValue(d.flapStopRib); SET_LENGTH(flapHingePostWidth_, flapHingePostWidth); SET_LENGTH(flapHingePostHeight_, flapHingePostHeight);
   if (showRootChord_) {
@@ -2432,6 +2679,8 @@ void WingPanelEditor::setData(const WingPanelData& d) {
     spoilerStartRib_->setValue(d.spoilerStartRib);
     spoilerEndRib_->setValue(d.spoilerEndRib);
     spoilerChordLocation_->setValue(d.spoilerChordLocationPercent);
+    spoilerImmediatelyBehindSpar_->setChecked(
+        d.spoilerImmediatelyBehindSpar);
     SET_LENGTH(spoilerWidth_, spoilerWidth);
     SET_LENGTH(spoilerThickness_, spoilerThickness);
     SET_LENGTH(spoilerFrameRailWidth_, spoilerFrameRailWidth);
@@ -2510,6 +2759,18 @@ void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
   updateRibSpacing();
 }
 
+void WingPanelEditor::setLeadingEdgeHeightMm(const double height) {
+  if (!leHeight_) return;
+  leHeight_->setValueMm(height);
+  emitChanged();
+}
+
+void WingPanelEditor::setTrailingEdgeHeightMm(const double height) {
+  if (!teHeight_) return;
+  teHeight_->setValueMm(height);
+  emitChanged();
+}
+
 void WingPanelEditor::updateRibSpacing() {
   if (!ribSpacing_ || !span_ || !ribCount_) return;
   const double spacingMm = span_->valueMm() /
@@ -2528,6 +2789,29 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
+  const auto validateTeSheeting = [&error](const QString& name,
+      const QCheckBox* enabled, const LengthInput* width,
+      const LengthInput* thickness, const QCheckBox* taper,
+      const QDoubleSpinBox* taperStart) {
+    if (!enabled->isChecked()) return true;
+    if (width->valueMm() <= 0.0) {
+      error = name + " Width must be greater than zero.";
+      return false;
+    }
+    if (thickness->valueMm() <= 0.0) {
+      error = name + " Thickness must be greater than zero.";
+      return false;
+    }
+    (void)taper;
+    (void)taperStart;
+    return true;
+  };
+  if (!validateTeSheeting("Top TE Sheeting", topTeSheeting_, topTeWidth_,
+          topTeThickness_, topTeTaper_, topTeTaperStart_) ||
+      !validateTeSheeting("Bottom TE Sheeting", bottomTeSheeting_,
+          bottomTeWidth_, bottomTeThickness_, bottomTeTaper_,
+          bottomTeTaperStart_))
+    return false;
   if (ribLighteningHoles_->isChecked() &&
       ribLighteningStartRib_->value() > ribLighteningStopRib_->value()) {
     error = "Rib Lightening Hole Start Rib must not be after Stop Rib.";
@@ -2625,16 +2909,39 @@ void WingPanelEditor::updateConditionalControls() {
   shearWebs_->setVisible(bothSpars); shearDetails_->setVisible(bothSpars && shearWebs_->isChecked());
   cfTubeDetails_->setVisible(cfTube_->isChecked()); cfRodDetails_->setVisible(cfRod_->isChecked());
   leTopSheetDetails_->setVisible(leTopSheet_->isChecked()); leBottomSheetDetails_->setVisible(leBottomSheet_->isChecked());
+  leTopSheetStopChordPercent_->setEnabled(!leTopSheetUpToSpar_->isChecked());
+  leBottomSheetStopChordPercent_->setEnabled(!leBottomSheetUpToSpar_->isChecked());
   teTopSheetDetails_->setVisible(teTopSheet_->isChecked()); teBottomSheetDetails_->setVisible(teBottomSheet_->isChecked());
   turbulatorDetails_->setVisible(turbulators_->isChecked()); topRearDetails_->setVisible(topRearSpar_->isChecked()); bottomRearDetails_->setVisible(bottomRearSpar_->isChecked());
   stockLeDetails_->setVisible(blockLe_->isChecked()); tubeLeDetails_->setVisible(tubeLe_->isChecked()); rodLeDetails_->setVisible(rodLe_->isChecked());
   stockTeDetails_->setVisible(sheetTe_->isChecked()); slottedDetails_->setVisible(sheetTe_->isChecked());
+  topTeSheetingDetails_->setVisible(topTeSheeting_->isChecked());
+  bottomTeSheetingDetails_->setVisible(bottomTeSheeting_->isChecked());
+  const bool bothTeSheeting = topTeSheeting_->isChecked() &&
+      bottomTeSheeting_->isChecked();
+  if (bothTeSheeting) {
+    topTeTaper_->setChecked(true);
+    bottomTeTaper_->setChecked(true);
+  }
+  topTeTaper_->setEnabled(!bothTeSheeting);
+  bottomTeTaper_->setEnabled(!bothTeSheeting);
+  topTeTaperDetails_->setVisible(
+      topTeSheeting_->isChecked() && topTeTaper_->isChecked());
+  bottomTeTaperDetails_->setVisible(
+      bottomTeSheeting_->isChecked() && bottomTeTaper_->isChecked());
   aileronDetails_->setVisible(ailerons_->isChecked()); flapDetails_->setVisible(flaps_->isChecked());
   updateWiringHoleRibRanges();
   for (auto& wiring : wiringHoleWidgets_)
     wiring.details->setVisible(wiring.enabled->isChecked());
   if (showRootChord_) {
     spoilerDetails_->setVisible(spoilers_->isChecked());
+    const bool hasTopSpar = sparEditors_.empty()
+        ? topSpar_->isChecked() || topRearSpar_->isChecked()
+        : std::any_of(sparEditors_.begin(), sparEditors_.end(),
+              [](const SparEditorWidgets& row) {
+                return row.top->isChecked();
+              });
+    spoilerImmediatelyBehindSpar_->setVisible(hasTopSpar);
     spoilerMinimumWoodMarginDetails_->setVisible(
         spoilerLighteningHoles_->isChecked());
     spoilerMinimumCircleDistanceDetails_->setVisible(

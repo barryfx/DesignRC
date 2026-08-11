@@ -70,6 +70,8 @@ std::string panelGroup(const std::string& name) {
       lower.find("shear web") != std::string::npos ||
       lower.starts_with("sw"))
     return "Spars and Shear Webs";
+  if (lower == "top te sheeting" || lower == "bottom te sheeting")
+    return "Leading and Trailing Edges";
   if (lower.find("sheeting") != std::string::npos)
     return "Sheeting";
   if (lower.find("aileron") != std::string::npos ||
