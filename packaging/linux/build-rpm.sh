@@ -2,7 +2,10 @@
 set -eu
 
 project_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-build_dir="$project_root/build/fedora-release"
+version=$(sed -n 's/^project(DesignRC VERSION \([^ ]*\).*/\1/p' \
+  "$project_root/CMakeLists.txt")
+test -n "$version"
+build_dir="$project_root/build/fedora-release-current"
 package_stage=$(mktemp -d)
 trap 'rm -rf -- "$package_stage"' EXIT HUP INT TERM
 
@@ -17,10 +20,10 @@ cpack --config "$build_dir/CPackConfig.cmake" \
 
 tar --exclude=.git --exclude=build --exclude=dist --exclude=out \
   --exclude=tmp --exclude='$install' \
-  -czf "$package_stage/DesignRC-1.0-source.tar.gz" \
+  -czf "$package_stage/DesignRC-$version-source.tar.gz" \
   -C "$project_root" .
-(cd "$package_stage" && sha256sum *.rpm DesignRC-1.0-source.tar.gz \
-  > DesignRC-1.0-Linux-RPM-x64.sha256)
+(cd "$package_stage" && sha256sum *.rpm "DesignRC-$version-source.tar.gz" \
+  > "DesignRC-$version-Linux-RPM-x64.sha256")
 
 mkdir -p "$project_root/dist"
 cp "$package_stage"/*.rpm "$package_stage"/*.tar.gz \

@@ -55,7 +55,8 @@ private:
 };
 
 struct SparDefaults {
-  int chordLocationPercent{25};
+  // Internal/root value; older project files use chordLocationPercent.
+  double chordLocationPercent{25.0};
   int verticalLocation{2}; // 0 = top, 1 = bottom, 2 = mid
   int material{1}; // 0 = wood, 1 = CF
   int type{0}; // 0 = tube, 1 = rod, 2 = strip
@@ -67,10 +68,12 @@ struct SparDefaults {
   double stripWidth{6.0};
   double stripThickness{1.0};
   double shearWebThickness{3.0};
+  // A negative value migrates to the root value.
+  double tipChordLocationPercent{-1.0};
 };
 
 struct FixedJoinerData {
-  int chordLocationPercent{35};
+  double chordLocationPercent{35.0};
   int material{1}; // 0 wood, 1 CF, 2 steel rod
   double woodThickness{3.175};
   int carbonType{0}; // 0 tube, 1 rod
@@ -87,7 +90,7 @@ struct FixedJoinerData {
 
 struct RemovableJoinerData {
   int kind{0}; // 0 sleeve/rod joiner, 1 alignment pin
-  int chordLocationPercent{35};
+  double chordLocationPercent{35.0};
   int thisPanelPart{1}; // 0 sleeve, 1 rod
   int adjoiningPanelPart{0}; // 0 sleeve, 1 rod
   int thisRodMaterial{0}; // 0 CF, 1 steel
@@ -137,7 +140,9 @@ struct WingPanelData {
   bool shearWebs{false}; double shearWebWidth{3.0};
   int carbonSpar{0}; double cfTubeOd{6.0}; double cfTubeId{5.0}; double cfRodOd{6.0};
   bool leTopSheet{false}; double leTopSheetThickness{2.0}; int leTopSheetStopRib{2};
+  double leTopSheetStopChordPercent{30.0}; bool leTopSheetUpToSpar{true};
   bool leBottomSheet{false}; double leBottomSheetThickness{2.0}; int leBottomSheetStopRib{2};
+  double leBottomSheetStopChordPercent{30.0}; bool leBottomSheetUpToSpar{true};
   bool teTopSheet{false}; double teTopSheetThickness{2.0}; int teTopSheetStopRib{2};
   bool teBottomSheet{false}; double teBottomSheetThickness{2.0}; int teBottomSheetStopRib{2};
   bool turbulators{false}; int turbulatorCount{1}; double turbulatorHeight{2.0}; double turbulatorWidth{2.0};
@@ -151,6 +156,16 @@ struct WingPanelData {
   double leadingEdgeTubeOd{2.0}; double leadingEdgeTubeId{1.0}; double leadingEdgeRodOd{2.0};
   int trailingEdgeType{0}; double trailingEdgeWidth{20.0}; double trailingEdgeHeight{3.0};
   bool slottedForRibs{false};
+  bool topTeSheeting{false};
+  double topTeSheetingWidth{25.4};
+  double topTeSheetingThickness{1.5875};
+  bool topTeSheetingTaper{false};
+  double topTeSheetingTaperStartLocationPercent{50.0};
+  bool bottomTeSheeting{false};
+  double bottomTeSheetingWidth{25.4};
+  double bottomTeSheetingThickness{1.5875};
+  bool bottomTeSheetingTaper{false};
+  double bottomTeSheetingTaperStartLocationPercent{50.0};
 
   bool ailerons{false}; double aileronWidth{35.0}; double aileronHeight{10.0};
   int aileronStartRib{2}; int aileronStopRib{8};
@@ -161,7 +176,8 @@ struct WingPanelData {
 
   bool spoilers{false};
   int spoilerStartRib{3}; int spoilerEndRib{7};
-  int spoilerChordLocationPercent{30};
+  double spoilerChordLocationPercent{30.0};
+  bool spoilerImmediatelyBehindSpar{false};
   double spoilerWidth{25.4}; double spoilerThickness{3.0};
   double spoilerFrameRailWidth{6.0}; double spoilerSupportRailHeight{3.0};
   bool spoilerLighteningHoles{false};
@@ -170,7 +186,7 @@ struct WingPanelData {
 
   bool wiringHoles{false};
   int wiringHoleStartRib{2}; int wiringHoleEndRib{0};
-  int wiringHoleChordLocationPercent{50};
+  double wiringHoleChordLocationPercent{50.0};
   double wiringHoleWidth{9.525}; double wiringHoleHeight{6.35};
 
   bool addRib1a{false};
@@ -204,6 +220,8 @@ public:
   void setData(const WingPanelData& data);
   void setJoinerAddDefaults(const WingPanelData& defaults);
   void setGlobalUnit(DisplayUnit unit);
+  void setLeadingEdgeHeightMm(double height);
+  void setTrailingEdgeHeightMm(double height);
   [[nodiscard]] bool validate(QString& error);
 
 signals:
@@ -245,7 +263,7 @@ private:
   struct SparEditorWidgets {
     QWidget* container{};
     QCheckBox* deleteSelection{};
-    QSpinBox* chordLocation{};
+    QDoubleSpinBox *rootChordLocation{}, *tipChordLocation{};
     QRadioButton *top{}, *bottom{}, *mid{};
     QRadioButton *wood{}, *carbonFiber{};
     QRadioButton *tube{}, *rod{}, *strip{};
@@ -259,7 +277,7 @@ private:
   struct FixedJoinerWidgets {
     QWidget* container{};
     QCheckBox* deleteSelection{};
-    QSpinBox* chordLocation{};
+    QDoubleSpinBox* chordLocation{};
     QRadioButton *wood{}, *carbonFiber{}, *steelRod{}, *tube{}, *rod{};
     QWidget *woodDetails{}, *carbonDetails{}, *tubeDetails{}, *rodDetails{}, *steelDetails{};
     LengthInput *woodThickness{}, *tubeOd{}, *tubeId{}, *rodOd{}, *steelOd{};
@@ -268,7 +286,7 @@ private:
     QWidget* container{};
     QCheckBox* deleteSelection{};
     int kind{};
-    QSpinBox* chordLocation{};
+    QDoubleSpinBox* chordLocation{};
     QRadioButton *sleeve{}, *rod{}, *adjoiningSleeve{}, *adjoiningRod{};
     QRadioButton *alignmentSleevePin{}, *alignmentPinHole{};
     QRadioButton *pinHolePin{}, *pinHoleHole{};
@@ -309,7 +327,8 @@ private:
   QSpinBox *ribletStartRib_{}, *ribletEndRib_{}, *ribletsPerBay_{};
 
   QCheckBox *topSpar_{}, *bottomSpar_{}, *shearWebs_{}, *leTopSheet_{}, *leBottomSheet_{},
-      *teTopSheet_{}, *teBottomSheet_{}, *turbulators_{}, *topRearSpar_{}, *bottomRearSpar_{};
+      *leTopSheetUpToSpar_{}, *leBottomSheetUpToSpar_{}, *teTopSheet_{},
+      *teBottomSheet_{}, *turbulators_{}, *topRearSpar_{}, *bottomRearSpar_{};
   QWidget *topSparDetails_{}, *bottomSparDetails_{}, *shearDetails_{}, *cfTubeDetails_{}, *cfRodDetails_{},
       *leTopSheetDetails_{}, *leBottomSheetDetails_{}, *teTopSheetDetails_{}, *teBottomSheetDetails_{},
       *turbulatorDetails_{}, *topRearDetails_{}, *bottomRearDetails_{};
@@ -321,6 +340,7 @@ private:
       *bottomRearHeight_{}, *bottomRearWidth_{};
   QSpinBox *leTopSheetStopRib_{}, *leBottomSheetStopRib_{}, *teTopSheetStopRib_{},
       *teBottomSheetStopRib_{}, *turbulatorCount_{};
+  QDoubleSpinBox *leTopSheetStopChordPercent_{}, *leBottomSheetStopChordPercent_{};
 
   QVBoxLayout* sparEditorsLayout_{};
   std::vector<SparEditorWidgets> sparEditors_;
@@ -330,9 +350,15 @@ private:
   int nextSparEditorId_{1};
 
   QRadioButton *blockLe_{}, *tubeLe_{}, *rodLe_{}, *sheetTe_{};
-  QWidget *stockLeDetails_{}, *tubeLeDetails_{}, *rodLeDetails_{}, *stockTeDetails_{}, *slottedDetails_{};
+  QWidget *stockLeDetails_{}, *tubeLeDetails_{}, *rodLeDetails_{}, *stockTeDetails_{}, *slottedDetails_{},
+      *topTeSheetingDetails_{}, *bottomTeSheetingDetails_{},
+      *topTeTaperDetails_{}, *bottomTeTaperDetails_{};
   LengthInput *leWidth_{}, *leHeight_{}, *leTubeOd_{}, *leTubeId_{}, *leRodOd_{}, *teWidth_{}, *teHeight_{};
-  QCheckBox* slottedForRibs_{};
+  QCheckBox *slottedForRibs_{}, *topTeSheeting_{}, *bottomTeSheeting_{},
+      *topTeTaper_{}, *bottomTeTaper_{};
+  QDoubleSpinBox *topTeTaperStart_{}, *bottomTeTaperStart_{};
+  LengthInput *topTeWidth_{}, *bottomTeWidth_{},
+      *topTeThickness_{}, *bottomTeThickness_{};
 
   QCheckBox *ailerons_{}, *flaps_{};
   QWidget *aileronDetails_{}, *flapDetails_{};
@@ -343,11 +369,12 @@ private:
   QSpinBox *aileronStart_{}, *aileronStop_{}, *flapStart_{}, *flapStop_{};
 
   QCheckBox* spoilers_{};
-  QCheckBox* spoilerLighteningHoles_{};
+  QCheckBox *spoilerImmediatelyBehindSpar_{}, *spoilerLighteningHoles_{};
   QWidget* spoilerDetails_{};
   QWidget* spoilerMinimumWoodMarginDetails_{};
   QWidget* spoilerMinimumCircleDistanceDetails_{};
-  QSpinBox *spoilerStartRib_{}, *spoilerEndRib_{}, *spoilerChordLocation_{};
+  QSpinBox *spoilerStartRib_{}, *spoilerEndRib_{};
+  QDoubleSpinBox* spoilerChordLocation_{};
   LengthInput *spoilerWidth_{}, *spoilerThickness_{}, *spoilerFrameRailWidth_{},
       *spoilerMinimumWoodMargin_{}, *spoilerMinimumCircleDistance_{};
   QLabel* spoilerSupportRailHeight_{};
@@ -355,7 +382,8 @@ private:
   struct WiringHoleWidgets {
     QCheckBox* enabled{};
     QWidget* details{};
-    QSpinBox *startRib{}, *endRib{}, *chordLocation{};
+    QSpinBox *startRib{}, *endRib{};
+    QDoubleSpinBox* chordLocation{};
     LengthInput *width{}, *height{};
   };
   std::vector<WiringHoleWidgets> wiringHoleWidgets_;

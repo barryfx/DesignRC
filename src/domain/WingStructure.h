@@ -29,7 +29,9 @@ private:
 enum class SpanMemberKind { Rectangular, Tube, Rod, Turbulator };
 
 struct SparParameters {
-  int chordLocationPercent{25};
+  // Retained as the internal/root value so aggregate initializers and older
+  // project data remain source-compatible.
+  double chordLocationPercent{25.0};
   int verticalLocation{2}; // 0 top, 1 bottom, 2 mid
   int material{1}; // 0 wood, 1 carbon fiber
   int type{0}; // 0 tube, 1 rod, 2 strip
@@ -40,6 +42,8 @@ struct SparParameters {
   double rodOd{6.0};
   double stripWidth{6.0};
   double stripThickness{1.0};
+  // A negative value means "same as root" for migrated/legacy data.
+  double tipChordLocationPercent{-1.0};
 };
 
 struct Point3 {
@@ -73,9 +77,13 @@ struct StructureParameters {
   bool leTopSheet{false};
   double leTopSheetThickness{2.0};
   int leTopSheetStopRib{2};
+  double leTopSheetStopChordPercent{30.0};
+  bool leTopSheetUpToSpar{true};
   bool leBottomSheet{false};
   double leBottomSheetThickness{2.0};
   int leBottomSheetStopRib{2};
+  double leBottomSheetStopChordPercent{30.0};
+  bool leBottomSheetUpToSpar{true};
   bool teTopSheet{false};
   double teTopSheetThickness{2.0};
   int teTopSheetStopRib{2};
@@ -103,6 +111,16 @@ struct StructureParameters {
   double trailingEdgeHeight{3.0};
   bool trailingEdgeSlotted{false};
   double trailingEdgeSlotDepth{6.0};
+  bool topTeSheeting{false};
+  double topTeSheetingWidth{25.4};
+  double topTeSheetingThickness{1.5875};
+  bool topTeSheetingTaper{false};
+  double topTeSheetingTaperStartLocationPercent{50.0};
+  bool bottomTeSheeting{false};
+  double bottomTeSheetingWidth{25.4};
+  double bottomTeSheetingThickness{1.5875};
+  bool bottomTeSheetingTaper{false};
+  double bottomTeSheetingTaperStartLocationPercent{50.0};
   bool ailerons{false};
   double aileronWidth{35.0};
   double aileronHeight{10.0};
@@ -121,7 +139,8 @@ struct StructureParameters {
   bool spoilers{false};
   int spoilerStartRib{3};
   int spoilerEndRib{7};
-  int spoilerChordLocationPercent{30};
+  double spoilerChordLocationPercent{30.0};
+  bool spoilerImmediatelyBehindSpar{false};
   double spoilerWidth{25.4};
   double spoilerThickness{3.0};
   double spoilerFrameRailWidth{6.0};
@@ -141,7 +160,7 @@ struct StructureParameters {
   bool wiringHoles{false};
   int wiringHoleStartRib{2};
   int wiringHoleEndRib{9};
-  int wiringHoleChordLocationPercent{50};
+  double wiringHoleChordLocationPercent{50.0};
   double wiringHoleWidth{9.525};
   double wiringHoleHeight{6.35};
   bool rib1aPresent{false};

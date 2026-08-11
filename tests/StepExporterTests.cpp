@@ -56,6 +56,9 @@ int main() {
       {"Right Panel 1 - Spar 1", BRepPrimAPI_MakeBox{
            gp_Pnt{20.0, 5.0, 0.0}, 5.0, 2.0, 2.0}.Shape(),
        PartMaterial::CarbonFiber, false},
+      {"Right Panel 1 - Top TE sheeting", BRepPrimAPI_MakeBox{
+           gp_Pnt{25.0, 5.0, 0.0}, 8.0, 2.0, 1.0}.Shape(),
+       PartMaterial::Wood, false},
       {"Left Panel 1 - R1", BRepPrimAPI_MakeBox{
            gp_Pnt{0.0, -2.0, 0.0}, 10.0, 2.0, 3.0}.Shape(),
        PartMaterial::Wood, false},
@@ -107,8 +110,12 @@ int main() {
   const auto rightPanel = findChild(rightWing, "Panel 1");
   const auto rightRibs = findChild(rightPanel, "Ribs");
   const auto rightSpars = findChild(rightPanel, "Spars and Shear Webs");
+  const auto rightEdges = findChild(
+      rightPanel, "Leading and Trailing Edges");
   assert(labelName(findChild(rightRibs, "R1")) == "R1");
   assert(labelName(findChild(rightSpars, "Spar 1")) == "Spar 1");
+  assert(labelName(findChild(rightEdges, "Top TE sheeting")) ==
+      "Top TE sheeting");
   NCollection_Sequence<TDF_Label> sparComponents;
   assert(XCAFDoc_ShapeTool::GetComponents(
       rightSpars, sparComponents, false));

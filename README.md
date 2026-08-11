@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-current release is **1.0**.
+current release is **1.1.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -27,18 +27,35 @@ current release is **1.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
+## What's new in 1.1.0
+
+- Spars now have independent root and tip chord locations, producing a straight extrusion between
+  those two points while retaining spar, sheeting, spoiler, and joiner collision checks.
+- Front top and bottom sheeting can stop at a specified chord location or extend up to a spar.
+  Covered spars are recessed so the sheeting follows the airfoil surface. Existing aft sheets are
+  identified as Rear Top and Rear Bottom Sheeting.
+- Independent Top and Bottom TE Sheeting uses a constant panel width, configurable thickness, and
+  optional taper start.
+- Spoilers can be placed immediately behind the top spar. Collision reporting now identifies the
+  actual spoiler part and conflicting spar or trailing-edge component.
+- Fixed and removable joiners have improved dihedral alignment, balanced rib openings, and
+  wood-to-wood and removable-joiner collision detection. Sleeve/rod joiner rods extend through the
+  adjoining sleeve as they do in the assembled wing.
+- Percent controls accept manually entered values to two decimal places while their arrows retain
+  one-percent increments. LE/TE stock height errors restore the minimum valid cut-face height.
+
 ## Download
 
-Release 1.0 provides three installers on the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.0):
+Release 1.1.0 provides three installers on the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.1.0):
 
-- `DesignRC-1.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.1.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.1.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.0_amd64.deb
+  sudo apt install ./designrc_1.1.0_amd64.deb
   designrc
   ```
 
@@ -51,15 +68,15 @@ Release 1.0 provides three installers on the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.1.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.1.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.0-SHA256SUMS.txt`. Use the checksum file
+The release also includes source archives and `DesignRC-1.1.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -159,7 +176,9 @@ The suite contains:
 
 - `designrc_domain_tests` - airfoil, structure, naming, DXF, and SVG behavior;
 - `designrc_gui_tests` - defaults, parameter controls, plans, and PDF generation; and
-- `designrc_geometry_tests` - OpenCascade solid construction and boolean operations.
+- `designrc_geometry_tests` - OpenCascade solid construction and boolean operations;
+- `designrc_step_export_tests` - STEP assembly structure and component grouping; and
+- `designrc_joiner_backend_tests` - joiner placement and backend geometry behavior.
 
 The geometry suite is substantially slower than the domain and GUI suites. To run one suite only:
 
@@ -298,15 +317,15 @@ when the source tree is hosted on a WSL `/mnt/c` mount. It writes the Ubuntu 24.
 corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.0_amd64.deb
-dist/DesignRC-1.0-source.tar.gz
-dist/DesignRC-1.0-Linux-x64.sha256
+dist/designrc_1.1.0_amd64.deb
+dist/DesignRC-1.1.0-source.tar.gz
+dist/DesignRC-1.1.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.0_amd64.deb
+sudo apt install ./dist/designrc_1.1.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -354,15 +373,15 @@ sh packaging/linux/build-rpm.sh
 The script writes the x86-64 RPM, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc-1.0-1.x86_64.rpm
-dist/DesignRC-1.0-source.tar.gz
-dist/DesignRC-1.0-Linux-RPM-x64.sha256
+dist/designrc-1.1.0-1.x86_64.rpm
+dist/DesignRC-1.1.0-source.tar.gz
+dist/DesignRC-1.1.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.1.0-1.x86_64.rpm
 designrc
 ```
 

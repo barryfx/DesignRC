@@ -1,3 +1,11 @@
+designrc (1.1.0) noble; urgency=medium
+
+  * DesignRC 1.1.0 release.
+  * Add tapered spar positioning, expanded sheeting controls, and improved
+    spoiler, joiner, and manufacturing geometry.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Tue, 11 Aug 2026 15:30:00 -0400
+
 designrc (1.0) noble; urgency=medium
 
   * DesignRC 1.0 release.

@@ -189,6 +189,19 @@ int main() {
          std::min<std::size_t>(100, expectedMaximumWorkers));
   assert(designrc::domain::ribLighteningHoleWorkerCount(100, 2) ==
          std::min<std::size_t>(2, expectedMaximumWorkers));
+  designrc::domain::StructureParameters endpointSparParameters;
+  endpointSparParameters.spars = {
+      {20, 2, 1, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0, 60}};
+  const auto endpointSparWing = designrc::domain::applyWingStructure(
+      constantRibs, endpointSparParameters);
+  const auto& endpointCenters = endpointSparWing.members.front().centers;
+  assert(std::abs(endpointCenters.front().x - 40.0) < 1.0e-8);
+  assert(std::abs(endpointCenters.back().x - 120.0) < 1.0e-8);
+  for (std::size_t i = 0; i < endpointCenters.size(); ++i) {
+    const double along = static_cast<double>(i) /
+        static_cast<double>(endpointCenters.size() - 1);
+    assert(std::abs(endpointCenters[i].x - (40.0 + 80.0 * along)) < 1.0e-8);
+  }
   designrc::domain::StructureParameters multiSparParameters;
   multiSparParameters.spars = {
       {30, 0, 0, 0, 4.0, 8.0, 6.0, 5.0, 6.0, 6.0, 1.0},
@@ -270,6 +283,22 @@ int main() {
   };
   checkNoSheetingSpike(true);
   checkNoSheetingSpike(false);
+
+  auto solidLeSheetingParameters = sheetedSparParameters;
+  solidLeSheetingParameters.leadingEdgeType = 2;
+  solidLeSheetingParameters.leadingEdgeWidth = 4.7625;
+  solidLeSheetingParameters.leadingEdgeHeight = 30.0;
+  const auto solidLeSheeted = designrc::domain::applyWingStructure(
+      ribs, solidLeSheetingParameters);
+  const auto& solidLeOutline = solidLeSheeted.ribs.front().outerOutline;
+  const auto solidLeFacePointCount = std::count_if(
+      solidLeOutline.begin(), solidLeOutline.end(), [&](const auto& point) {
+        return std::abs(point.x - solidLeSheetingParameters.leadingEdgeWidth) <
+            1.0e-8;
+      });
+  // Only the recessed top and bottom endpoints should remain at the LE face.
+  // Extra unrecessed endpoints become visible slivers when the rib is extruded.
+  assert(solidLeFacePointCount == 2);
 
   designrc::domain::WingParameters thinSparParameters;
   thinSparParameters.halfSpan = 200.0;
@@ -407,14 +436,212 @@ int main() {
   };
   const double topCenter = 0.35 * ribs.front().chord;
   const double bottomCenter = 0.40 * ribs.front().chord;
-  assert(std::abs(sheetBounds("LE top sheeting").second -
+  assert(std::abs(sheetBounds("Front top sheeting").second -
                   (topCenter - 4.0)) < 1.0e-8);
-  assert(std::abs(sheetBounds("TE top sheeting").first -
+  assert(std::abs(sheetBounds("Rear top sheeting").first -
                   (topCenter + 4.0)) < 1.0e-8);
-  assert(std::abs(sheetBounds("LE bottom sheeting").second -
+  assert(std::abs(sheetBounds("Front bottom sheeting").second -
                   (bottomCenter - 5.0)) < 1.0e-8);
-  assert(std::abs(sheetBounds("TE bottom sheeting").first -
+  assert(std::abs(sheetBounds("Rear bottom sheeting").first -
                   (bottomCenter + 5.0)) < 1.0e-8);
+
+  auto manualFrontSheetingParameters = newSparSheetingParameters;
+  manualFrontSheetingParameters.leTopSheetUpToSpar = false;
+  manualFrontSheetingParameters.leBottomSheetUpToSpar = false;
+  manualFrontSheetingParameters.leTopSheetStopChordPercent = 35.0;
+  manualFrontSheetingParameters.leBottomSheetStopChordPercent = 40.0;
+  const auto manualFrontSheeted = designrc::domain::applyWingStructure(
+      ribs, manualFrontSheetingParameters);
+  const auto manualBounds = [&](const std::string& name) {
+    const auto sheet = std::find_if(manualFrontSheeted.sheeting.begin(),
+        manualFrontSheeted.sheeting.end(), [&](const auto& part) {
+          return part.name == name;
+        });
+    assert(sheet != manualFrontSheeted.sheeting.end());
+    return xBounds(sheet->profiles.front());
+  };
+  assert(std::abs(manualBounds("Front top sheeting").second -
+                  (topCenter + 4.0)) < 1.0e-8);
+  assert(std::abs(manualBounds("Front bottom sheeting").second -
+                  (bottomCenter + 5.0)) < 1.0e-8);
+  assert(std::abs(manualFrontSheeted.members[0].centers.front().y -
+                  (newSparSheeted.members[0].centers.front().y -
+                   manualFrontSheetingParameters.leTopSheetThickness)) < 1.0e-8);
+  assert(std::abs(manualFrontSheeted.members[1].centers.front().y -
+                  (newSparSheeted.members[1].centers.front().y +
+                   manualFrontSheetingParameters.leBottomSheetThickness)) < 1.0e-8);
+
+  manualFrontSheetingParameters.leTopSheetStopChordPercent = 50.0;
+  const auto buttedFrontAndRear = designrc::domain::applyWingStructure(
+      ribs, manualFrontSheetingParameters);
+  const auto buttedRear = std::find_if(buttedFrontAndRear.sheeting.begin(),
+      buttedFrontAndRear.sheeting.end(), [](const auto& part) {
+        return part.name == "Rear top sheeting";
+      });
+  assert(buttedRear != buttedFrontAndRear.sheeting.end());
+  assert(std::abs(xBounds(buttedRear->profiles.front()).first -
+                  0.50 * ribs.front().chord) < 1.0e-8);
+
+  designrc::domain::StructureParameters teSheetingParameters;
+  teSheetingParameters.carbonSpar = 1;
+  teSheetingParameters.teTopSheet = true;
+  teSheetingParameters.teTopSheetThickness = 1.0;
+  teSheetingParameters.teTopSheetStopRib = 3;
+  teSheetingParameters.topTeSheeting = true;
+  teSheetingParameters.topTeSheetingWidth = 30.0;
+  teSheetingParameters.topTeSheetingThickness = 1.5875;
+  teSheetingParameters.topTeSheetingTaper = true;
+  teSheetingParameters.topTeSheetingTaperStartLocationPercent = 50.0;
+  const auto teSheeted = designrc::domain::applyWingStructure(
+      ribs, teSheetingParameters);
+  const auto topTeSheet = std::find_if(teSheeted.sheeting.begin(),
+      teSheeted.sheeting.end(), [](const auto& part) {
+        return part.name == "Top TE sheeting";
+      });
+  const auto rearTopSheet = std::find_if(teSheeted.sheeting.begin(),
+      teSheeted.sheeting.end(), [](const auto& part) {
+        return part.name == "Rear top sheeting";
+      });
+  assert(topTeSheet != teSheeted.sheeting.end());
+  assert(rearTopSheet != teSheeted.sheeting.end());
+  const auto& topTeProfile = topTeSheet->profiles.front();
+  assert(topTeProfile.size() == 96);
+  assert(std::abs(xBounds(topTeProfile).first -
+                  (ribs.front().chord - 30.0)) < 1.0e-8);
+  assert(std::abs(xBounds(rearTopSheet->profiles.front()).second -
+                  (ribs.front().chord - 30.0)) < 1.0e-8);
+  assert(std::abs((topTeProfile.front().y - topTeProfile.back().y) -
+                  1.5875) < 1.0e-8);
+  assert(std::abs(xBounds(topTeSheet->profiles.back()).first -
+                  (ribs.back().chord - 30.0)) < 1.0e-8);
+  assert(std::hypot(topTeProfile[47].x - topTeProfile[48].x,
+                    topTeProfile[47].y - topTeProfile[48].y) < 1.0e-8);
+
+  const auto hasSkinnyTrailingRibSliver = [](
+      const designrc::domain::StructuredWing& wing,
+      const double width, const double minimumRetainedDepth) {
+    for (const auto& structuredRib : wing.ribs) {
+      const double startX = structuredRib.rib.chord - width;
+      const auto& outline = structuredRib.outerOutline;
+      for (const auto point : outline) {
+        if (point.x <= startX + 1.0e-6) continue;
+        double minimumY = std::numeric_limits<double>::max();
+        double maximumY = std::numeric_limits<double>::lowest();
+        std::size_t matches = 0;
+        for (const auto candidate : outline) {
+          if (std::abs(candidate.x - point.x) > 1.0e-8) continue;
+          minimumY = std::min(minimumY, candidate.y);
+          maximumY = std::max(maximumY, candidate.y);
+          ++matches;
+        }
+        const double depth = maximumY - minimumY;
+        if (matches >= 2 && depth > 1.0e-6 &&
+            depth < minimumRetainedDepth - 1.0e-6)
+          return true;
+      }
+    }
+    return false;
+  };
+  const auto ribsTerminateBeforeTrailingEdge = [](
+      const designrc::domain::StructuredWing& wing) {
+    return std::all_of(wing.ribs.begin(), wing.ribs.end(),
+        [](const auto& structuredRib) {
+          const double maximumX = std::max_element(
+              structuredRib.outerOutline.begin(),
+              structuredRib.outerOutline.end(),
+              [](const auto first, const auto second) {
+                return first.x < second.x;
+              })->x;
+          return maximumX < structuredRib.rib.chord - 1.0e-5;
+        });
+  };
+  auto untaperedTopOnlyParameters = teSheetingParameters;
+  untaperedTopOnlyParameters.teTopSheet = false;
+  untaperedTopOnlyParameters.topTeSheetingTaper = false;
+  const auto untaperedTopOnly = designrc::domain::applyWingStructure(
+      ribs, untaperedTopOnlyParameters);
+  assert(!hasSkinnyTrailingRibSliver(
+      untaperedTopOnly, untaperedTopOnlyParameters.topTeSheetingWidth,
+      0.25));
+  assert(ribsTerminateBeforeTrailingEdge(untaperedTopOnly));
+  auto untaperedBottomOnlyParameters = untaperedTopOnlyParameters;
+  untaperedBottomOnlyParameters.topTeSheeting = false;
+  untaperedBottomOnlyParameters.bottomTeSheeting = true;
+  untaperedBottomOnlyParameters.bottomTeSheetingWidth = 30.0;
+  untaperedBottomOnlyParameters.bottomTeSheetingThickness = 1.5875;
+  untaperedBottomOnlyParameters.bottomTeSheetingTaper = false;
+  const auto untaperedBottomOnly = designrc::domain::applyWingStructure(
+      ribs, untaperedBottomOnlyParameters);
+  assert(!hasSkinnyTrailingRibSliver(
+      untaperedBottomOnly, untaperedBottomOnlyParameters.bottomTeSheetingWidth,
+      0.25));
+  assert(ribsTerminateBeforeTrailingEdge(untaperedBottomOnly));
+  designrc::domain::WingParameters savedTeSheetingPanel;
+  savedTeSheetingPanel.halfSpan = 698.5;
+  savedTeSheetingPanel.rootChord = 254.0;
+  savedTeSheetingPanel.tipChord = 152.4;
+  savedTeSheetingPanel.ribCount = 11;
+  const auto savedTeSheetingRibs = designrc::domain::generateRibs(
+      savedTeSheetingPanel, AirfoilProfile::nacaSymmetric(0.15),
+      AirfoilProfile::nacaSymmetric(0.10));
+  auto savedTopOnlyParameters = untaperedTopOnlyParameters;
+  savedTopOnlyParameters.topTeSheetingWidth = 25.4;
+  savedTopOnlyParameters.teTopSheet = true;
+  savedTopOnlyParameters.teBottomSheet = true;
+  savedTopOnlyParameters.teTopSheetThickness = 1.5875;
+  savedTopOnlyParameters.teBottomSheetThickness = 1.5875;
+  savedTopOnlyParameters.teTopSheetStopRib = 2;
+  savedTopOnlyParameters.teBottomSheetStopRib = 2;
+  const auto savedTopOnly = designrc::domain::applyWingStructure(
+      savedTeSheetingRibs, savedTopOnlyParameters);
+  assert(!hasSkinnyTrailingRibSliver(
+      savedTopOnly, savedTopOnlyParameters.topTeSheetingWidth,
+      0.25));
+  assert(ribsTerminateBeforeTrailingEdge(savedTopOnly));
+  auto savedBottomOnlyParameters = savedTopOnlyParameters;
+  savedBottomOnlyParameters.topTeSheeting = false;
+  savedBottomOnlyParameters.bottomTeSheeting = true;
+  const auto savedBottomOnly = designrc::domain::applyWingStructure(
+      savedTeSheetingRibs, savedBottomOnlyParameters);
+  assert(!hasSkinnyTrailingRibSliver(
+      savedBottomOnly, savedBottomOnlyParameters.bottomTeSheetingWidth,
+      0.25));
+  assert(ribsTerminateBeforeTrailingEdge(savedBottomOnly));
+
+  auto bothTeSheetingParameters = teSheetingParameters;
+  bothTeSheetingParameters.teTopSheet = false;
+  bothTeSheetingParameters.topTeSheetingTaper = false;
+  bothTeSheetingParameters.bottomTeSheeting = true;
+  bothTeSheetingParameters.bottomTeSheetingWidth = 28.0;
+  bothTeSheetingParameters.bottomTeSheetingThickness = 1.5875;
+  bothTeSheetingParameters.bottomTeSheetingTaper = false;
+  bothTeSheetingParameters.bottomTeSheetingTaperStartLocationPercent = 50.0;
+  const auto bothTeSheeted = designrc::domain::applyWingStructure(
+      ribs, bothTeSheetingParameters);
+  assert(!hasSkinnyTrailingRibSliver(
+      bothTeSheeted, std::max(
+          bothTeSheetingParameters.topTeSheetingWidth,
+          bothTeSheetingParameters.bottomTeSheetingWidth), 0.25));
+  assert(ribsTerminateBeforeTrailingEdge(bothTeSheeted));
+  for (const auto& name : {"Top TE sheeting", "Bottom TE sheeting"}) {
+    const auto sheet = std::find_if(bothTeSheeted.sheeting.begin(),
+        bothTeSheeted.sheeting.end(), [&](const auto& part) {
+          return part.name == name;
+        });
+    assert(sheet != bothTeSheeted.sheeting.end());
+    const auto& profile = sheet->profiles.front();
+    assert(std::hypot(profile[47].x - profile[48].x,
+                      profile[47].y - profile[48].y) < 1.0e-8);
+  }
+  auto conflictingTeStock = teSheetingParameters;
+  conflictingTeStock.trailingEdgeType = 2;
+  bool rejectedConflictingTeStock = false;
+  try {
+    (void)designrc::domain::applyWingStructure(ribs, conflictingTeStock);
+  } catch (const std::invalid_argument&) {
+    rejectedConflictingTeStock = true;
+  }
+  assert(rejectedConflictingTeStock);
   for (std::size_t i = 0; i < 2; ++i) {
     const auto left = xBounds(turbulatorSheeted.sheeting[i].profiles.front());
     const auto right = xBounds(turbulatorSheeted.sheeting[i + 1].profiles.front());
@@ -506,28 +733,36 @@ int main() {
   insufficientLeHeight.leadingEdgeWidth = 1.0;
   insufficientLeHeight.leadingEdgeHeight = 0.01;
   bool rejectedInsufficientLeHeight = false;
+  double reportedLeCutHeight = 0.0;
   try {
     static_cast<void>(designrc::domain::applyWingStructure(
         constantRibs, insufficientLeHeight));
-  } catch (const std::invalid_argument& error) {
+  } catch (const designrc::domain::EdgeHeightError& error) {
     rejectedInsufficientLeHeight = std::string{error.what()}.find(
         "not smaller than the specified LE Height") != std::string::npos;
+    assert(error.edgeName() == "LE");
+    reportedLeCutHeight = error.cutHeightMm();
   }
   assert(rejectedInsufficientLeHeight);
+  assert(reportedLeCutHeight > insufficientLeHeight.leadingEdgeHeight);
 
   designrc::domain::StructureParameters insufficientTeHeight;
   insufficientTeHeight.trailingEdgeType = 2;
   insufficientTeHeight.trailingEdgeWidth = 1.0;
   insufficientTeHeight.trailingEdgeHeight = 0.01;
   bool rejectedInsufficientTeHeight = false;
+  double reportedTeCutHeight = 0.0;
   try {
     static_cast<void>(designrc::domain::applyWingStructure(
         constantRibs, insufficientTeHeight));
-  } catch (const std::invalid_argument& error) {
+  } catch (const designrc::domain::EdgeHeightError& error) {
     rejectedInsufficientTeHeight = std::string{error.what()}.find(
         "not smaller than the specified TE Height") != std::string::npos;
+    assert(error.edgeName() == "TE");
+    reportedTeCutHeight = error.cutHeightMm();
   }
   assert(rejectedInsufficientTeHeight);
+  assert(reportedTeCutHeight > insufficientTeHeight.trailingEdgeHeight);
 
   designrc::domain::StructureParameters leadingTubeParameters;
   leadingTubeParameters.leadingEdgeType = 3;
@@ -795,6 +1030,34 @@ int main() {
   structuredSvg.close();
   std::filesystem::remove(structuredSvgPath);
 
+  auto unevenSplineRib = carbonStructured.ribs.front();
+  unevenSplineRib.partOutline = {
+      {0.0, 0.0}, {100.0, 0.0}, {100.001, 0.001},
+      {100.002, 1.0}, {0.0, 1.0}};
+  unevenSplineRib.partOutlineSegments = {
+      {{{0.0, 0.0}, {100.0, 0.0}, {100.001, 0.001},
+        {100.002, 1.0}}, true},
+      {{{100.002, 1.0}, {0.0, 1.0}, {0.0, 0.0}}, false}};
+  unevenSplineRib.holes.clear();
+  unevenSplineRib.booleanCutouts.clear();
+  unevenSplineRib.booleanHoles.clear();
+  unevenSplineRib.positiveHalfBooleanHoles.clear();
+  unevenSplineRib.internalCutouts.clear();
+  unevenSplineRib.ribSplitCutouts.clear();
+  const auto unevenSplineSvgPath =
+      svgDirectory / "designrc_uneven_spline_rib.svg";
+  designrc::domain::exportStructuredRibSvg(
+      unevenSplineRib, unevenSplineSvgPath, "Uneven spline rib");
+  std::ifstream unevenSplineSvg{unevenSplineSvgPath};
+  const std::string unevenSplineSvgContents{
+      std::istreambuf_iterator<char>{unevenSplineSvg}, {}};
+  // The old equal-spacing conversion placed this short segment's control
+  // point at x=118.666833, producing the reported near-circular loop.
+  assert(unevenSplineSvgContents.find("118.666833") == std::string::npos);
+  assert(unevenSplineSvgContents.find("<path") != std::string::npos);
+  unevenSplineSvg.close();
+  std::filesystem::remove(unevenSplineSvgPath);
+
   const auto webSvgPath = svgDirectory / "designrc_shear_web.svg";
   designrc::domain::exportShearWebSvg(
       structured.shearWebs.front(), webSvgPath, "Shear web");
@@ -886,6 +1149,75 @@ int main() {
   assert(spoilerWing.spoilers.size() == 1);
   assert(spoilerWing.spoilers.front().spoilerProfiles.size() == 5);
   assert(spoilerWing.spoilers.front().supportProfiles.size() == 2);
+
+  auto legacyTopSparSpoilerParameters = spoilerParameters;
+  legacyTopSparSpoilerParameters.spoilerChordLocationPercent = 10;
+  legacyTopSparSpoilerParameters.topSpar = true;
+  legacyTopSparSpoilerParameters.topSparWidth = 10.0;
+  const auto legacyTopSparSpoiler = designrc::domain::applyWingStructure(
+      ribs, legacyTopSparSpoilerParameters);
+  for (std::size_t local = 0;
+       local < legacyTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
+       ++local) {
+    const std::size_t ribIndex =
+        legacyTopSparSpoiler.spoilers.front().startRibIndex + local;
+    const double expectedAftFace = 0.25 * ribs[ribIndex].chord + 5.01;
+    assert(std::abs(
+        legacyTopSparSpoiler.spoilers.front().forwardRailProfiles[local][0].x -
+        expectedAftFace) < 1.0e-8);
+  }
+
+  auto immediatelyBehindSparParameters = legacyTopSparSpoilerParameters;
+  immediatelyBehindSparParameters.spoilerChordLocationPercent = 70;
+  immediatelyBehindSparParameters.spoilerImmediatelyBehindSpar = true;
+  const auto immediatelyBehindSpar = designrc::domain::applyWingStructure(
+      ribs, immediatelyBehindSparParameters);
+  for (std::size_t local = 0;
+       local < immediatelyBehindSpar.spoilers.front().forwardRailProfiles.size();
+       ++local) {
+    const std::size_t ribIndex =
+        immediatelyBehindSpar.spoilers.front().startRibIndex + local;
+    const double expectedAftFace = 0.25 * ribs[ribIndex].chord + 5.01;
+    assert(std::abs(
+        immediatelyBehindSpar.spoilers.front().forwardRailProfiles[local][0].x -
+        expectedAftFace) < 1.0e-8);
+  }
+
+  auto configurableTopSparSpoilerParameters = spoilerParameters;
+  configurableTopSparSpoilerParameters.spoilerChordLocationPercent = 10;
+  configurableTopSparSpoilerParameters.spars = {
+      {45, 0, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
+  const auto configurableTopSparSpoiler = designrc::domain::applyWingStructure(
+      ribs, configurableTopSparSpoilerParameters);
+  for (std::size_t local = 0;
+       local < configurableTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
+       ++local) {
+    const std::size_t ribIndex =
+        configurableTopSparSpoiler.spoilers.front().startRibIndex + local;
+    const double expectedAftFace = 0.45 * ribs[ribIndex].chord + 4.51;
+    assert(std::abs(
+        configurableTopSparSpoiler.spoilers.front().forwardRailProfiles[local][0].x -
+        expectedAftFace) < 1.0e-8);
+  }
+  auto decimalTopSparSpoilerParameters = spoilerParameters;
+  decimalTopSparSpoilerParameters.spoilerChordLocationPercent = 26.1;
+  decimalTopSparSpoilerParameters.spoilerImmediatelyBehindSpar = true;
+  decimalTopSparSpoilerParameters.spars = {
+      {25.1, 0, 0, 0, 4.7625, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0},
+      {25.1, 1, 0, 0, 4.7625, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0}};
+  const auto decimalTopSparSpoiler = designrc::domain::applyWingStructure(
+      ribs, decimalTopSparSpoilerParameters);
+  for (std::size_t local = 0;
+       local < decimalTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
+       ++local) {
+    const std::size_t ribIndex =
+        decimalTopSparSpoiler.spoilers.front().startRibIndex + local;
+    const double expectedAftFace =
+        0.251 * ribs[ribIndex].chord + 6.35 * 0.5 + 0.01;
+    assert(std::abs(
+        decimalTopSparSpoiler.spoilers.front().forwardRailProfiles[local][0].x -
+        expectedAftFace) < 1.0e-8);
+  }
   assert(spoilerWing.spoilers.front().dxfOutline.size() == 4);
   auto lightenedSpoilerParameters = spoilerParameters;
   lightenedSpoilerParameters.spoilerLighteningHoles = true;

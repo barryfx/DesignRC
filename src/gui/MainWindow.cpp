@@ -59,6 +59,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <numbers>
 #include <functional>
 #include <future>
@@ -132,6 +133,31 @@ DisplayUnit effectiveParameterUnit(const WingPanelData& panel,
   return globalUnit;
 }
 
+void migrateLegacyLeadingEdgeWidthUnit(WingPanelData& panel) {
+  if (panel.unitOverrides.value("leadingEdgeWidth", UnitOverride::Global) !=
+      UnitOverride::Inches)
+    return;
+  constexpr double tolerance = 1.0e-8;
+  const bool isLegacyInstalledValue =
+      std::abs(panel.leadingEdgeWidth - 5.0) < tolerance ||
+      std::abs(panel.leadingEdgeWidth - 4.7625) < tolerance;
+  if (isLegacyInstalledValue)
+    panel.unitOverrides.insert("leadingEdgeWidth", UnitOverride::Global);
+}
+
+void migrateLegacyDuplicateDefaultWoodJoiner(WingPanelData& panel) {
+  if (panel.fixedJoiners.size() < 2) return;
+  const auto& first = panel.fixedJoiners[0];
+  const auto& second = panel.fixedJoiners[1];
+  constexpr double tolerance = 1.0e-8;
+  if (first.material == 0 && second.material == 0 &&
+      first.carbonType == 0 && second.carbonType == 1 &&
+      std::abs(first.chordLocationPercent - second.chordLocationPercent) <
+          tolerance &&
+      std::abs(first.woodThickness - second.woodThickness) < tolerance)
+    panel.fixedJoiners.erase(panel.fixedJoiners.begin() + 1);
+}
+
 QString compactNumber(const double value, const int decimals) {
   QString result = QString::number(value, 'f', decimals);
   while (result.contains('.') && result.endsWith('0')) result.chop(1);
@@ -161,6 +187,27 @@ QString formatEdgeHeightError(const domain::EdgeHeightError& error,
       .arg(formatParameterLength(error.specifiedHeightMm(), unit));
 }
 
+class PanelEdgeHeightError final : public std::runtime_error {
+public:
+  PanelEdgeHeightError(const QString& message, const std::size_t panelIndex,
+                       std::string edgeName, const double cutHeightMm)
+      : std::runtime_error(message.toStdString()), panelIndex_{panelIndex},
+        edgeName_{std::move(edgeName)}, cutHeightMm_{cutHeightMm} {}
+  [[nodiscard]] std::size_t panelIndex() const { return panelIndex_; }
+  [[nodiscard]] const std::string& edgeName() const { return edgeName_; }
+  [[nodiscard]] double cutHeightMm() const { return cutHeightMm_; }
+private:
+  std::size_t panelIndex_{};
+  std::string edgeName_;
+  double cutHeightMm_{};
+};
+
+struct EdgeHeightCorrection {
+  std::size_t panelIndex{};
+  bool leadingEdge{};
+  double heightMm{};
+};
+
 domain::StructureParameters structureParametersFor(const WingPanelData& d,
                                                     const DisplayUnit unit,
                                                     const double joinerAxisAngle,
@@ -174,7 +221,8 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
     s.spars.push_back({spar.chordLocationPercent, spar.verticalLocation,
         spar.material, spar.type, spar.woodHeight, spar.woodWidth,
         spar.tubeOd, spar.tubeId, spar.rodOd, spar.stripWidth,
-        spar.stripThickness});
+        spar.stripThickness, spar.tipChordLocationPercent >= 0.0
+            ? spar.tipChordLocationPercent : spar.chordLocationPercent});
   s.sparShearWebs = d.sparShearWebs;
   s.sparShearWebThickness = d.sparDefaults.shearWebThickness;
   const bool useLegacySpars = d.spars.empty();
@@ -183,7 +231,11 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.shearWebs = useLegacySpars && d.shearWebs; s.shearWebThickness = d.shearWebWidth;
   s.carbonSpar = useLegacySpars ? d.carbonSpar : 0; s.cfTubeOd = d.cfTubeOd; s.cfTubeId = d.cfTubeId; s.cfRodOd = d.cfRodOd;
   s.leTopSheet = d.leTopSheet; s.leTopSheetThickness = d.leTopSheetThickness;
+  s.leTopSheetStopChordPercent = d.leTopSheetStopChordPercent;
+  s.leTopSheetUpToSpar = d.leTopSheetUpToSpar;
   s.leBottomSheet = d.leBottomSheet; s.leBottomSheetThickness = d.leBottomSheetThickness;
+  s.leBottomSheetStopChordPercent = d.leBottomSheetStopChordPercent;
+  s.leBottomSheetUpToSpar = d.leBottomSheetUpToSpar;
   s.teTopSheet = d.teTopSheet; s.teTopSheetThickness = d.teTopSheetThickness;
   s.teBottomSheet = d.teBottomSheet; s.teBottomSheetThickness = d.teBottomSheetThickness;
   s.turbulators = d.turbulators; s.turbulatorCount = d.turbulatorCount;
@@ -195,6 +247,18 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.trailingEdgeType = d.trailingEdgeType; s.trailingEdgeWidth = d.trailingEdgeWidth; s.trailingEdgeHeight = d.trailingEdgeHeight;
   s.trailingEdgeSlotted = d.slottedForRibs;
   s.trailingEdgeSlotDepth = unit == DisplayUnit::Inches ? 25.4 / 4.0 : 6.0;
+  s.topTeSheeting = d.topTeSheeting;
+  s.topTeSheetingWidth = d.topTeSheetingWidth;
+  s.topTeSheetingThickness = d.topTeSheetingThickness;
+  s.topTeSheetingTaper = d.topTeSheetingTaper;
+  s.topTeSheetingTaperStartLocationPercent =
+      d.topTeSheetingTaperStartLocationPercent;
+  s.bottomTeSheeting = d.bottomTeSheeting;
+  s.bottomTeSheetingWidth = d.bottomTeSheetingWidth;
+  s.bottomTeSheetingThickness = d.bottomTeSheetingThickness;
+  s.bottomTeSheetingTaper = d.bottomTeSheetingTaper;
+  s.bottomTeSheetingTaperStartLocationPercent =
+      d.bottomTeSheetingTaperStartLocationPercent;
   const auto station = [&d](const int number) { return d.addRib1a && number >= 2 ? number + 1 : number; };
   s.leTopSheetStopRib = station(d.leTopSheetStopRib); s.leBottomSheetStopRib = station(d.leBottomSheetStopRib);
   s.teTopSheetStopRib = station(d.teTopSheetStopRib); s.teBottomSheetStopRib = station(d.teBottomSheetStopRib);
@@ -209,6 +273,7 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.spoilerStartRib = station(d.spoilerStartRib);
   s.spoilerEndRib = station(d.spoilerEndRib);
   s.spoilerChordLocationPercent = d.spoilerChordLocationPercent;
+  s.spoilerImmediatelyBehindSpar = d.spoilerImmediatelyBehindSpar;
   s.spoilerWidth = d.spoilerWidth;
   s.spoilerThickness = d.spoilerThickness;
   s.spoilerFrameRailWidth = d.spoilerFrameRailWidth;
@@ -970,10 +1035,15 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
                              const bool mirrorIdenticalCenterPair = false) {
       const auto localCenter = joinerCamberCenter(rootRib, fraction);
       const auto baseJoint = modelSectionPoint(rootRib, localCenter);
+      // At the wing center the two panel halves rise away from a horizontal
+      // joiner. Use one cross-wing axis, as fixed joiners do, rather than
+      // reflecting the panel-normal axis into a V-shaped pair.
+      const ModelPoint pairAxis = centerJoint
+          ? ModelPoint{0.0, 1.0, 0.0} : outward;
       ModelPoint joint;
       if (centerJoint) {
         joint = balancedJointPoint(
-            outer, 0, structuralSecondRib, baseJoint, outward);
+            outer, 0, structuralSecondRib, baseJoint, pairAxis);
       } else {
         auto& inner = panels[panelIndex - 1];
         const ModelPoint inward{-outward.x, -outward.y, -outward.z};
@@ -989,25 +1059,43 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
              ribIndex <= structuralSecondRib; ++ribIndex)
           outer.ribs[ribIndex].uniqueHalfPartVariants = true;
       addCircularSide(outer, 0, structuralSecondRib, ribThicknesses[panelIndex],
-          joint, outward,
+          joint, pairAxis,
           thisOd, thisId, thisKind, thisName, thisAnnotation, extension,
           !centerJoint || mirrorIdenticalCenterPair, false, false, false,
           centerJoint && !mirrorIdenticalCenterPair
               ? JoinerHoleHalf::Positive : JoinerHoleHalf::Both);
       if (centerJoint && mirrorIdenticalCenterPair) return;
       if (centerJoint) {
+        const std::size_t thisPartIndex = outer.joiners.size() - 1;
         addCircularSide(outer, 0, structuralSecondRib,
-            ribThicknesses[panelIndex], joint, outward,
+            ribThicknesses[panelIndex], joint, pairAxis,
             adjoiningOd, adjoiningId, adjoiningKind, adjoiningName,
             adjoiningAnnotation, extension, false, true, false, true,
             JoinerHoleHalf::Negative);
+        auto& thisPart = outer.joiners[thisPartIndex];
+        auto& adjoiningPart = outer.joiners.back();
+        if (thisKind == domain::SpanMemberKind::Rod &&
+            adjoiningKind == domain::SpanMemberKind::Tube)
+          thisPart.innerEndpoint = adjoiningPart.outerEndpoint;
+        else if (adjoiningKind == domain::SpanMemberKind::Rod &&
+                 thisKind == domain::SpanMemberKind::Tube)
+          adjoiningPart.innerEndpoint = thisPart.outerEndpoint;
       } else {
         auto& inner = panels[panelIndex - 1];
         const ModelPoint inward{-outward.x, -outward.y, -outward.z};
+        const std::size_t thisPartIndex = outer.joiners.size() - 1;
         addCircularSide(inner, inner.ribs.size() - 1, inner.ribs.size() - 2,
             ribThicknesses[panelIndex - 1], joint, inward,
             adjoiningOd, adjoiningId, adjoiningKind, adjoiningName,
             adjoiningAnnotation, extension, true);
+        auto& thisPart = outer.joiners[thisPartIndex];
+        auto& adjoiningPart = inner.joiners.back();
+        if (thisKind == domain::SpanMemberKind::Rod &&
+            adjoiningKind == domain::SpanMemberKind::Tube)
+          thisPart.innerEndpoint = adjoiningPart.outerEndpoint;
+        else if (adjoiningKind == domain::SpanMemberKind::Rod &&
+                 thisKind == domain::SpanMemberKind::Tube)
+          adjoiningPart.innerEndpoint = thisPart.outerEndpoint;
       }
     };
     if (data.joinerPanelMode == 1) {
@@ -1256,8 +1344,9 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
       try {
         result.structuredPanels[panelIndex] = domain::applyWingStructure(ribs, structure);
       } catch (const domain::EdgeHeightError& exception) {
-        throw std::runtime_error(formatEdgeHeightError(
-            exception, d, unit, panelIndex).toStdString());
+        throw PanelEdgeHeightError{
+            formatEdgeHeightError(exception, d, unit, panelIndex), panelIndex,
+            exception.edgeName(), exception.cutHeightMm()};
       } catch (const std::exception& exception) {
         throw std::runtime_error(
             "Panel " + std::to_string(panelIndex + 1) + ": " + exception.what());
@@ -1478,7 +1567,86 @@ int runJoinerBackendRegression() {
     return jointOffset > 1.0e-4 && adjoiningOffset < -1.0e-4 &&
         std::abs(jointOffset + adjoiningOffset) < 1.0e-5;
   };
+  const auto hasBalancedPositiveHalfJoinerHoles =
+      [&](const domain::StructuredRib& joint,
+          const domain::StructuredRib& adjoining) {
+    if (joint.positiveHalfBooleanHoles.empty() ||
+        adjoining.positiveHalfBooleanHoles.empty())
+      return false;
+    const double jointOffset = heightFromCamber(
+        joint, joint.positiveHalfBooleanHoles.back());
+    const double adjoiningOffset = heightFromCamber(
+        adjoining, adjoining.positiveHalfBooleanHoles.back());
+    return jointOffset > 1.0e-4 && adjoiningOffset < -1.0e-4 &&
+        std::abs(jointOffset + adjoiningOffset) < 1.0e-5;
+  };
   try {
+    WingPanelData teSheetingProject;
+    teSheetingProject.panelSpan = 698.5;
+    teSheetingProject.rootChord = 254.0;
+    teSheetingProject.tipChord = 152.4;
+    teSheetingProject.sweep = 25.4;
+    teSheetingProject.dihedral = 4.0;
+    teSheetingProject.ribThickness = 2.38125;
+    teSheetingProject.ribCount = 11;
+    SparDefaults topTeSpar;
+    topTeSpar.chordLocationPercent = 25.0;
+    topTeSpar.tipChordLocationPercent = 25.0;
+    topTeSpar.verticalLocation = 0;
+    topTeSpar.material = 0;
+    topTeSpar.type = 2;
+    topTeSpar.woodHeight = 3.175;
+    topTeSpar.woodWidth = 6.35;
+    auto bottomTeSpar = topTeSpar;
+    bottomTeSpar.verticalLocation = 1;
+    bottomTeSpar.type = 0;
+    teSheetingProject.spars = {topTeSpar, bottomTeSpar};
+    teSheetingProject.leadingEdgeType = 2;
+    teSheetingProject.leadingEdgeWidth = 4.7625;
+    teSheetingProject.leadingEdgeHeight = 15.875;
+    teSheetingProject.leTopSheet = true;
+    teSheetingProject.leBottomSheet = true;
+    teSheetingProject.leTopSheetThickness = 1.5875;
+    teSheetingProject.leBottomSheetThickness = 1.5875;
+    teSheetingProject.leTopSheetStopRib = 2;
+    teSheetingProject.leBottomSheetStopRib = 2;
+    teSheetingProject.teTopSheet = true;
+    teSheetingProject.teBottomSheet = true;
+    teSheetingProject.teTopSheetThickness = 1.5875;
+    teSheetingProject.teBottomSheetThickness = 1.5875;
+    teSheetingProject.teTopSheetStopRib = 2;
+    teSheetingProject.teBottomSheetStopRib = 2;
+    teSheetingProject.topTeSheeting = true;
+    teSheetingProject.topTeSheetingWidth = 25.4;
+    teSheetingProject.topTeSheetingThickness = 1.5875;
+    teSheetingProject.joinerPanelMode = 1;
+    FixedJoinerData firstWoodJoiner;
+    firstWoodJoiner.material = 0;
+    firstWoodJoiner.chordLocationPercent = 25.0;
+    firstWoodJoiner.woodThickness = 3.175;
+    auto secondWoodJoiner = firstWoodJoiner;
+    secondWoodJoiner.carbonType = 1;
+    teSheetingProject.fixedJoiners = {
+        firstWoodJoiner, secondWoodJoiner};
+    bool namedWoodJoinerCollision = false;
+    try {
+      static_cast<void>(build(teSheetingProject));
+    } catch (const std::exception& error) {
+      const std::string message = error.what();
+      namedWoodJoinerCollision =
+          message.find("Joiner collision") != std::string::npos &&
+          message.find("Joiner 1") != std::string::npos &&
+          message.find("Joiner 2") != std::string::npos;
+    }
+    if (!namedWoodJoinerCollision) return 120;
+    // Keep the TE-sheeting solid regression below as a valid model. Its
+    // purpose does not require the second, now-invalid overlapping joiner.
+    teSheetingProject.fixedJoiners.resize(1);
+    const auto teSheetingPreview = build(teSheetingProject);
+    if (teSheetingPreview.structuredPanels.empty() ||
+        teSheetingPreview.materialShapes.parts.empty())
+      return 20;
+
     WingPanelData fixed;
     fixed.panelSpan = 160.0; fixed.rootChord = fixed.tipChord = 180.0;
     fixed.sweep = 0.0; fixed.dihedral = 6.0; fixed.ribCount = 3;
@@ -1543,21 +1711,49 @@ int runJoinerBackendRegression() {
     WingPanelData removable = fixed;
     removable.joinerPanelMode = 0; removable.fixedJoiners.clear();
     RemovableJoinerData sleeveRod;
-    sleeveRod.adjoiningPanelPart = 1;
+    sleeveRod.adjoiningPanelPart = 0;
     sleeveRod.thisRodOd = 5.0;
-    sleeveRod.adjoiningRodOd = 6.0;
+    sleeveRod.adjoiningSleeveOd = 7.0;
     RemovableJoinerData alignment;
     alignment.kind = 1; alignment.chordLocationPercent = 70;
     removable.removableJoiners = {sleeveRod, alignment};
     const auto removablePreview = build(removable);
     if (removablePreview.structuredPanels.front().joiners.size() != 3 ||
         removablePreview.structuredPanels.front().joiners[0].kind != domain::SpanMemberKind::Rod ||
-        removablePreview.structuredPanels.front().joiners[1].kind != domain::SpanMemberKind::Rod ||
+        removablePreview.structuredPanels.front().joiners[1].kind != domain::SpanMemberKind::Tube ||
         removablePreview.structuredPanels.front().ribs[0]
                 .positiveHalfBooleanHoles.size() != 1 ||
         removablePreview.structuredPanels.front().ribs[0]
                 .negativeHalfBooleanHoles.size() != 1)
       return 2;
+    const auto& centerRemovableWing =
+        removablePreview.structuredPanels.front();
+    const double centerJoinerX =
+        centerRemovableWing.joiners[0].innerEndpoint.x;
+    const double centerJoinerZ =
+        centerRemovableWing.joiners[0].innerEndpoint.z;
+    for (std::size_t joinerIndex = 0; joinerIndex < 2; ++joinerIndex) {
+      const auto& joiner = centerRemovableWing.joiners[joinerIndex];
+      if (std::abs(joiner.innerEndpoint.x - centerJoinerX) > 1.0e-8 ||
+          std::abs(joiner.outerEndpoint.x - centerJoinerX) > 1.0e-8 ||
+          std::abs(joiner.innerEndpoint.z - centerJoinerZ) > 1.0e-8 ||
+          std::abs(joiner.outerEndpoint.z - centerJoinerZ) > 1.0e-8)
+        return 121;
+    }
+    const auto sameEndpoint = [](const domain::Point3& first,
+                                 const domain::Point3& second) {
+      return std::abs(first.x - second.x) < 1.0e-8 &&
+          std::abs(first.y - second.y) < 1.0e-8 &&
+          std::abs(first.z - second.z) < 1.0e-8;
+    };
+    if (!sameEndpoint(centerRemovableWing.joiners[0].innerEndpoint,
+                      centerRemovableWing.joiners[1].outerEndpoint) ||
+        centerRemovableWing.joiners[0].innerEndpoint.y >= 0.0 ||
+        centerRemovableWing.joiners[0].outerEndpoint.y <= 0.0)
+      return 123;
+    if (!hasBalancedPositiveHalfJoinerHoles(
+            centerRemovableWing.ribs[0], centerRemovableWing.ribs[1]))
+      return 122;
     const auto holeWidth = [](const std::vector<domain::Point2>& hole) {
       const auto [minimum, maximum] = std::minmax_element(
           hole.begin(), hole.end(),
@@ -1574,7 +1770,7 @@ int runJoinerBackendRegression() {
     if (removablePreview.structuredPanels.front().joiners[0].annotationName.find(
             "Joiner 1\nCF Rod") == std::string::npos ||
         removablePreview.structuredPanels.front().joiners[1].annotationName.find(
-            "Joiner 1\nSteel Rod") == std::string::npos ||
+            "Joiner 1\nAluminum Sleeve") == std::string::npos ||
         removablePreview.structuredPanels.front().joiners[2].annotationName.find(
             "Alignment Pin 1\nCF Pin") == std::string::npos ||
         removablePreview.structuredPanels.front().joiners[0]
@@ -1596,7 +1792,11 @@ int runJoinerBackendRegression() {
         panelRemovablePreview.structuredPanels.front();
     const auto& panelRemovableOuter =
         panelRemovablePreview.structuredPanels.back();
-    if (!hasBalancedJoinerHoles(
+    if (panelRemovableInner.joiners.size() != 1 ||
+        panelRemovableOuter.joiners.size() != 1 ||
+        !sameEndpoint(panelRemovableOuter.joiners.front().innerEndpoint,
+                      panelRemovableInner.joiners.front().outerEndpoint) ||
+        !hasBalancedJoinerHoles(
             panelRemovableOuter.ribs.front(),
             panelRemovableOuter.ribs[1]) ||
         !hasBalancedJoinerHoles(
@@ -1796,9 +1996,12 @@ int runJoinerBackendRegression() {
     if (panelJoinerShapeCount != 2) return 38;
   } catch (const std::exception& exception) {
     qCritical() << "Joiner backend regression exception:" << exception.what();
+    std::fprintf(stderr, "Joiner backend regression exception: %s\n",
+                 exception.what());
     return 4;
   } catch (...) {
     qCritical() << "Joiner backend regression exception: unknown";
+    std::fprintf(stderr, "Joiner backend regression exception: unknown\n");
     return 4;
   }
   return 0;
@@ -2063,12 +2266,17 @@ void MainWindow::showAbout() {
               "<p>Version %1 &middot; Release date: %2</p>"
               "<p>DesignRC turns a multi-panel half-wing definition into a complete "
               "mirrored solid assembly. It imports root and tip airfoils; generates "
-              "ribs, riblets, spars, shear webs, sheeting, leading and trailing edges, "
-              "joiners, wiring holes, ailerons, flaps, hinge posts, and spoilers; and "
-              "displays the result in an interactive 3D viewport.</p>"
+              "solid ribs, tapered root-to-tip spars, shear webs, front, rear, and "
+              "trailing-edge sheeting, leading and trailing edges, collision-checked "
+              "joiners, wiring holes, spline-lofted ailerons and flaps, hinge posts, "
+              "and spar-aware spoilers; and displays the result in an interactive "
+              "3D viewport.</p>"
               "<p>It also creates annotated full-scale wing plans and exports vector "
               "plan PDFs, individual or combined DXF/SVG/PDF cutting parts, and a "
-              "material-colored STEP assembly.</p>"
+              "material-colored STEP assembly. Version 1.1.0 adds independent top and "
+              "bottom trailing-edge sheeting, configurable front-sheeting extents, "
+              "improved joiner geometry and collision checks, and cleaner rib and "
+              "part exports.</p>"
               "<p>Copyright &copy; 2026 Barry Foust</p>"
               "<p>DesignRC is free software licensed under the GNU General Public License "
               "version 3 only. It comes with absolutely no warranty.</p>"
@@ -2092,6 +2300,12 @@ std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) 
     for (const auto& value : document.array()) {
       const auto object = value.toObject();
       auto panel = panelDataFromJson(object);
+      // Earlier installed defaults incorrectly forced this wood-stock width
+      // to inches. Migrate only the two legacy installed values so an
+      // intentional user-selected inch override remains intact.
+      migrateLegacyLeadingEdgeWidthUnit(panel);
+      // Remove the duplicate wood joiner shipped in the previous defaults.
+      migrateLegacyDuplicateDefaultWoodJoiner(panel);
       const std::size_t panelIndex = result.size();
       if (!object.contains("spoilerMinimumWoodMargin"))
         panel.spoilerMinimumWoodMargin =
@@ -2382,6 +2596,7 @@ void MainWindow::regeneratePreview() {
        workerThreadCount] {
     std::shared_ptr<PreviewComputation> result;
     QString error;
+    std::optional<EdgeHeightCorrection> edgeHeightCorrection;
     bool cancelled = false;
     const auto reportProgress = [window](const int value, const QString& message) {
       if (!window) return;
@@ -2407,13 +2622,29 @@ void MainWindow::regeneratePreview() {
     } catch (const Standard_Failure& exception) {
       error = QString{"OpenCascade: %1"}.arg(
           occtExceptionMessage(exception));
+    } catch (const PanelEdgeHeightError& exception) {
+      error = exception.what();
+      const bool isLeadingEdge = exception.edgeName() == "LE";
+      const bool isTrailingEdge = exception.edgeName() == "TE";
+      const bool adjustableBlockStock =
+          exception.panelIndex() < panels.size() &&
+          ((isLeadingEdge &&
+            panels[exception.panelIndex()].leadingEdgeType == 2) ||
+           (isTrailingEdge &&
+            panels[exception.panelIndex()].trailingEdgeType == 2));
+      if (adjustableBlockStock) {
+        edgeHeightCorrection = EdgeHeightCorrection{
+            exception.panelIndex(), isLeadingEdge,
+            exception.cutHeightMm()};
+      }
     } catch (const std::exception& exception) {
       error = exception.what();
     } catch (...) {
       error = "An unknown geometry error occurred while rebuilding the wing.";
     }
     if (!window) return;
-    QMetaObject::invokeMethod(window, [window, result, error, cancelled, selected, revision, panels] {
+    QMetaObject::invokeMethod(window, [window, result, error, edgeHeightCorrection,
+                                      cancelled, selected, revision, panels] {
       if (!window) return;
       window->updateThread_ = nullptr;
       window->updateCancellation_.reset();
@@ -2435,6 +2666,15 @@ void MainWindow::regeneratePreview() {
         finishUi();
         window->statusBar()->showMessage("Update View failed", 3000);
         QMessageBox::critical(window, "Preview update failed", error);
+        if (edgeHeightCorrection &&
+            edgeHeightCorrection->panelIndex < window->panelEditors_.size()) {
+          auto* editor =
+              window->panelEditors_[edgeHeightCorrection->panelIndex];
+          if (edgeHeightCorrection->leadingEdge)
+            editor->setLeadingEdgeHeightMm(edgeHeightCorrection->heightMm);
+          else
+            editor->setTrailingEdgeHeightMm(edgeHeightCorrection->heightMm);
+        }
         return;
       }
       if (!result || revision != window->designRevision_) {
@@ -2587,7 +2827,20 @@ void MainWindow::regeneratePreviewSynchronous() {
           d, globalUnit_, joinerAxisAngle, joinerMirrorAngle,
           panelIndex == 0 ? 0.0 : angles.rootRibAngleDegrees,
           panelIndex != 0);
-      structuredPanels.push_back(domain::applyWingStructure(ribs, structure));
+      try {
+        structuredPanels.push_back(domain::applyWingStructure(ribs, structure));
+      } catch (const domain::EdgeHeightError& exception) {
+        QMessageBox::critical(
+            this, "Preview update failed",
+            formatEdgeHeightError(exception, d, globalUnit_, panelIndex));
+        if (exception.edgeName() == "LE" && d.leadingEdgeType == 2)
+          panelEditors_[panelIndex]->setLeadingEdgeHeightMm(
+              exception.cutHeightMm());
+        else if (exception.edgeName() == "TE" && d.trailingEdgeType == 2)
+          panelEditors_[panelIndex]->setTrailingEdgeHeightMm(
+              exception.cutHeightMm());
+        return;
+      }
       ribSets.push_back(ribs);
       thicknesses.push_back(d.ribThickness);
       halfArea += d.panelSpan * (d.rootChord + d.tipChord) * 0.5;
@@ -2721,7 +2974,8 @@ void MainWindow::regeneratePreviewLegacy() {
       structure.spars.push_back({spar.chordLocationPercent, spar.verticalLocation,
           spar.material, spar.type, spar.woodHeight, spar.woodWidth,
           spar.tubeOd, spar.tubeId, spar.rodOd, spar.stripWidth,
-          spar.stripThickness});
+          spar.stripThickness, spar.tipChordLocationPercent >= 0.0
+              ? spar.tipChordLocationPercent : spar.chordLocationPercent});
     structure.sparShearWebs = d.sparShearWebs;
     structure.sparShearWebThickness = d.sparDefaults.shearWebThickness;
     const bool useLegacySpars = d.spars.empty();
@@ -2730,7 +2984,11 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.shearWebs = useLegacySpars && d.shearWebs; structure.shearWebThickness = d.shearWebWidth;
     structure.carbonSpar = useLegacySpars ? d.carbonSpar : 0; structure.cfTubeOd = d.cfTubeOd; structure.cfTubeId = d.cfTubeId; structure.cfRodOd = d.cfRodOd;
     structure.leTopSheet = d.leTopSheet; structure.leTopSheetThickness = d.leTopSheetThickness;
+    structure.leTopSheetStopChordPercent = d.leTopSheetStopChordPercent;
+    structure.leTopSheetUpToSpar = d.leTopSheetUpToSpar;
     structure.leBottomSheet = d.leBottomSheet; structure.leBottomSheetThickness = d.leBottomSheetThickness;
+    structure.leBottomSheetStopChordPercent = d.leBottomSheetStopChordPercent;
+    structure.leBottomSheetUpToSpar = d.leBottomSheetUpToSpar;
     structure.teTopSheet = d.teTopSheet; structure.teTopSheetThickness = d.teTopSheetThickness;
     structure.teBottomSheet = d.teBottomSheet; structure.teBottomSheetThickness = d.teBottomSheetThickness;
     structure.turbulators = d.turbulators; structure.turbulatorCount = d.turbulatorCount;
@@ -2742,6 +3000,18 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.trailingEdgeType = d.trailingEdgeType; structure.trailingEdgeWidth = d.trailingEdgeWidth; structure.trailingEdgeHeight = d.trailingEdgeHeight;
     structure.trailingEdgeSlotted = d.slottedForRibs;
     structure.trailingEdgeSlotDepth = globalUnit_ == DisplayUnit::Inches ? 25.4 / 4.0 : 6.0;
+    structure.topTeSheeting = d.topTeSheeting;
+    structure.topTeSheetingWidth = d.topTeSheetingWidth;
+    structure.topTeSheetingThickness = d.topTeSheetingThickness;
+    structure.topTeSheetingTaper = d.topTeSheetingTaper;
+    structure.topTeSheetingTaperStartLocationPercent =
+        d.topTeSheetingTaperStartLocationPercent;
+    structure.bottomTeSheeting = d.bottomTeSheeting;
+    structure.bottomTeSheetingWidth = d.bottomTeSheetingWidth;
+    structure.bottomTeSheetingThickness = d.bottomTeSheetingThickness;
+    structure.bottomTeSheetingTaper = d.bottomTeSheetingTaper;
+    structure.bottomTeSheetingTaperStartLocationPercent =
+        d.bottomTeSheetingTaperStartLocationPercent;
     structure.ailerons = d.ailerons; structure.aileronWidth = d.aileronWidth; structure.aileronHeight = d.aileronHeight;
     structure.aileronHingePostWidth = d.aileronHingePostWidth; structure.aileronHingePostHeight = d.aileronHingePostHeight;
     const auto stationNumber = [panelOne, &d](const int ribNumber) {
@@ -2762,6 +3032,8 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.spoilerStartRib = stationNumber(d.spoilerStartRib);
     structure.spoilerEndRib = stationNumber(d.spoilerEndRib);
     structure.spoilerChordLocationPercent = d.spoilerChordLocationPercent;
+    structure.spoilerImmediatelyBehindSpar =
+        d.spoilerImmediatelyBehindSpar;
     structure.spoilerWidth = d.spoilerWidth;
     structure.spoilerThickness = d.spoilerThickness;
     structure.spoilerFrameRailWidth = d.spoilerFrameRailWidth;

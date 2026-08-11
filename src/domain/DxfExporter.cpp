@@ -388,18 +388,39 @@ void writeSvgDrawingPath(std::ostream& output, const PartDrawingPath& path,
   }
   output << "    <path d=\"M " << svgX(path.points.front().x) << ' '
          << svgY(path.points.front().y);
+  const auto limitHandle = [](const Point2 endpoint, Point2 control,
+                              const double maximumLength) {
+    const double dx = control.x - endpoint.x;
+    const double dy = control.y - endpoint.y;
+    const double length = std::hypot(dx, dy);
+    if (length > maximumLength && length > 1.0e-12) {
+      const double scale = maximumLength / length;
+      control = {endpoint.x + dx * scale, endpoint.y + dy * scale};
+    }
+    return control;
+  };
   for (std::size_t index = 0; index + 1 < path.points.size(); ++index) {
     const auto& previous = index == 0 ? path.points[index] : path.points[index - 1];
     const auto& first = path.points[index];
     const auto& second = path.points[index + 1];
     const auto& next = index + 2 < path.points.size()
         ? path.points[index + 2] : second;
-    const Point2 control1{
+    Point2 control1{
         first.x + (second.x - previous.x) / 6.0,
         first.y + (second.y - previous.y) / 6.0};
-    const Point2 control2{
+    Point2 control2{
         second.x - (next.x - first.x) / 6.0,
         second.y - (next.y - first.y) / 6.0};
+    // The Catmull-Rom conversion above assumes evenly spaced samples. Airfoil
+    // data and manufactured LE/TE corners can put a very short edge beside a
+    // long one, creating a control handle many times longer than that edge and
+    // a loop in the SVG. Bound each handle to its own cubic segment while
+    // retaining the tangent direction and smooth profile.
+    const double segmentLength = std::hypot(
+        second.x - first.x, second.y - first.y);
+    const double maximumHandleLength = segmentLength / 3.0;
+    control1 = limitHandle(first, control1, maximumHandleLength);
+    control2 = limitHandle(second, control2, maximumHandleLength);
     output << " C " << svgX(control1.x) << ' ' << svgY(control1.y)
            << ' ' << svgX(control2.x) << ' ' << svgY(control2.y)
            << ' ' << svgX(second.x) << ' ' << svgY(second.y);
