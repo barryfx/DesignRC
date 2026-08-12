@@ -2,7 +2,7 @@
 #define MyAppVersion "1.1.0"
 #define MyAppPublisher "Barry Foust"
 #define MyAppExeName "designrc.exe"
-#define MySourceDir "..\build\release-current\Release"
+#define MySourceDir "..\build\release\Release"
 
 [Setup]
 AppId={{D4A58A0E-15AE-49CB-B7F7-D75BDA76EEA3}

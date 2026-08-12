@@ -4,7 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$releaseBuildDir = Join-Path $projectRoot 'build\release-current'
+$releaseBuildDir = Join-Path $projectRoot 'build\release'
 $releaseDir = Join-Path $releaseBuildDir 'Release'
 $sourceDir = Join-Path $releaseDir 'source'
 $sourceArchive = Join-Path $sourceDir 'DesignRC-1.1.0-source.zip'
@@ -48,8 +48,10 @@ try {
     Remove-Item -LiteralPath $resolvedSourceDir -Recurse -Force
   }
   New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-  & tar.exe -a -c -f $sourceArchive --exclude=.git --exclude=build --exclude=dist `
-      --exclude='$install' .
+  $sourceEntries = Get-ChildItem -Force | Where-Object {
+    $_.Name -notin @('.git', 'build', 'dist', 'out', 'tmp', '$install')
+  } | ForEach-Object Name
+  & tar.exe -a -c -f $sourceArchive @sourceEntries
   if ($LASTEXITCODE -ne 0) { throw 'Corresponding-source archive creation failed.' }
 
   & $iscc (Join-Path $PSScriptRoot 'DesignRC.iss')
