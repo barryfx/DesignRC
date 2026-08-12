@@ -214,9 +214,9 @@ Then build the Release application and installer with:
 .\installer\build-installer.ps1
 ```
 
-The packaging script copies Microsoft's redistributable Visual C++ runtime DLLs beside the
-application, creates a corresponding-source archive for GPL compliance, and writes the installer
-to `dist`. The resulting installer does not require administrator privileges.
+The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
+the application, creates a corresponding-source archive for GPL compliance, and writes the
+installer to `dist`. The resulting installer does not require administrator privileges.
 
 ## Building on Ubuntu 24.04
 
@@ -312,9 +312,9 @@ Then build the DesignRC Release executable and Debian package:
 sh packaging/linux/build-package.sh
 ```
 
-The script stages the package on the native Linux filesystem so file permissions remain correct
-when the source tree is hosted on a WSL `/mnt/c` mount. It writes the Ubuntu 24.04 x86-64 `.deb`,
-corresponding source archive, and SHA-256 checksums to:
+The script uses `build/linux-release` and stages the package on the native Linux filesystem so file
+permissions remain correct when the source tree is hosted on a WSL `/mnt/c` mount. It writes the
+Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
 dist/designrc_1.1.0_amd64.deb
@@ -370,7 +370,8 @@ Build the Fedora Release executable and RPM with the checked-in packaging script
 sh packaging/linux/build-rpm.sh
 ```
 
-The script writes the x86-64 RPM, corresponding source archive, and SHA-256 checksums to:
+The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding source archive, and
+SHA-256 checksums to:
 
 ```text
 dist/designrc-1.1.0-1.x86_64.rpm
