@@ -1,6 +1,8 @@
 #include "domain/WingDesign.h"
 
 #include <cmath>
+#include <algorithm>
+#include <limits>
 #include <numbers>
 #include <stdexcept>
 
@@ -13,6 +15,28 @@ void validate(const WingParameters& p) {
     throw std::invalid_argument("Wing dimensions, material thickness, and rib count must be positive");
 }
 } // namespace
+
+double untwistedRibBottom(const RibDefinition& rib) {
+  double bottom = std::numeric_limits<double>::max();
+  for (const auto point : rib.profile.outline())
+    bottom = std::min(bottom, point.y * rib.chord);
+  return bottom;
+}
+
+Point2 ribTwistTranslation(const RibDefinition& rib) {
+  if (rib.twistDegrees == 0.0) return {};
+  const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
+  const double sine = std::sin(angle);
+  const double cosine = std::cos(angle);
+  const double pivot = rib.twistDegrees < 0.0 ? rib.chord : 0.0;
+  Point2 translation{pivot * (1.0 - cosine), -pivot * sine};
+  double bottom = std::numeric_limits<double>::max();
+  for (const auto point : rib.profile.outline())
+    bottom = std::min(bottom,
+        rib.chord * (sine * point.x + cosine * point.y) + translation.y);
+  translation.y += std::max(0.0, untwistedRibBottom(rib) - bottom);
+  return translation;
+}
 
 std::vector<RibDefinition> generateRibs(
     const WingParameters& p, const AirfoilProfile& root, const AirfoilProfile& tip) {

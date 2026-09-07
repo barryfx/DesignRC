@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.1.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.2 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -118,7 +118,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="August 11, 2026"
+  DESIGNRC_RELEASE_DATE="September 7, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
@@ -268,13 +268,15 @@ if(DESIGNRC_BUILD_TESTS)
   add_test(NAME designrc_geometry_tests COMMAND designrc_geometry_tests)
   add_executable(designrc_step_export_tests
     tests/StepExporterTests.cpp
+    src/geometry/OcctRibBuilder.cpp
     src/geometry/StepExporter.cpp
     src/geometry/StepExporter.h
   )
   target_include_directories(designrc_step_export_tests PRIVATE
     src ${OpenCASCADE_INCLUDE_DIR})
   target_link_libraries(designrc_step_export_tests PRIVATE
-    TKernel TKMath TKBRep TKPrim TKDESTEP TKXCAF)
+    designrc_domain TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
+    TKBRep TKTopAlgo TKPrim TKBO TKOffset TKMesh TKShHealing TKDESTEP TKXCAF)
   add_test(NAME designrc_step_export_tests COMMAND designrc_step_export_tests)
   add_test(NAME designrc_joiner_backend_tests
     COMMAND designrc --joiner-backend-regression)

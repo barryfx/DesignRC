@@ -304,6 +304,7 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
   s.wiringHoleWidth = d.wiringHoleWidth;
   s.wiringHoleHeight = d.wiringHoleHeight;
+  s.addBuildTabs = d.addBuildTabs && d.twist != 0.0;
   s.rib1aPresent = d.addRib1a;
   const bool useLegacyJoiners = d.joinerPanelMode < 0;
   s.centerSparWoodJoiner = useLegacyJoiners && d.centerSparWoodJoiner;
@@ -330,8 +331,9 @@ ModelPoint modelSectionPoint(const domain::RibDefinition& rib,
                              const double normalOffset = 0.0) {
   const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
   const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
-  const double sectionX = std::cos(twist) * point.x - std::sin(twist) * point.y;
-  const double sectionZ = std::sin(twist) * point.x + std::cos(twist) * point.y;
+  const auto translation = domain::ribTwistTranslation(rib);
+  const double sectionX = std::cos(twist) * point.x - std::sin(twist) * point.y + translation.x;
+  const double sectionZ = std::sin(twist) * point.x + std::cos(twist) * point.y + translation.y;
   return {rib.leadingEdgeOffset + sectionX,
           rib.spanPosition - std::sin(plane) * sectionZ +
               std::cos(plane) * normalOffset,
@@ -342,9 +344,10 @@ ModelPoint modelSectionPoint(const domain::RibDefinition& rib,
 domain::Point2 localSectionPoint(const domain::RibDefinition& rib, const ModelPoint point) {
   const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
   const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
-  const double sectionX = point.x - rib.leadingEdgeOffset;
+  const auto translation = domain::ribTwistTranslation(rib);
+  const double sectionX = point.x - rib.leadingEdgeOffset - translation.x;
   const double sectionZ = -std::sin(plane) * (point.y - rib.spanPosition) +
-      std::cos(plane) * (point.z - rib.dihedralHeight);
+      std::cos(plane) * (point.z - rib.dihedralHeight) - translation.y;
   return {std::cos(twist) * sectionX + std::sin(twist) * sectionZ,
           -std::sin(twist) * sectionX + std::cos(twist) * sectionZ};
 }
@@ -2273,7 +2276,7 @@ void MainWindow::showAbout() {
               "3D viewport.</p>"
               "<p>It also creates annotated full-scale wing plans and exports vector "
               "plan PDFs, individual or combined DXF/SVG/PDF cutting parts, and a "
-              "material-colored STEP assembly. Version 1.1.0 adds independent top and "
+              "material-colored STEP assembly. Version 1.2 includes independent top and "
               "bottom trailing-edge sheeting, configurable front-sheeting extents, "
               "improved joiner geometry and collision checks, and cleaner rib and "
               "part exports.</p>"
@@ -3065,6 +3068,7 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
     structure.wiringHoleWidth = d.wiringHoleWidth;
     structure.wiringHoleHeight = d.wiringHoleHeight;
+    structure.addBuildTabs = d.addBuildTabs && d.twist != 0.0;
     structure.rib1aPresent = panelOne && d.addRib1a;
     structure.centerSparWoodJoiner = panelOne && d.centerSparWoodJoiner;
     structure.behindSparJoiner = panelOne && d.behindSparJoiner;

@@ -30,6 +30,11 @@ struct WingParameters {
   std::size_t ribCount{9};
 };
 
+// Translation accompanying twist: positive twist raises the trailing edge,
+// negative twist raises the leading edge, without lowering the airfoil bottom.
+[[nodiscard]] Point2 ribTwistTranslation(const RibDefinition& rib);
+[[nodiscard]] double untwistedRibBottom(const RibDefinition& rib);
+
 struct WingMetrics {
   double fullSpan{};
   double planformArea{};

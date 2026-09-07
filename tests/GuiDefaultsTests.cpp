@@ -11,6 +11,8 @@
 #include <QFontMetrics>
 #include <QLabel>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <numbers>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QRadioButton>
@@ -18,6 +20,7 @@
 #include <QTabWidget>
 
 #include <cassert>
+#include <cstdio>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +29,132 @@
 int main(int argc, char* argv[]) {
   QApplication application{argc, argv};
   using namespace designrc::gui;
+
+  {
+    // Saved three-panel glider: TE stock displaces the rear tabs on the
+    // smallest outer ribs. Their two supports must not end up at the front.
+    using namespace designrc::domain;
+    for (const auto fixtureName : {"3PanelGlider.designrc", "3PanelGlider-ag.designrc"}) {
+    const auto fixture = std::filesystem::path{__FILE__}.parent_path() /
+        "fixtures" / fixtureName;
+    QFile file{QString::fromStdString(fixture.string())};
+    assert(file.open(QIODevice::ReadOnly));
+    const auto panels = QJsonDocument::fromJson(file.readAll()).object().value("panels").toArray();
+    assert(panels.size() == 3);
+    const auto readPanel = [&](const int index) {
+      auto object = panels[index].toObject();
+      for (const auto* key : {"rootAirfoilPath", "tipAirfoilPath"}) {
+        const auto path = object.value(key).toString();
+        if (!path.isEmpty())
+          object.insert(key, QString::fromStdString((fixture.parent_path() / path.toStdString()).string()));
+      }
+      return panelDataFromJson(object);
+    };
+    for (int panelIndex = 0; panelIndex < panels.size(); ++panelIndex) {
+    auto data = readPanel(panelIndex);
+    if (panelIndex > 0)
+      data.rootAirfoil = readPanel(panelIndex - 1).tipAirfoil;
+    std::vector<double> dihedrals, twists;
+    for (const auto& panel : panels) {
+      dihedrals.push_back(panel.toObject().value("dihedral").toDouble());
+      twists.push_back(panel.toObject().value("twist").toDouble());
+    }
+    const auto angles = calculatePanelAssemblyAngles(dihedrals)[panelIndex];
+    const auto twist = calculatePanelTwistRanges(twists)[panelIndex];
+    WingParameters parameters;
+    parameters.halfSpan = data.panelSpan;
+    parameters.rootChord = data.rootChord;
+    parameters.tipChord = data.tipChord;
+    parameters.sweep = data.sweep;
+    parameters.dihedralDegrees = 0.0;
+    parameters.rootTwistDegrees = twist.rootTwistDegrees;
+    parameters.tipTwistDegrees = twist.tipTwistDegrees;
+    parameters.ribCount = data.ribCount;
+    auto ribs = generateRibs(parameters, data.rootAirfoil, data.tipAirfoil);
+    const double inclination = angles.panelInclinationDegrees * std::numbers::pi / 180.0;
+    for (std::size_t i = 0; i < ribs.size(); ++i) {
+      const double span = ribs[i].spanPosition;
+      ribs[i].spanPosition = 700.0 + std::cos(inclination) * span;
+      ribs[i].dihedralHeight = 90.0 + std::sin(inclination) * span;
+      ribs[i].ribPlaneAngleDegrees = i == 0 ? angles.rootRibAngleDegrees :
+          i + 1 == ribs.size() ? angles.tipRibAngleDegrees : angles.intermediateRibAngleDegrees;
+      ribs[i].ribThicknessStartFactor = i == 0 ? 0.0 : i + 1 == ribs.size() ? -1.0 : -0.5;
+    }
+    StructureParameters structure;
+    structure.addBuildTabs = data.addBuildTabs;
+    structure.leadingEdgeType = data.leadingEdgeType;
+    structure.leadingEdgeTubeOd = data.leadingEdgeTubeOd;
+    structure.leadingEdgeTubeId = data.leadingEdgeTubeId;
+    structure.trailingEdgeType = data.trailingEdgeType;
+    structure.trailingEdgeWidth = data.trailingEdgeWidth;
+    structure.trailingEdgeHeight = data.trailingEdgeHeight;
+    for (const auto& spar : data.spars)
+      structure.spars.push_back({spar.chordLocationPercent, spar.verticalLocation,
+          spar.material, spar.type, spar.woodHeight, spar.woodWidth,
+          spar.tubeOd, spar.tubeId, spar.rodOd, spar.stripWidth,
+          spar.stripThickness, spar.tipChordLocationPercent});
+    std::fprintf(stderr, "Saved glider panel %d\n", panelIndex + 1);
+    const auto outer = [&] {
+      try { return applyWingStructure(ribs, structure); }
+      catch (const std::exception& error) {
+        std::fprintf(stderr, "%s\n", error.what());
+        throw;
+      }
+    }();
+    const auto bottomPoint = [](const RibDefinition& rib) {
+      const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+      const double bottom = untwistedRibBottom(rib);
+      return Point2{rib.spanPosition - std::sin(angle) * bottom,
+                    rib.dihedralHeight + std::cos(angle) * bottom};
+    };
+    const auto rootBottom = bottomPoint(ribs.front()), tipBottom = bottomPoint(ribs.back());
+    const double planeAngle = std::atan2(tipBottom.y - rootBottom.y, tipBottom.x - rootBottom.x);
+    double plane = std::numeric_limits<double>::max();
+    for (const auto& rib : ribs) {
+      const auto bottom = bottomPoint(rib);
+      plane = std::min(plane, -std::sin(planeAngle) * bottom.x + std::cos(planeAngle) * bottom.y);
+    }
+    for (const auto& rib : outer.ribs) {
+      int front = 0, rear = 0;
+      const auto offset = ribTwistTranslation(rib.rib);
+      const double twistAngle = rib.rib.twistDegrees * std::numbers::pi / 180.0;
+      const double ribAngle = rib.rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+      for (const auto& segment : rib.outlineSegments) {
+        if (segment.spline || segment.points.size() != 2) continue;
+        const double left = std::min(segment.points[0].x, segment.points[1].x);
+        const double right = std::max(segment.points[0].x, segment.points[1].x);
+        if (std::abs(right - left - 25.4 * 3.0 / 16.0) > 1.0e-7) continue;
+        if (left < rib.rib.chord * 0.5) ++front; else ++rear;
+        assert(right < rib.rib.chord - data.trailingEdgeWidth);
+        for (const auto point : segment.points) {
+          const double z = std::sin(twistAngle) * point.x + std::cos(twistAngle) * point.y + offset.y;
+          const double elevation = -std::sin(planeAngle) * rib.rib.spanPosition +
+              std::cos(planeAngle) * rib.rib.dihedralHeight + std::cos(ribAngle - planeAngle) * z;
+          assert(std::abs(elevation - plane) < 1.0e-7);
+        }
+      }
+      assert(front == (data.addBuildTabs ? 1 : 0) && rear == (data.addBuildTabs ? 1 : 0));
+    }
+    // Changing the preceding panels' contribution to the assembly origin
+    // must not change this panel's manufacturing contours or build plane.
+    for (auto& rib : ribs) {
+      rib.spanPosition += 1200.0;
+      rib.dihedralHeight += 350.0;
+      rib.leadingEdgeOffset += 100.0;
+    }
+    const auto relocated = applyWingStructure(ribs, structure);
+    for (std::size_t i = 0; i < outer.ribs.size(); ++i) {
+      const auto& before = outer.ribs[i].outerOutline;
+      const auto& after = relocated.ribs[i].outerOutline;
+      assert(before.size() == after.size());
+      for (std::size_t j = 0; j < before.size(); ++j)
+        assert(std::hypot(before[j].x - after[j].x, before[j].y - after[j].y) < 1.0e-7);
+    }
+  }
+
+    }
+
+    }
 
   LengthInput thickness{"testThickness", 3.175};
   thickness.setGlobalUnit(DisplayUnit::Inches);
@@ -248,6 +377,31 @@ int main(int argc, char* argv[]) {
   auto* dihedralSpin = spacingEditor.findChild<QDoubleSpinBox*>("dihedral");
   auto* twistSpin = spacingEditor.findChild<QDoubleSpinBox*>("twist");
   assert(dihedralSpin != nullptr && twistSpin != nullptr);
+  auto* buildTabs = spacingEditor.findChild<QCheckBox*>("addBuildTabs");
+  assert(buildTabs && !buildTabs->isChecked() && !buildTabs->isEnabled());
+  twistSpin->setValue(3.0);
+  assert(buildTabs->isEnabled());
+  buildTabs->setChecked(true);
+  assert(panelDataFromJson(panelDataToJson(spacingEditor.data())).addBuildTabs);
+  twistSpin->setValue(-3.0);
+  assert(buildTabs->isEnabled());
+  twistSpin->setValue(0.0);
+  assert(!buildTabs->isEnabled());
+  assert(!buildTabs->isChecked());
+  assert(!spacingEditor.data().addBuildTabs);
+  twistSpin->setValue(3.0);
+  assert(buildTabs->isEnabled() && !buildTabs->isChecked());
+  twistSpin->setValue(0.0);
+  auto* defaultBuildTabs = defaultsRibsEditor.findChild<QCheckBox*>("addBuildTabs");
+  assert(defaultBuildTabs && !defaultBuildTabs->isChecked());
+  defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(2.0);
+  defaultBuildTabs->setChecked(true);
+  assert(panelDataFromJson(panelDataToJson(defaultsRibsEditor.data())).addBuildTabs);
+  defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(0.0);
+  assert(!defaultBuildTabs->isEnabled() && !defaultBuildTabs->isChecked());
+  assert(!defaultsRibsEditor.data().addBuildTabs);
+  assert(!installedDefaultPanelData(DisplayUnit::Inches).addBuildTabs);
+  assert(!installedDefaultPanelData(DisplayUnit::Millimeters).addBuildTabs);
   assert(dihedralSpin->width() == twistSpin->width());
   assert(dihedralSpin->width() == panelSpanSpin->width());
   assert(spacingEditor.findChild<QSpinBox*>("ribCount")->width() ==

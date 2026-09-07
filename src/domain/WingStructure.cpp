@@ -638,8 +638,9 @@ Point2 camberCenter(const RibDefinition& rib, const double x) {
 Point2 modelPlanePoint(const RibDefinition& rib, const Point2 local) {
   const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
   const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
-  const double sectionX = std::cos(twist) * local.x - std::sin(twist) * local.y;
-  const double sectionZ = std::sin(twist) * local.x + std::cos(twist) * local.y;
+  const auto translation = ribTwistTranslation(rib);
+  const double sectionX = std::cos(twist) * local.x - std::sin(twist) * local.y + translation.x;
+  const double sectionZ = std::sin(twist) * local.x + std::cos(twist) * local.y + translation.y;
   return {rib.leadingEdgeOffset + sectionX,
           rib.dihedralHeight + std::cos(plane) * sectionZ};
 }
@@ -647,10 +648,11 @@ Point2 modelPlanePoint(const RibDefinition& rib, const Point2 local) {
 Point2 localPlanePoint(const RibDefinition& rib, const Point2 model) {
   const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
   const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
-  const double x = model.x - rib.leadingEdgeOffset;
+  const auto translation = ribTwistTranslation(rib);
+  const double x = model.x - rib.leadingEdgeOffset - translation.x;
   const double planeCosine = std::cos(plane);
   const double y = (model.y - rib.dihedralHeight) /
-      (std::abs(planeCosine) < 1.0e-9 ? 1.0 : planeCosine);
+      (std::abs(planeCosine) < 1.0e-9 ? 1.0 : planeCosine) - translation.y;
   return {std::cos(angle) * x + std::sin(angle) * y,
           -std::sin(angle) * x + std::cos(angle) * y};
 }
@@ -691,11 +693,51 @@ std::vector<Point2> straightExposedLeadingEdgeCenters(
   const double radius = diameter * 0.5;
   constexpr double exposure = 0.1;
   const double centerX = std::max(0.001, radius - exposure);
-  std::vector<Point2> nominal;
-  nominal.reserve(ribs.size());
-  for (const auto& rib : ribs)
-    nominal.push_back(camberCenter(rib, centerX));
-  return straightMemberCenters(ribs, nominal);
+  const auto centersAt = [&](const double x) {
+    std::vector<Point2> nominal;
+    nominal.reserve(ribs.size());
+    for (const auto& rib : ribs) nominal.push_back(camberCenter(rib, x));
+    return straightMemberCenters(ribs, nominal);
+  };
+  const auto seatsOnBothSurfaces = [&](const std::vector<Point2>& centers,
+                                      const bool requireNoseClearance) {
+    for (std::size_t i = 0; i < ribs.size(); ++i) {
+      const auto [upper, lower] = localSurfaces(ribs[i]);
+      if (!aftCircleSurfaceIntersection(upper, centers[i], radius) ||
+          !aftCircleSurfaceIntersection(lower, centers[i], radius))
+        return false;
+      if (requireNoseClearance &&
+          std::hypot(centers[i].x - upper.front().x,
+                     centers[i].y - upper.front().y) > radius - 0.01)
+        return false;
+    }
+    return true;
+  };
+  auto centers = centersAt(centerX);
+  if (seatsOnBothSurfaces(centers, false)) return centers;
+  // A fixed X exposure alone does not account for the nose height of cambered
+  // airfoils. Seek the smallest forward adjustment that seats the same straight
+  // tube/rod on every rib, keeping a small margin away from a tangent contact.
+  double invalidX = centerX;
+  for (int step = 1; step <= 64; ++step) {
+    double validX = centerX * (1.0 - static_cast<double>(step) / 64.0);
+    auto candidate = centersAt(validX);
+    if (!seatsOnBothSurfaces(candidate, true)) {
+      invalidX = validX;
+      continue;
+    }
+    for (int iteration = 0; iteration < 24; ++iteration) {
+      const double middle = (validX + invalidX) * 0.5;
+      auto refined = centersAt(middle);
+      if (seatsOnBothSurfaces(refined, true)) {
+        validX = middle;
+        candidate = std::move(refined);
+      } else invalidX = middle;
+    }
+    return candidate;
+  }
+  // Preserve the existing intersection error for a genuinely incompatible LE.
+  return centers;
 }
 
 struct FinishedRibOutline {
@@ -968,6 +1010,38 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       p.bottomTeSheetingTaperStartLocationPercent, "Bottom TE Sheeting");
   StructuredWing wing;
   wing.ribs.reserve(ribs.size());
+  const bool buildTabs = p.addBuildTabs && std::any_of(ribs.begin(), ribs.end(),
+      [](const RibDefinition& rib) { return rib.twistDegrees != 0.0; });
+  // Start with the plane tangent to the untwisted root and tip undersides.
+  // Its spanwise slope follows taper as well as panel inclination. If an
+  // intermediate airfoil extends below it, translate the plane down just
+  // enough to support that rib too, without changing the root-to-tip slope.
+  const auto ribAngle = [](const RibDefinition& rib) {
+    const bool centerRoot = std::abs(rib.spanPosition) < 1.0e-9 &&
+        std::abs(rib.ribThicknessStartFactor) < 1.0e-9;
+    return centerRoot ? 0.0 : rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+  };
+  const auto bottomPoint = [&](const RibDefinition& rib) {
+    const double bottom = untwistedRibBottom(rib);
+    const double angle = ribAngle(rib);
+    return Point2{rib.spanPosition - std::sin(angle) * bottom,
+                  rib.dihedralHeight + std::cos(angle) * bottom};
+  };
+  const auto rootBottom = bottomPoint(ribs.front());
+  const auto tipBottom = bottomPoint(ribs.back());
+  const double panelAngle = std::atan2(
+      tipBottom.y - rootBottom.y, tipBottom.x - rootBottom.x);
+  const auto stationHeight = [&](const RibDefinition& rib) {
+    return -std::sin(panelAngle) * (rib.spanPosition - ribs.front().spanPosition) +
+        std::cos(panelAngle) * (rib.dihedralHeight - ribs.front().dihedralHeight);
+  };
+  const auto verticalProjection = [&](const RibDefinition& rib) {
+    return std::cos(ribAngle(rib) - panelAngle);
+  };
+  double buildPlane = std::numeric_limits<double>::max();
+  for (const auto& rib : ribs)
+    buildPlane = std::min(buildPlane,
+        stationHeight(rib) + verticalProjection(rib) * untwistedRibBottom(rib));
   ProfiledSpanMember leadingStock{"Block leading edge", {}};
   ProfiledSpanMember trailingStock{"Sheet trailing edge", {}};
   const double trailingEdgeSlotDepth = std::max(0.0,
@@ -1695,6 +1769,11 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                       upper, rearTopStart, true);
     addTeAlternatives(teBottomSheet, p.teBottomSheet, p.teBottomSheetThickness,
                       lower, rearBottomStart, false);
+    std::vector<std::pair<double, double>> bottomSheetingRanges;
+    if (buildTabs)
+      for (const auto& recess : lowerRecesses)
+        if (recess.depth > 0.0 && recess.right > recess.left)
+          bottomSheetingRanges.emplace_back(recess.left, recess.right);
     retainedUpper = applySurfaceRecesses(retainedUpper, std::move(upperRecesses), true);
     retainedLower = applySurfaceRecesses(retainedLower, std::move(lowerRecesses), false);
     std::vector<Notch> topNotches;
@@ -1763,6 +1842,121 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           spoilerTopLeft - p.spoilerThickness,
           spoilerTopRight - p.spoilerThickness);
     auto notchedLower = applyNotches(retainedLower, bottomNotches, false);
+    if (buildTabs) {
+      constexpr double tabWidth = 25.4 * 3.0 / 16.0;
+      const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
+      const auto translation = ribTwistTranslation(rib);
+      const double cosine = std::cos(angle);
+      const double projection = verticalProjection(rib);
+      if (cosine <= 1.0e-6 || projection <= 1.0e-6)
+        throw std::invalid_argument("Build tabs require twist between -90 and 90 degrees");
+      const double footHeight = (buildPlane - stationHeight(rib)) / projection;
+      std::vector<std::pair<double, double>> occupiedTabs;
+      for (const double fraction : {0.25, 0.75}) {
+        constexpr double clearance = 1.0;
+        const double nominal = fraction * rib.chord;
+        std::vector<double> candidates{nominal};
+        if (fraction == 0.75)
+          candidates.push_back(retainedLower.back().x - tabWidth * 0.5 - clearance);
+        for (const auto& notch : bottomNotches) {
+          candidates.push_back(notch.centerX - (notch.width + tabWidth) * 0.5 - clearance);
+          candidates.push_back(notch.centerX + (notch.width + tabWidth) * 0.5 + clearance);
+        }
+        for (const auto& occupied : occupiedTabs) {
+          candidates.push_back(occupied.first - tabWidth * 0.5 - clearance);
+          candidates.push_back(occupied.second + tabWidth * 0.5 + clearance);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(),
+            [nominal](const double a, const double b) {
+              // Keep a clear nominal position; otherwise prefer a position
+              // ahead of the spar even when the aft alternative is closer.
+              const auto rank = [nominal](const double center) {
+                return center == nominal ? 0 : center < nominal ? 1 : 2;
+              };
+              if (rank(a) != rank(b)) return rank(a) < rank(b);
+              return std::abs(a - nominal) < std::abs(b - nominal);
+            });
+        const auto clearsSpars = [&](const double center) {
+              const double left = center - tabWidth * 0.5;
+              const double right = center + tabWidth * 0.5;
+              if (left <= retainedLower.front().x || right >= retainedLower.back().x)
+                return false;
+              // A rear tab must remain an aft support, even when TE stock
+              // removes the nominal 75% location on a small tapered rib.
+              if (fraction == 0.75 && left < 0.5 * rib.chord)
+                return false;
+              for (const auto& notch : bottomNotches)
+                if (left < notch.centerX + notch.width * 0.5 + clearance - 1.0e-8 &&
+                    right > notch.centerX - notch.width * 0.5 - clearance + 1.0e-8)
+                  return false;
+              for (const auto& occupied : occupiedTabs)
+                if (left < occupied.second + clearance - 1.0e-8 &&
+                    right > occupied.first - clearance + 1.0e-8)
+                  return false;
+              return true;
+            };
+        const auto chosen = std::find_if(candidates.begin(), candidates.end(), clearsSpars);
+        if (chosen == candidates.end())
+          throw std::invalid_argument("No room for build tabs clear of bottom spar notches at rib " +
+              std::to_string(ribIndex + 1));
+        double center = *chosen;
+        const auto collidesWithSheet = [&](const double candidate) {
+          const double left = candidate - tabWidth * 0.5;
+          const double right = candidate + tabWidth * 0.5;
+          return std::any_of(bottomSheetingRanges.begin(), bottomSheetingRanges.end(),
+              [&](const auto& sheet) {
+                return left < sheet.second - 1.0e-8 && right > sheet.first + 1.0e-8;
+              });
+        };
+        if (fraction == 0.25 && collidesWithSheet(center)) {
+          // Try the first clear position aft of the front sheeting and spar.
+          // Reserve space ahead of the rear tab so the two supports stay apart.
+          double minimumLeft = nominal;
+          std::vector<double> aftCandidates;
+          for (const auto& sheet : bottomSheetingRanges) {
+            if (center - tabWidth * 0.5 < sheet.second - 1.0e-8 &&
+                center + tabWidth * 0.5 > sheet.first + 1.0e-8)
+              minimumLeft = std::max(minimumLeft, sheet.second + clearance);
+            aftCandidates.push_back(sheet.second + clearance + tabWidth * 0.5);
+          }
+          for (const auto& notch : bottomNotches)
+            aftCandidates.push_back(notch.centerX + (notch.width + tabWidth) * 0.5 + clearance);
+          std::sort(aftCandidates.begin(), aftCandidates.end());
+          const auto aft = std::find_if(aftCandidates.begin(), aftCandidates.end(),
+              [&](const double candidate) {
+                return candidate - tabWidth * 0.5 >= minimumLeft - 1.0e-8 &&
+                    candidate + tabWidth * 0.5 + clearance < 0.75 * rib.chord - tabWidth * 0.5 &&
+                    clearsSpars(candidate) && !collidesWithSheet(candidate);
+              });
+          if (aft != aftCandidates.end()) center = *aft;
+        }
+        if (collidesWithSheet(center))
+          throw std::invalid_argument("Build tab / bottom sheeting collision at rib " +
+              std::to_string(ribIndex + 1) + " (" +
+              std::to_string(static_cast<int>(fraction * 100)) +
+              "% chord tab). Adjust the sheeting or disable Add Build Tabs.");
+        const double left = center - tabWidth * 0.5;
+        const double right = left + tabWidth;
+        if (left <= notchedLower.front().x || right >= notchedLower.back().x)
+          throw std::invalid_argument("Build tab at " +
+              std::to_string(static_cast<int>(fraction * 100)) +
+              "% chord is outside the retained rib at rib " + std::to_string(ribIndex + 1));
+        occupiedTabs.emplace_back(left, right);
+        const auto foot = [&](const double x) {
+          return Point2{x, (footHeight - translation.y - std::sin(angle) * x) / cosine};
+        };
+        std::vector<Point2> tabbed;
+        for (const auto point : notchedLower)
+          if (point.x < left) tabbed.push_back(point);
+        tabbed.push_back({left, interpolateY(notchedLower, left)});
+        tabbed.push_back(foot(left));
+        tabbed.push_back(foot(right));
+        tabbed.push_back({right, interpolateY(notchedLower, right)});
+        for (const auto point : notchedLower)
+          if (point.x > right) tabbed.push_back(point);
+        notchedLower = std::move(tabbed);
+      }
+    }
     std::vector<Point2> outline;
     outline.reserve(notchedUpper.size() + notchedLower.size() - 1);
     for (auto it = notchedUpper.rbegin(); it != notchedUpper.rend(); ++it) outline.push_back(*it);

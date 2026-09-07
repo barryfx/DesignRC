@@ -13,6 +13,16 @@ current release is **1.1.0**.
 - Designs one or more connected half-wing panels and mirrors them into a complete wing.
 - Imports root and tip airfoils from Selig-style `.dat` coordinate files.
 - Interpolates airfoil profiles, chord, sweep, twist, and rib positions across each panel.
+- Positive twist raises the trailing edge; negative twist raises the leading edge. Ribs stay
+  above their untwisted bottom plane. With nonzero Tip Twist, **Ribs > Add Build Tabs** adds
+  two 3/16-inch-wide tabs at 25% and 75% chord, reaching a flat plane tangent to the untwisted root and tip undersides.
+  The plane is lowered only as needed to clear intermediate ribs.
+  Tabs move ahead of an overlapping bottom spar notch with 1 mm clearance, falling back
+  behind it when there is no room ahead.
+  A front tab that overlaps bottom sheeting moves behind the sheeting and spar when room
+  permits. Otherwise, or for a rear tab collision, generation stops with a collision error.
+  The option defaults to unchecked, is also available in Defaults, and applies to rib part
+  exports and STEP solids.
 - Generates solid ribs, spars, shear webs, sheeting, leading and trailing edges, turbulators,
   ailerons, flaps, hinge posts, and wing joiners.
 - Displays the assembled wing in an interactive OpenCascade 3D viewport.

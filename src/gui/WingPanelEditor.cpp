@@ -399,7 +399,7 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(spoilerMinimumCircleDistance);
   PUT(wiringHoles); PUT(wiringHoleStartRib); PUT(wiringHoleEndRib);
   PUT(wiringHoleChordLocationPercent); PUT(wiringHoleWidth); PUT(wiringHoleHeight);
-  PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
+  PUT(addBuildTabs); PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
   PUT(behindSparJoinerOd); PUT(behindSparJoinerId); PUT(fiftyPercentJoiner);
   PUT(fiftyPercentJoinerType); PUT(fiftyPercentJoinerOd); PUT(fiftyPercentJoinerId);
   PUT(sparShearWebs); PUT(joinerPanelMode);
@@ -520,7 +520,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_D(spoilerMinimumCircleDistance);
   READ_B(wiringHoles); READ_I(wiringHoleStartRib); READ_I(wiringHoleEndRib);
   READ_D(wiringHoleChordLocationPercent); READ_D(wiringHoleWidth); READ_D(wiringHoleHeight);
-  READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
+  READ_B(addBuildTabs); READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
   READ_I(behindSparJoinerType); READ_D(behindSparJoinerOd); READ_D(behindSparJoinerId);
   READ_B(fiftyPercentJoiner); READ_I(fiftyPercentJoinerType);
   READ_D(fiftyPercentJoinerOd); READ_D(fiftyPercentJoinerId);
@@ -1146,7 +1146,13 @@ QWidget* WingPanelEditor::makeSpecsPage() {
   connect(dihedral_, &QDoubleSpinBox::valueChanged, this, [this] {
     updateConditionalControls(); emitChanged();
   });
-  connect(twist_, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+  connect(twist_, &QDoubleSpinBox::valueChanged, this, [this] {
+    if (addBuildTabs_) {
+      addBuildTabs_->setEnabled(twist_->value() != 0.0);
+      if (!addBuildTabs_->isEnabled()) addBuildTabs_->setChecked(false);
+    }
+    emitChanged();
+  });
   return scrollPage(content);
 }
 
@@ -1170,6 +1176,10 @@ QWidget* WingPanelEditor::makeRibsPage() {
   form->addRow("Rib Count", ribCount_);
   form->addRow(ribSpacing_);
   form->addRow("Rib Thickness", ribThickness_);
+  addBuildTabs_ = new QCheckBox{"Add Build Tabs (Enabled if Tip Twist Applied)"};
+  addBuildTabs_->setObjectName("addBuildTabs");
+  form->addRow(addBuildTabs_);
+  connect(addBuildTabs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   addRib1a_ = new QCheckBox{
       "Add Rib 1a (Adds an extra rib between ribs 1 and 2 for extra strength)"};
   addRib1a_->setObjectName("addRib1a");
@@ -2552,6 +2562,7 @@ WingPanelData WingPanelEditor::data() const {
     d.unitOverrides.insert("wiringHoleWidth", wiring.width->unitOverride());
     d.unitOverrides.insert("wiringHoleHeight", wiring.height->unitOverride());
   }
+  d.addBuildTabs = addBuildTabs_->isChecked();
   d.addRib1a = showRootChord_ && addRib1a_->isChecked();
   if (showJoinerPage_) {
     d.joinerPanelMode = joinerMode_;
@@ -2690,6 +2701,7 @@ void WingPanelEditor::setData(const WingPanelData& d) {
         spoilerMinimumCircleDistance_, spoilerMinimumCircleDistance);
     airfoilData_.spoilerSupportRailHeight = d.spoilerSupportRailHeight;
   }
+  addBuildTabs_->setChecked(d.addBuildTabs);
   addRib1a_->setChecked(showRootChord_ && d.addRib1a);
   if (showJoinerPage_) {
     clearJoinerEditors();
@@ -2899,6 +2911,8 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  addBuildTabs_->setEnabled(twist_->value() != 0.0);
+  if (!addBuildTabs_->isEnabled()) addBuildTabs_->setChecked(false);
   ribLighteningHoleDetails_->setVisible(ribLighteningHoles_->isChecked());
   const bool ribletEligible = ribletsAvailable();
   riblets_->setEnabled(ribletEligible);
