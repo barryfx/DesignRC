@@ -119,6 +119,7 @@ struct WingPanelData {
   double sweep{70.0};
   double dihedral{4.0};
   double twist{0.0};
+  bool addBuildTabs{false};
   double ribThickness{3.0};
   int ribCount{9};
   bool ribLighteningHoles{false};
@@ -314,6 +315,7 @@ private:
   LengthInput* sweep_{};
   QDoubleSpinBox* dihedral_{};
   QDoubleSpinBox* twist_{};
+  QCheckBox* addBuildTabs_{};
   LengthInput* ribThickness_{};
   QSpinBox* ribCount_{};
   QLabel* ribSpacing_{};

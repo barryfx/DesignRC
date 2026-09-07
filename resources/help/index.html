@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.1.0 User Help</title>
+  <title>DesignRC 1.2 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,14 +44,14 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.1.0 User Help</h1>
+    <h1>DesignRC 1.2 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
-      <a href="#new-1-1">What's new in 1.1.0</a>
+      <a href="#new-1-2">What's new in 1.2</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
       <a href="#units">Units and value entry</a>
@@ -88,14 +88,9 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
-      <h2 id="new-1-1">What's new in 1.1.0</h2>
+      <h2 id="new-1-2">What's new in 1.2</h2>
       <ul>
-        <li>Spars can run between independent root and tip chord locations.</li>
-        <li>Front sheeting has configurable stop locations and spar-aware recessing; independent top and bottom TE sheeting supports constant width, thickness, and taper controls.</li>
-        <li>Spoilers can be positioned immediately behind the top spar and have expanded collision detection and clearer error messages.</li>
-        <li>Joiners have improved dihedral alignment, removable rod/sleeve engagement, and joiner-to-joiner collision checking.</li>
-        <li>Percent fields accept two decimal places, while spinner arrows continue to move in one-percent increments.</li>
-        <li>Rib, DXF, SVG, plan, and STEP output has been refined, including sharper TE-sheeting rib points without fragile slivers.</li>
+        <li><strong>Add Build Tabs:</strong> the Ribs tab can add temporary supports for building a twisted wing panel on a flat surface. The checkbox is enabled when Tip Twist is nonzero and is cleared when Tip Twist returns to 0.0.</li>
       </ul>
 
       <h2 id="workspace">The main window</h2>
@@ -177,13 +172,17 @@
         <dt>Root / Tip Chord</dt><dd>Airfoil chord at the panel ends. Root Chord is editable only on Panel 1.</dd>
         <dt>Tip Sweep</dt><dd>Fore/aft displacement of the tip leading edge from the root leading edge.</dd>
         <dt>Dihedral</dt><dd>Panel angle used when assembling adjoining panels in 3D.</dd>
-        <dt>Tip Twist</dt><dd>Progressive wash-in or wash-out from zero at the root to the entered tip angle.</dd>
+        <dt>Tip Twist</dt><dd>Progressive wash-in or wash-out, added to the twist inherited from the preceding panel. Positive twist raises the trailing edge; negative twist raises the leading edge. Neither direction lowers the airfoil below its untwisted bottom plane.</dd>
       </dl>
 
       <h2 id="ribs">Ribs tab</h2>
       <dl>
         <dt>Rib Count</dt><dd>Number of regular rib stations including root and tip. The calculated center spacing is displayed below it.</dd>
         <dt>Rib Thickness</dt><dd>Sheet thickness used for solid ribs, slots, rib faces, and member endpoints.</dd>
+        <dt>Add Build Tabs (Enabled if Tip Twist Applied)</dt>
+        <dd>
+          <p>Adds temporary supports so a wing panel can be built on a flat surface with its intended twist. The checkbox is available only when <strong>Specs &gt; Tip Twist</strong> is nonzero. Returning Tip Twist to <strong>0.0</strong> clears and disables the checkbox; applying twist again does not automatically check it.</p>
+        </dd>
         <dt>Add Rib 1a</dt><dd>Panel 1 only. Adds a center-section reinforcement rib midway between the first two regular stations; later rib labels adjust accordingly.</dd>
         <dt>Lightening Holes</dt><dd>Creates optimized circular rib holes over the selected rib range while honoring minimum border and inter-hole distances. This can significantly increase generation time.</dd>
         <dt>Riblets</dt><dd>Adds one or more partial ribs per bay over the selected range. Riblets require a carbon-fiber leading edge and a mid-position CF spar between 20% and 40% chord.</dd>
@@ -316,10 +315,10 @@
         <li>global millimeter or inch display;</li>
         <li>default number of connected panels;</li>
         <li>geometry worker threads, up to the available CPU thread count minus one;</li>
-        <li>complete parameter defaults for every panel; and</li>
+        <li>complete parameter defaults for every panel, including Add Build Tabs (unchecked initially and available only with nonzero Tip Twist); and</li>
         <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
       </ul>
-      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.1.0 installed defaults.</p>
+      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.2 installed defaults.</p>
 
       <h2 id="validation">Validation and automatic corrections</h2>
       <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler-to-spar and spoiler-to-TE collisions, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, joiner-to-joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
@@ -338,7 +337,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.1.0 &middot; Release date: August 11, 2026</footer>
+  <footer>DesignRC 1.2 &middot; Release date: September 7, 2026</footer>
 </div>
 </body>
 </html>

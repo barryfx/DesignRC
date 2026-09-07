@@ -95,6 +95,7 @@ TopoDS_Shape buildWingPreview(
     std::vector<gp_Pnt> modelPoints;
     modelPoints.reserve(previewOutline.size());
     const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
+    const auto translation = domain::ribTwistTranslation(rib);
     const double twistCos = std::cos(twist);
     const double twistSin = std::sin(twist);
     const double planeAngle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
@@ -109,8 +110,8 @@ TopoDS_Shape buildWingPreview(
     for (const auto& point : previewOutline) {
       const double localX = point.x * rib.chord;
       const double localZ = point.y * rib.chord;
-      const double sectionX = twistCos * localX - twistSin * localZ;
-      const double sectionZ = twistSin * localX + twistCos * localZ;
+      const double sectionX = twistCos * localX - twistSin * localZ + translation.x;
+      const double sectionZ = twistSin * localX + twistCos * localZ + translation.y;
       const double startOffset = ribThickness * rib.ribThicknessStartFactor;
       modelPoints.emplace_back(
           rib.leadingEdgeOffset + sectionX,
@@ -199,8 +200,9 @@ gp_Pnt transformLocal(const domain::RibDefinition& rib, const domain::Point2 poi
   const double cosine = std::cos(angle);
   const double sine = std::sin(angle);
   const double planeAngle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
-  const double sectionX = cosine * point.x - sine * point.y;
-  const double sectionZ = sine * point.x + cosine * point.y;
+  const auto translation = domain::ribTwistTranslation(rib);
+  const double sectionX = cosine * point.x - sine * point.y + translation.x;
+  const double sectionZ = sine * point.x + cosine * point.y + translation.y;
   const bool centerRoot = std::abs(rib.spanPosition) < 1.0e-9 &&
       std::abs(rib.ribThicknessStartFactor) < 1.0e-9;
   return {rib.leadingEdgeOffset + sectionX,

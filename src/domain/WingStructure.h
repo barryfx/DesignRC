@@ -164,6 +164,7 @@ struct StructureParameters {
   double wiringHoleWidth{9.525};
   double wiringHoleHeight{6.35};
   bool rib1aPresent{false};
+  bool addBuildTabs{false};
   bool centerSparWoodJoiner{false};
   bool behindSparJoiner{false};
   int behindSparJoinerType{0}; // 0 none, 1 CF rod, 2 CF tube, 3 aluminum tube
