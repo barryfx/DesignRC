@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-current release is **1.1.0**.
+current release is **1.2.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -13,16 +13,7 @@ current release is **1.1.0**.
 - Designs one or more connected half-wing panels and mirrors them into a complete wing.
 - Imports root and tip airfoils from Selig-style `.dat` coordinate files.
 - Interpolates airfoil profiles, chord, sweep, twist, and rib positions across each panel.
-- Positive twist raises the trailing edge; negative twist raises the leading edge. Ribs stay
-  above their untwisted bottom plane. With nonzero Tip Twist, **Ribs > Add Build Tabs** adds
-  two 3/16-inch-wide tabs at 25% and 75% chord, reaching a flat plane tangent to the untwisted root and tip undersides.
-  The plane is lowered only as needed to clear intermediate ribs.
-  Tabs move ahead of an overlapping bottom spar notch with 1 mm clearance, falling back
-  behind it when there is no room ahead.
-  A front tab that overlaps bottom sheeting moves behind the sheeting and spar when room
-  permits. Otherwise, or for a rear tab collision, generation stops with a collision error.
-  The option defaults to unchecked, is also available in Defaults, and applies to rib part
-  exports and STEP solids.
+- Adds rib build tabs for assembling twisted wing panels on a flat surface.
 - Generates solid ribs, spars, shear webs, sheeting, leading and trailing edges, turbulators,
   ailerons, flaps, hinge posts, and wing joiners.
 - Displays the assembled wing in an interactive OpenCascade 3D viewport.
@@ -36,6 +27,21 @@ current release is **1.1.0**.
 
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
+
+## What's new in 1.2.0
+
+**Add Build Tabs** is a new checkbox on the **Ribs** tab, also available in **Defaults**.
+It starts unchecked and is enabled when **Specs > Tip Twist** is nonzero. Returning Tip Twist
+to 0.0 clears and disables it.
+
+- Adds two 3/16-inch-wide supports to each full rib, normally at 25% and 75% chord, for building
+  the panel with its intended twist on a flat surface.
+- Calculates a build plane from that panel's untwisted root and tip ribs, lowering it only enough
+  to clear intermediate ribs. Positive twist raises the trailing edge; negative twist raises
+  the leading edge.
+- Moves tabs clear of spar notches and, where possible, front sheeting or trailing-edge stock.
+  Unresolvable collisions stop generation with an error. Tabs appear in rib DXF/SVG/PDF exports
+  and STEP solids.
 
 ## What's new in 1.1.0
 
@@ -56,16 +62,16 @@ press **F1**.
 
 ## Download
 
-Release 1.1.0 provides three installers on the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.1.0):
+Release 1.2.0 provides three installers on the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.2.0):
 
-- `DesignRC-1.1.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.2.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.1.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.2.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.1.0_amd64.deb
+  sudo apt install ./designrc_1.2.0_amd64.deb
   designrc
   ```
 
@@ -78,21 +84,21 @@ Release 1.1.0 provides three installers on the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.1.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.2.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.1.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.2.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.1.0-SHA256SUMS.txt`. Use the checksum file
+The release also includes source archives and `DesignRC-1.2.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
 
 1. Select the number of wing panels.
-2. Configure each panel on the **Specs**, **Spars**, **LE/TE**, **Ailerons/Flaps**, and **Joiner**
+2. Configure each panel on the **Specs**, **Ribs**, **Spars**, **LE/TE**, **Ailerons/Flaps**, and **Joiner**
    tabs.
 3. Import root and tip airfoil `.dat` files where required.
 4. Press **Generate Wing** to validate the design and build the 3D geometry.
@@ -226,7 +232,9 @@ Then build the Release application and installer with:
 
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
-installer to `dist`. The resulting installer does not require administrator privileges.
+installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
+version such as 1.2 is packaged as 1.2.0. The resulting installer does not require administrator
+privileges.
 
 ## Building on Ubuntu 24.04
 
@@ -327,15 +335,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.1.0_amd64.deb
-dist/DesignRC-1.1.0-source.tar.gz
-dist/DesignRC-1.1.0-Linux-x64.sha256
+dist/designrc_1.2.0_amd64.deb
+dist/DesignRC-1.2.0-source.tar.gz
+dist/DesignRC-1.2.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.1.0_amd64.deb
+sudo apt install ./dist/designrc_1.2.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -384,15 +392,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.1.0-1.x86_64.rpm
-dist/DesignRC-1.1.0-source.tar.gz
-dist/DesignRC-1.1.0-Linux-RPM-x64.sha256
+dist/designrc-1.2.0-1.x86_64.rpm
+dist/DesignRC-1.2.0-source.tar.gz
+dist/DesignRC-1.2.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.1.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.2.0-1.x86_64.rpm
 designrc
 ```
 

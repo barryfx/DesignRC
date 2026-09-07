@@ -1,5 +1,7 @@
 #define MyAppName "DesignRC"
-#define MyAppVersion "1.1.0"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by build-installer.ps1
+#endif
 #define MyAppPublisher "Barry Foust"
 #define MyAppExeName "designrc.exe"
 #define MySourceDir "..\build\release\Release"

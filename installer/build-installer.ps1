@@ -4,12 +4,19 @@ param()
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$projectDefinition = Get-Content -LiteralPath (Join-Path $projectRoot 'CMakeLists.txt') -Raw
+$versionMatch = [regex]::Match($projectDefinition,
+    'project\(DesignRC\s+VERSION\s+(\d+\.\d+(?:\.\d+)?)\s')
+if (-not $versionMatch.Success) { throw 'Unable to read the DesignRC project version.' }
+$projectVersion = [version]$versionMatch.Groups[1].Value
+$appVersion = '{0}.{1}.{2}' -f $projectVersion.Major, $projectVersion.Minor,
+    [Math]::Max(0, $projectVersion.Build)
 $releaseBuildDir = Join-Path $projectRoot 'build\release'
 $releaseDir = Join-Path $releaseBuildDir 'Release'
 $sourceDir = Join-Path $releaseDir 'source'
-$sourceArchive = Join-Path $sourceDir 'DesignRC-1.1.0-source.zip'
+$sourceArchive = Join-Path $sourceDir "DesignRC-$appVersion-source.zip"
 $distDir = Join-Path $projectRoot 'dist'
-$publishedSourceArchive = Join-Path $distDir 'DesignRC-1.1.0-source.zip'
+$publishedSourceArchive = Join-Path $distDir "DesignRC-$appVersion-source.zip"
 $iscc = Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 
 if (-not (Test-Path -LiteralPath $iscc)) {
@@ -54,7 +61,7 @@ try {
   & tar.exe -a -c -f $sourceArchive @sourceEntries
   if ($LASTEXITCODE -ne 0) { throw 'Corresponding-source archive creation failed.' }
 
-  & $iscc (Join-Path $PSScriptRoot 'DesignRC.iss')
+  & $iscc "/DMyAppVersion=$appVersion" (Join-Path $PSScriptRoot 'DesignRC.iss')
   if ($LASTEXITCODE -ne 0) { throw 'Inno Setup compilation failed.' }
   New-Item -ItemType Directory -Force -Path $distDir | Out-Null
   Copy-Item -LiteralPath $sourceArchive -Destination $publishedSourceArchive -Force

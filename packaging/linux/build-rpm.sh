@@ -5,6 +5,7 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 version=$(sed -n 's/^project(DesignRC VERSION \([^ ]*\).*/\1/p' \
   "$project_root/CMakeLists.txt")
 test -n "$version"
+case "$version" in *.*.*) ;; *) version="$version.0" ;; esac
 build_dir="$project_root/build/fedora-release"
 package_stage=$(mktemp -d)
 trap 'rm -rf -- "$package_stage"' EXIT HUP INT TERM

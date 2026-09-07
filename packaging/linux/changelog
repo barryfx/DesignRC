@@ -1,3 +1,10 @@
+designrc (1.2.0) noble; urgency=medium
+
+  * Add rib build tabs for constructing twisted panels on a flat surface,
+    with panel-specific build planes, collision handling, and part/STEP export.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Mon, 07 Sep 2026 12:00:00 -0400
+
 designrc (1.1.0) noble; urgency=medium
 
   * DesignRC 1.1.0 release.
