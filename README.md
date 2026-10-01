@@ -62,6 +62,13 @@ press **F1**.
   above the tab-foot line; the check prevents protrusions below it rather than making every
   underside tangent to the building surface.
 
+**Usability improvements**
+
+- Cancel interrupts lightening-hole layout, hole cutting, and rib meshing. Other individual
+  geometry operations may finish before cancellation takes effect.
+- The splash screen and main window open on the same display in multi-monitor setups.
+- About points to the installed `licenses` folder for license texts and third-party notices.
+
 ## What's new in 1.2.0
 
 - Introduced **Add Build Tabs** on the **Ribs** tab and in **Defaults** for twisted panels.
@@ -85,16 +92,16 @@ press **F1**.
 
 ## Download
 
-The previously published 1.2.0 installers are available on the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.2.0):
+The 1.3.0 installers are available on the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.3.0):
 
-- `DesignRC-1.2.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.3.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.2.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.3.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.2.0_amd64.deb
+  sudo apt install ./designrc_1.3.0_amd64.deb
   designrc
   ```
 
@@ -107,15 +114,15 @@ The previously published 1.2.0 installers are available on the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.2.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.3.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.2.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.3.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.2.0-SHA256SUMS.txt`. Use the checksum file
+The release also includes source archives and `DesignRC-1.3.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
