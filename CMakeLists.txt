@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.2 LANGUAGES CXX)
+project(DesignRC VERSION 1.3.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -118,7 +118,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="September 7, 2026"
+  DESIGNRC_RELEASE_DATE="September 29, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
@@ -280,8 +280,10 @@ if(DESIGNRC_BUILD_TESTS)
   add_test(NAME designrc_step_export_tests COMMAND designrc_step_export_tests)
   add_test(NAME designrc_joiner_backend_tests
     COMMAND designrc --joiner-backend-regression)
+  add_test(NAME designrc_cancellation_backend_tests
+    COMMAND designrc --cancellation-backend-regression)
   if(NOT WIN32)
-    set_tests_properties(designrc_joiner_backend_tests PROPERTIES
+    set_tests_properties(designrc_joiner_backend_tests designrc_cancellation_backend_tests PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   endif()
 endif()

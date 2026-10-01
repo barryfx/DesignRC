@@ -20,6 +20,7 @@
 #include <QTabWidget>
 
 #include <cassert>
+#include <cstdlib>
 #include <cstdio>
 #include <cmath>
 #include <filesystem>
@@ -27,8 +28,61 @@
 #include <limits>
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+  _set_error_mode(_OUT_TO_STDERR);
+#endif
   QApplication application{argc, argv};
   using namespace designrc::gui;
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    const auto defaults = installedDefaultPanelData(unit);
+    assert(!defaults.topRibCaps && !defaults.bottomRibCaps);
+    assert(defaults.topRibCapThickness == 1.5875 && defaults.bottomRibCapThickness == 1.5875);
+    assert(defaults.topRibCapWidth == 6.35 && defaults.bottomRibCapWidth == 6.35);
+    // The same editor serves regular panels and Settings -> Defaults.
+    for (const bool defaultsMode : {false, true}) {
+      WingPanelEditor editor{defaults, unit, defaultsMode};
+      auto* tabs = editor.findChild<QTabWidget*>();
+      assert(tabs->tabText(2) == "Rib Caps");
+      auto* top = editor.findChild<QCheckBox*>("topRibCaps");
+      auto* bottom = editor.findChild<QCheckBox*>("bottomRibCaps");
+      auto* details = editor.findChild<QWidget*>("topRibCapDetails");
+      auto* bottomDetails = editor.findChild<QWidget*>("bottomRibCapDetails");
+      assert(top && bottom && !top->isChecked() && !bottom->isChecked());
+      assert(details->isHidden() && bottomDetails->isHidden());
+      top->setChecked(true);
+      assert(!details->isHidden() && bottomDetails->isHidden());
+      bottom->setChecked(true);
+      assert(!bottomDetails->isHidden());
+      auto* width = editor.findChild<LengthInput*>("topRibCapWidth");
+      auto* thickness = editor.findChild<LengthInput*>("bottomRibCapThickness");
+      assert(width->unitOverride() == UnitOverride::Global);
+      if (unit == DisplayUnit::Inches)
+        assert(width->findChild<QDoubleSpinBox*>()->text() == "1/4 in");
+      auto* spin = width->findChild<QDoubleSpinBox*>();
+      spin->findChild<QLineEdit*>()->setText("3/8 in");
+      spin->interpretText();
+      assert(std::abs(width->valueMm() - 9.525) < 1.0e-8);
+      auto* thicknessSpin = thickness->findChild<QDoubleSpinBox*>();
+      thicknessSpin->findChild<QLineEdit*>()->setText("2mm");
+      thicknessSpin->interpretText();
+      const auto saved = panelDataFromJson(panelDataToJson(editor.data()));
+      assert(saved.topRibCaps && saved.bottomRibCaps);
+      assert(std::abs(saved.topRibCapWidth - 9.525) < 1.0e-8);
+      assert(std::abs(saved.bottomRibCapThickness - 2.0) < 1.0e-8);
+      assert(saved.unitOverrides.value("topRibCapWidth") == width->unitOverride());
+      if (unit == DisplayUnit::Millimeters)
+        assert(width->unitOverride() == UnitOverride::Inches);
+      WingPanelEditor restored{saved, unit, defaultsMode};
+      assert(restored.data().topRibCaps && restored.data().bottomRibCaps);
+      width->setValueMm(0.0);
+      QString error;
+      assert(!editor.validate(error) && error.contains("Rib Caps"));
+      top->setChecked(false);
+      assert(details->isHidden() && !bottomDetails->isHidden());
+    }
+  }
+  const auto oldProject = panelDataFromJson(QJsonObject{});
+  assert(!oldProject.topRibCaps && !oldProject.bottomRibCaps);
 
   {
     // Saved three-panel glider: TE stock displaces the rear tabs on the
@@ -109,10 +163,16 @@ int main(int argc, char* argv[]) {
     };
     const auto rootBottom = bottomPoint(ribs.front()), tipBottom = bottomPoint(ribs.back());
     const double planeAngle = std::atan2(tipBottom.y - rootBottom.y, tipBottom.x - rootBottom.x);
+    const auto thicknessHeight = [&](const RibDefinition& rib) {
+      const double q = std::sin(rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0 - planeAngle);
+      return std::min(q * rib.ribThicknessStartFactor * structure.ribThickness,
+          q * (rib.ribThicknessStartFactor + 1.0) * structure.ribThickness);
+    };
     double plane = std::numeric_limits<double>::max();
     for (const auto& rib : ribs) {
       const auto bottom = bottomPoint(rib);
-      plane = std::min(plane, -std::sin(planeAngle) * bottom.x + std::cos(planeAngle) * bottom.y);
+      plane = std::min(plane, -std::sin(planeAngle) * bottom.x +
+          std::cos(planeAngle) * bottom.y + thicknessHeight(rib));
     }
     for (const auto& rib : outer.ribs) {
       int front = 0, rear = 0;
@@ -129,7 +189,8 @@ int main(int argc, char* argv[]) {
         for (const auto point : segment.points) {
           const double z = std::sin(twistAngle) * point.x + std::cos(twistAngle) * point.y + offset.y;
           const double elevation = -std::sin(planeAngle) * rib.rib.spanPosition +
-              std::cos(planeAngle) * rib.rib.dihedralHeight + std::cos(ribAngle - planeAngle) * z;
+              std::cos(planeAngle) * rib.rib.dihedralHeight + std::cos(ribAngle - planeAngle) * z +
+              thicknessHeight(rib.rib);
           assert(std::abs(elevation - plane) < 1.0e-7);
         }
       }
@@ -227,9 +288,10 @@ int main(int argc, char* argv[]) {
   assert(spacingTabs != nullptr);
   assert(spacingTabs->tabText(0) == "Specs");
   assert(spacingTabs->tabText(1) == "Ribs");
-  assert(spacingTabs->tabText(2) == "Spars");
-  assert(spacingTabs->tabText(3) == "Sheeting");
-  assert(spacingTabs->tabText(4) == "Joiners");
+  assert(spacingTabs->tabText(2) == "Rib Caps");
+  assert(spacingTabs->tabText(3) == "Spars");
+  assert(spacingTabs->tabText(4) == "Sheeting");
+  assert(spacingTabs->tabText(5) == "Joiners");
   const auto belongsTo = [](QWidget* widget, QWidget* ancestor) {
     for (auto* parent = widget; parent; parent = parent->parentWidget())
       if (parent == ancestor) return true;
@@ -378,7 +440,13 @@ int main(int argc, char* argv[]) {
   auto* twistSpin = spacingEditor.findChild<QDoubleSpinBox*>("twist");
   assert(dihedralSpin != nullptr && twistSpin != nullptr);
   auto* buildTabs = spacingEditor.findChild<QCheckBox*>("addBuildTabs");
-  assert(buildTabs && !buildTabs->isChecked() && !buildTabs->isEnabled());
+  assert(buildTabs && !buildTabs->isChecked() && buildTabs->isEnabled());
+  assert(buildTabs->text() == "Add Build Tabs");
+  buildTabs->setChecked(true);
+  const auto flatTabData = panelDataFromJson(panelDataToJson(spacingEditor.data()));
+  assert(flatTabData.twist == 0.0 && flatTabData.addBuildTabs);
+  WingPanelEditor flatTabEditor{flatTabData, DisplayUnit::Millimeters};
+  assert(flatTabEditor.data().addBuildTabs);
   twistSpin->setValue(3.0);
   assert(buildTabs->isEnabled());
   buildTabs->setChecked(true);
@@ -386,20 +454,20 @@ int main(int argc, char* argv[]) {
   twistSpin->setValue(-3.0);
   assert(buildTabs->isEnabled());
   twistSpin->setValue(0.0);
-  assert(!buildTabs->isEnabled());
-  assert(!buildTabs->isChecked());
-  assert(!spacingEditor.data().addBuildTabs);
+  assert(buildTabs->isEnabled());
+  assert(buildTabs->isChecked());
+  assert(spacingEditor.data().addBuildTabs);
   twistSpin->setValue(3.0);
-  assert(buildTabs->isEnabled() && !buildTabs->isChecked());
+  assert(buildTabs->isEnabled() && buildTabs->isChecked());
   twistSpin->setValue(0.0);
   auto* defaultBuildTabs = defaultsRibsEditor.findChild<QCheckBox*>("addBuildTabs");
-  assert(defaultBuildTabs && !defaultBuildTabs->isChecked());
+  assert(defaultBuildTabs && defaultBuildTabs->isEnabled() && !defaultBuildTabs->isChecked());
   defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(2.0);
   defaultBuildTabs->setChecked(true);
   assert(panelDataFromJson(panelDataToJson(defaultsRibsEditor.data())).addBuildTabs);
   defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(0.0);
-  assert(!defaultBuildTabs->isEnabled() && !defaultBuildTabs->isChecked());
-  assert(!defaultsRibsEditor.data().addBuildTabs);
+  assert(defaultBuildTabs->isEnabled() && defaultBuildTabs->isChecked());
+  assert(defaultsRibsEditor.data().addBuildTabs);
   assert(!installedDefaultPanelData(DisplayUnit::Inches).addBuildTabs);
   assert(!installedDefaultPanelData(DisplayUnit::Millimeters).addBuildTabs);
   assert(dihedralSpin->width() == twistSpin->width());
@@ -596,9 +664,10 @@ int main(int argc, char* argv[]) {
   auto* sparTabs = sparEditor.findChild<QTabWidget*>();
   assert(sparTabs != nullptr);
   assert(sparTabs->tabText(1) == "Ribs");
-  assert(sparTabs->tabText(2) == "Spars");
-  assert(sparTabs->tabText(3) == "Sheeting");
-  sparTabs->setCurrentIndex(2);
+  assert(sparTabs->tabText(2) == "Rib Caps");
+  assert(sparTabs->tabText(3) == "Spars");
+  assert(sparTabs->tabText(4) == "Sheeting");
+  sparTabs->setCurrentIndex(3);
   sparEditor.show();
   QApplication::processEvents();
   auto sparRows = sparEditor.findChildren<QWidget*>("sparEditorRow");
@@ -676,7 +745,7 @@ int main(int argc, char* argv[]) {
   WingPanelEditor migratedIntermediateEditor{migratedIntermediateSpars};
   assert(migratedIntermediateEditor.findChildren<QWidget*>("sparEditorRow").size() == 1);
   assert(shearWebs->isHidden() && !shearWebs->isChecked());
-  sparTabs->setCurrentIndex(3);
+  sparTabs->setCurrentIndex(4);
   QApplication::processEvents();
   auto* leTopSheetCheck = [&sparEditor]() {
     for (auto* check : sparEditor.findChildren<QCheckBox*>())

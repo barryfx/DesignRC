@@ -5,8 +5,10 @@
 
 #include <cassert>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
+#include <cstdio>
 #include <sstream>
 #include <filesystem>
 #include <fstream>
@@ -17,6 +19,9 @@
 #include <thread>
 
 int main() {
+#ifdef _WIN32
+  _set_error_mode(_OUT_TO_STDERR);
+#endif
   using designrc::domain::AirfoilProfile;
 
   const auto panelAngles = designrc::domain::calculatePanelAssemblyAngles({10.0, 6.0, 4.0});
@@ -55,9 +60,100 @@ int main() {
 
   const auto thick = AirfoilProfile::nacaSymmetric(0.18);
   const auto thin = AirfoilProfile::nacaSymmetric(0.08);
-  // Both twist directions raise the appropriate edge. Two straight tab feet
+  {
+    using namespace designrc::domain;
+    WingParameters parameters;
+    parameters.ribCount = 5;
+    parameters.dihedralDegrees = 8.0;
+    parameters.tipTwistDegrees = -4.0;
+    const auto ribs = generateRibs(parameters, thick, thick);
+    StructureParameters structure;
+    assert(applyWingStructure(ribs, structure).ribCaps.empty());
+    structure.topRibCaps = structure.bottomRibCaps = true;
+    structure.topSpar = structure.bottomSpar = true;
+    structure.topRearSpar = structure.bottomRearSpar = true;
+    structure.leTopSheet = true;
+    structure.leTopSheetStopRib = 2;
+    const auto capped = applyWingStructure(ribs, structure);
+    assert(!capped.ribCaps.empty());
+    for (std::size_t i = 0; i < ribs.size(); ++i) {
+      int topCount = 0, bottomCount = 0;
+      for (const auto& cap : capped.ribCaps) {
+        if (cap.ribIndex != i) continue;
+        (cap.top ? topCount : bottomCount)++;
+        const double expectedWidth = i == 0 || i + 1 == ribs.size()
+            ? 0.5 * (6.35 + structure.ribThickness) : 6.35;
+        assert(std::abs(cap.endOffset - cap.startOffset - expectedWidth) < 1.0e-8);
+        if (i == 0) assert(cap.startOffset >= ribs[i].ribThicknessStartFactor * structure.ribThickness);
+        if (i + 1 == ribs.size()) assert(cap.endOffset <= (ribs[i].ribThicknessStartFactor + 1.0) * structure.ribThickness);
+        const auto half = cap.profile.size() / 2;
+        const double a = cap.profile.front().x, b = cap.profile[half - 1].x;
+        for (const auto [center, width] : {std::pair{0.25 * ribs[i].chord, 10.0},
+                                          std::pair{0.60 * ribs[i].chord, 4.0}})
+          assert(b <= center - width * 0.5 + 1.0e-8 || a >= center + width * 0.5 - 1.0e-8);
+        if (cap.top && i < 2) assert(a >= 0.25 * ribs[i].chord + 5.0 - 1.0e-8);
+        for (std::size_t k = 0; k < half; ++k) {
+          const auto outer = cap.profile[k], inner = cap.profile[cap.profile.size() - 1 - k];
+          assert(outer.x == inner.x);
+          assert(std::abs(std::abs(outer.y - inner.y) - 1.5875) < 1.0e-8);
+          const auto& outline = capped.ribs[i].outerOutline;
+          const bool recessed = std::any_of(outline.begin(), outline.end(), [&](const Point2 point) {
+            return std::hypot(point.x - inner.x, point.y - inner.y) < 1.0e-7;
+          });
+          if (!recessed) std::fprintf(stderr, "%s missing recess at %.9f, %.9f\n", cap.name.c_str(), inner.x, inner.y);
+          assert(recessed);
+        }
+      }
+      assert(topCount >= 2 && bottomCount >= 3);
+    }
+    // Full top sheeting suppresses caps; bottom caps remain independent.
+    structure.leTopSheetStopRib = 5;
+    structure.leTopSheetUpToSpar = false;
+    structure.leTopSheetStopChordPercent = 100.0;
+    const auto sheeted = applyWingStructure(ribs, structure);
+    assert(!sheeted.ribCaps.empty());
+    for (const auto& cap : sheeted.ribCaps) assert(!cap.top);
+    structure.leTopSheet = false;
+    structure.spoilers = true;
+    structure.spoilerStartRib = 2;
+    structure.spoilerEndRib = 5;
+    structure.spoilerImmediatelyBehindSpar = true;
+    const auto spoilerWing = applyWingStructure(ribs, structure);
+    const auto& spoiler = spoilerWing.spoilers.front();
+    for (const auto& cap : spoilerWing.ribCaps) {
+      if (!cap.top || cap.ribIndex < spoiler.startRibIndex) continue;
+      const auto station = cap.ribIndex - spoiler.startRibIndex;
+      const double a = spoiler.forwardRailProfiles[station][0].x;
+      const double b = spoiler.aftRailProfiles[station][1].x;
+      assert(cap.profile[cap.profile.size() / 2 - 1].x <= a + 1.0e-8 || cap.profile.front().x >= b - 1.0e-8);
+    }
+    structure.spoilers = false;
+    structure.addBuildTabs = true;
+    bool capTabCollision = false;
+    try { static_cast<void>(applyWingStructure(ribs, structure)); }
+    catch (const std::invalid_argument& error) {
+      capTabCollision = std::string{error.what()}.find(
+          "Geometric collision between Bottom Rib Cap and Build Tab at rib 1") != std::string::npos;
+    }
+    assert(capTabCollision);
+    structure.bottomRibCaps = false;
+    const auto topWithTabs = applyWingStructure(ribs, structure);
+    assert(!topWithTabs.ribCaps.empty());
+    for (const auto& cap : topWithTabs.ribCaps) assert(cap.top);
+    structure.addBuildTabs = false;
+    structure.bottomRibCaps = true;
+    // Disabling either face removes only its caps.
+    structure.topRibCaps = false;
+    for (const auto& cap : applyWingStructure(ribs, structure).ribCaps) assert(!cap.top);
+    structure.bottomRibCapThickness = 0.0;
+    bool rejected = false;
+    try { static_cast<void>(applyWingStructure(ribs, structure)); }
+    catch (const std::invalid_argument&) { rejected = true; }
+    assert(rejected);
+  }
+  // Zero twist and both twist directions produce two straight tab feet that
   // meet the same untwisted construction plane, including tapered ribs.
-  for (const double twist : {-6.0, 6.0}) {
+  for (const double twist : {-6.0, 0.0, 6.0}) {
     using namespace designrc::domain;
     WingParameters tabParameters;
     tabParameters.dihedralDegrees = 0.0;
@@ -92,15 +188,15 @@ int main() {
             std::abs(height(b) - plane) > 1.0e-7) continue;
         assert(std::abs(std::abs(a.x - b.x) - 25.4 * 3.0 / 16.0) < 1.0e-7);
         const double center = (a.x + b.x) * 0.5 / rib.rib.chord;
-        assert(std::abs(center - 0.25) < 1.0e-7 || std::abs(center - 0.75) < 1.0e-7);
+        assert(std::abs(center - 0.15) < 1.0e-7 || std::abs(center - 0.75) < 1.0e-7);
         ++feet;
       }
       assert(feet == 2);
     }
     const auto tipTranslation = ribTwistTranslation(tabRibs.back());
     const double tipAngle = twist * std::numbers::pi / 180.0;
-    assert(twist > 0.0 ? std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y > tipTranslation.y
-                       : tipTranslation.y > std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y);
+    assert(twist == 0.0 || (twist > 0.0 ? std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y > tipTranslation.y
+                       : tipTranslation.y > std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y));
     tabStructure.bottomSpar = true;
     const auto shifted = applyWingStructure(tabRibs, tabStructure);
     for (const auto& rib : shifted.ribs) {
@@ -173,7 +269,7 @@ int main() {
     const auto flatTabs = applyWingStructure(flat, tabStructure);
     tabStructure.addBuildTabs = false;
     const auto plain = applyWingStructure(flat, tabStructure);
-    assert(flatTabs.ribs.back().outerOutline.size() == plain.ribs.back().outerOutline.size());
+    assert(flatTabs.ribs.back().outerOutline.size() > plain.ribs.back().outerOutline.size());
   }
   {
     using namespace designrc::domain;
@@ -195,21 +291,39 @@ int main() {
         ribs.back().dihedralHeight + std::cos(tipAngle) * tipBottom - untwistedRibBottom(ribs.front()),
         ribs.back().spanPosition - std::sin(tipAngle) * tipBottom);
     double expectedPlane = std::numeric_limits<double>::max();
+    const auto thicknessHeight = [&](const RibDefinition& rib) {
+      const double q = std::sin(rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0 - inclination);
+      return std::min(q * rib.ribThicknessStartFactor * structure.ribThickness,
+          q * (rib.ribThicknessStartFactor + 1.0) * structure.ribThickness);
+    };
     for (const auto& rib : ribs) {
       const double angle = rib.spanPosition == 0.0 ? 0.0 : rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
       expectedPlane = std::min(expectedPlane,
           -std::sin(inclination) * rib.spanPosition + std::cos(inclination) * rib.dihedralHeight +
-          std::cos(angle - inclination) * untwistedRibBottom(rib));
+          std::cos(angle - inclination) * untwistedRibBottom(rib) + thicknessHeight(rib));
     }
     const double rootPlane = std::cos(inclination) * untwistedRibBottom(ribs.front());
     if (thickerMiddle) assert(expectedPlane < rootPlane - 1.0);
-    else assert(std::abs(expectedPlane - rootPlane) < 1.0e-7);
+    else assert(expectedPlane <= rootPlane + 1.0e-7);
     std::vector<double> heights;
     for (const auto& rib : wing.ribs) {
       const double twist = rib.rib.twistDegrees * std::numbers::pi / 180.0;
       const auto translation = ribTwistTranslation(rib.rib);
       const double angle = rib.rib.spanPosition == 0.0 ? 0.0 :
           rib.rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+      assert(rib.buildPlane);
+      const auto drawing = makeStructuredRibPartDrawing(rib, "Tab clearance");
+      for (const auto& path : drawing.paths) {
+        if (path.layer != "RIB_OUTLINE") continue;
+        assert(!path.spline);
+        for (const auto point : path.points) {
+          const double sectionZ = std::sin(twist) * point.x + std::cos(twist) * point.y + translation.y;
+          const double height = -std::sin(inclination) * rib.rib.spanPosition +
+              std::cos(inclination) * rib.rib.dihedralHeight +
+              std::cos(angle - inclination) * sectionZ + thicknessHeight(rib.rib);
+          assert(height >= expectedPlane - 1.0e-7);
+        }
+      }
       for (const auto& segment : rib.outlineSegments) {
         if (segment.spline || segment.points.size() != 2 ||
             std::abs(std::abs(segment.points[1].x - segment.points[0].x) - 25.4 * 3.0 / 16.0) > 1.0e-7)
@@ -217,7 +331,8 @@ int main() {
         for (const auto point : segment.points) {
           const double sectionZ = std::sin(twist) * point.x + std::cos(twist) * point.y + translation.y;
           heights.push_back(-std::sin(inclination) * rib.rib.spanPosition +
-              std::cos(inclination) * rib.rib.dihedralHeight + std::cos(angle - inclination) * sectionZ);
+              std::cos(inclination) * rib.rib.dihedralHeight + std::cos(angle - inclination) * sectionZ +
+              thicknessHeight(rib.rib));
         }
       }
     }
@@ -237,13 +352,13 @@ int main() {
     SparParameters spar;
     spar.material = 0;
     spar.verticalLocation = 1;
-    spar.chordLocationPercent = forwardBlocked ? 25.0 : 23.0;
+    spar.chordLocationPercent = forwardBlocked ? 15.0 : 13.0;
     spar.woodWidth = 10.0;
     spar.woodHeight = 2.0;
     structure.spars = {spar};
     if (forwardBlocked) {
       structure.leadingEdgeType = 2;
-      structure.leadingEdgeWidth = 40.0;
+      structure.leadingEdgeWidth = 20.0;
       structure.leadingEdgeHeight = 50.0;
     }
     const auto wing = applyWingStructure(generateRibs(p, thick, thick), structure);
@@ -343,6 +458,27 @@ int main() {
     originalOpeningCounts.push_back(rib.internalCutouts.size());
   designrc::domain::addRibLighteningHoles(
       ribLightenedWing, ribLighteningParameters);
+  // Cancellation must escape from inside an unfinished rib search, including
+  // parallel workers, without appending a partially computed hole layout.
+  struct LighteningCancelled {};
+  for (const std::size_t workers : {std::size_t{1}, std::size_t{3}}) {
+    for (const int cancelAt : {1, 64}) {
+      auto cancelledWing = designrc::domain::applyWingStructure(ribs, ribLighteningParameters);
+      std::atomic_int checks{0};
+      std::atomic_int completed{0};
+      bool cancelled = false;
+      try {
+        designrc::domain::addRibLighteningHoles(cancelledWing, ribLighteningParameters,
+            [&](std::size_t, std::size_t) { ++completed; }, workers,
+            [&] { if (++checks >= cancelAt) throw LighteningCancelled{}; });
+      } catch (const LighteningCancelled&) {
+        cancelled = true;
+      }
+      assert(cancelled && checks >= cancelAt && completed == 0);
+      for (std::size_t i = 0; i < cancelledWing.ribs.size(); ++i)
+        assert(cancelledWing.ribs[i].internalCutouts.size() == originalOpeningCounts[i]);
+    }
+  }
   std::vector<double> lighteningRadii;
   std::vector<double> chordwiseCoverage;
   for (std::size_t ribIndex = 0;
@@ -1645,6 +1781,31 @@ int main() {
          ribletWing.ribs[2].rib.spanPosition);
   assert(!ribletWing.riblets.front().booleanHoles.empty());
   assert(!ribletWing.riblets.front().partOutlineSegments.empty());
+  // Caps belong only to full ribs. Enabling either face must neither add
+  // riblet cap parts nor recess the riblets' manufactured outlines.
+  for (const bool topCaps : {false, true}) {
+    auto capParameters = ribletParameters;
+    capParameters.topRibCaps = topCaps;
+    capParameters.bottomRibCaps = !topCaps;
+    auto cappedWing = designrc::domain::applyWingStructure(ribs, capParameters);
+    const auto capCount = cappedWing.ribCaps.size();
+    assert(capCount > 0);
+    designrc::domain::addRiblets(cappedWing, capParameters);
+    assert(cappedWing.ribCaps.size() == capCount);
+    assert(cappedWing.riblets.size() == ribletWing.riblets.size());
+    for (std::size_t i = 0; i < cappedWing.riblets.size(); ++i) {
+      const auto& actual = cappedWing.riblets[i];
+      const auto& expected = ribletWing.riblets[i];
+      for (const auto outlines : {std::pair{&actual.outerOutline, &expected.outerOutline},
+                                  std::pair{&actual.partOutline, &expected.partOutline}}) {
+        assert(outlines.first->size() == outlines.second->size());
+        for (std::size_t point = 0; point < outlines.first->size(); ++point) {
+          assert(std::abs((*outlines.first)[point].x - (*outlines.second)[point].x) < 1.0e-9);
+          assert(std::abs((*outlines.first)[point].y - (*outlines.second)[point].y) < 1.0e-9);
+        }
+      }
+    }
+  }
   ribletParameters.ribLighteningHoles = true;
   ribletParameters.ribLighteningStartRib = 2;
   ribletParameters.ribLighteningStopRib = 6;

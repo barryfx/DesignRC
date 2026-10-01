@@ -120,6 +120,12 @@ struct WingPanelData {
   double dihedral{4.0};
   double twist{0.0};
   bool addBuildTabs{false};
+  bool topRibCaps{false};
+  double topRibCapThickness{1.5875};
+  double topRibCapWidth{6.35};
+  bool bottomRibCaps{false};
+  double bottomRibCapThickness{1.5875};
+  double bottomRibCapWidth{6.35};
   double ribThickness{3.0};
   int ribCount{9};
   bool ribLighteningHoles{false};
@@ -234,6 +240,7 @@ protected:
 private:
   QWidget* makeSpecsPage();
   QWidget* makeRibsPage();
+  QWidget* makeRibCapsPage();
   QWidget* makeSparsPage();
   QWidget* makeSheetingPage();
   QWidget* makeLeadingTrailingPage();
@@ -316,6 +323,10 @@ private:
   QDoubleSpinBox* dihedral_{};
   QDoubleSpinBox* twist_{};
   QCheckBox* addBuildTabs_{};
+  QCheckBox *topRibCaps_{}, *bottomRibCaps_{};
+  QWidget *topRibCapDetails_{}, *bottomRibCapDetails_{};
+  LengthInput *topRibCapThickness_{}, *topRibCapWidth_{},
+      *bottomRibCapThickness_{}, *bottomRibCapWidth_{};
   LengthInput* ribThickness_{};
   QSpinBox* ribCount_{};
   QLabel* ribSpacing_{};

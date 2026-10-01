@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.2 User Help</title>
+  <title>DesignRC 1.3.0 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,14 +44,14 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.2 User Help</h1>
+    <h1>DesignRC 1.3.0 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
-      <a href="#new-1-2">What's new in 1.2</a>
+      <a href="#new-1-3">What's new in 1.3.0</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
       <a href="#units">Units and value entry</a>
@@ -59,6 +59,7 @@
       <a href="#panels">Multi-panel wings</a>
       <a href="#specs">Specs tab</a>
       <a href="#ribs">Ribs tab</a>
+      <a href="#rib-caps">Rib Caps tab</a>
       <a href="#spars">Spars tab</a>
       <a href="#sheeting">Sheeting tab</a>
       <a href="#joiners">Joiners tab</a>
@@ -88,9 +89,13 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
-      <h2 id="new-1-2">What's new in 1.2</h2>
+      <h2 id="new-1-3">What's new in 1.3.0</h2>
       <ul>
-        <li><strong>Add Build Tabs:</strong> the Ribs tab can add temporary supports for building a twisted wing panel on a flat surface. The checkbox is enabled when Tip Twist is nonzero and is cleared when Tip Twist returns to 0.0.</li>
+        <li><strong>Rib Caps tab:</strong> independent Top Rib Caps and Bottom Rib Caps, with Thickness and Width fields using the normal unit-entry rules. Both options are also available in Settings &gt; Defaults and start unchecked.</li>
+        <li><strong>Cap fitting:</strong> caps occupy clear full-rib sections, with matching recesses in the ribs. They avoid existing structure, stop at panel end-rib faces, and exclude riblets. A bottom-cap/build-tab overlap reports a geometry collision.</li>
+        <li><strong>Faster cap checks:</strong> rib-cap collision work runs across ribs in parallel, within the configured thread limit. Progress identifies the rib number and Top or Bottom cap.</li>
+        <li><strong>Build tabs:</strong> available with or without twist, with the front tab now at 15% chord and the rear at 75%. Existing spar and sheeting interference handling is retained. Finished outlines and solids are checked against the support plane, including rib thickness.</li>
+        <li><strong>Spar ends:</strong> straight spars are trimmed to the outer root and tip rib faces, including angled multi-panel joints.</li>
       </ul>
 
       <h2 id="workspace">The main window</h2>
@@ -179,14 +184,23 @@
       <dl>
         <dt>Rib Count</dt><dd>Number of regular rib stations including root and tip. The calculated center spacing is displayed below it.</dd>
         <dt>Rib Thickness</dt><dd>Sheet thickness used for solid ribs, slots, rib faces, and member endpoints.</dd>
-        <dt>Add Build Tabs (Enabled if Tip Twist Applied)</dt>
+        <dt>Add Build Tabs</dt>
         <dd>
-          <p>Adds temporary supports so a wing panel can be built on a flat surface with its intended twist. The checkbox is available only when <strong>Specs &gt; Tip Twist</strong> is nonzero. Returning Tip Twist to <strong>0.0</strong> clears and disables the checkbox; applying twist again does not automatically check it.</p>
+          <p>Adds temporary supports so a wing panel can be built on a flat surface with or without twist. The checkbox is available for all <strong>Specs &gt; Tip Twist</strong> values, including <strong>0.0</strong>. Changing Tip Twist preserves the selection.</p>
+          <p>Each panel uses its own support plane, with a slope based on the untwisted root and tip undersides. Tab feet compensate for twist and the full rib thickness. Finished outlines and solids are checked and trimmed to keep notch lips or curve overshoot above that plane. Tabbed rib contours use a 0.005 mm curve approximation in manufacturing exports and the solid model.</p>
+          <p>The front tab starts at 15% chord and the rear tab at 75%. Tabs move as needed to clear spar notches and sheeting.</p>
+          <p>The plane is not referenced to the bottom spar. A twisted rib body can sit above the line between the tab feet; the tabs support it at its intended angle. The clearance check prevents protrusions below this plane, but does not make every rib underside tangent to it.</p>
         </dd>
         <dt>Add Rib 1a</dt><dd>Panel 1 only. Adds a center-section reinforcement rib midway between the first two regular stations; later rib labels adjust accordingly.</dd>
         <dt>Lightening Holes</dt><dd>Creates optimized circular rib holes over the selected rib range while honoring minimum border and inter-hole distances. This can significantly increase generation time.</dd>
         <dt>Riblets</dt><dd>Adds one or more partial ribs per bay over the selected range. Riblets require a carbon-fiber leading edge and a mid-position CF spar between 20% and 40% chord.</dd>
       </dl>
+
+      <h2 id="rib-caps">Rib Caps tab</h2>
+      <p><strong>Top Rib Caps</strong> and <strong>Bottom Rib Caps</strong> independently add cap strips along the clear sections of each full rib. Riblets are excluded and receive neither caps nor cap recesses. Both start unchecked and are also available in Defaults.</p>
+      <p>Checking an option reveals <strong>Thickness</strong> (initially 1/16 inch, 1.5875 mm) and <strong>Width</strong> (initially 1/4 inch, 6.35 mm). Width runs across the rib; Thickness is recessed into its top or bottom surface so the finished cap follows the airfoil. These fields use the global units and accept explicit mm or in values, like other length fields.</p>
+      <p>Caps stop at spars, sheeting, spoilers, edge stock, controls, and other occupied areas. If a Bottom Rib Cap overlaps a Build Tab, generation reports a geometry collision identifying the rib; it does not leave a gap around the tab. Top Rib Caps can be used with Build Tabs. Root and tip caps stay within the panel end faces; very thin nose and tail regions retain a small rib core. Caps appear in the wing preview, plan, and STEP assembly.</p>
+      <p>Cap collision checks run in parallel across ribs, using the configured thread limit. The status bar identifies the rib and cap side being checked, for example <strong>Checking rib cap collisions for Rib 11 (Top; ...)</strong>.</p>
 
       <h2 id="spars">Spars tab</h2>
       <p>Use <strong>Add Spar</strong> to create any number of spar definitions. Check spar headings and press <strong>Delete Checked</strong> to remove selected rows.</p>
@@ -272,7 +286,7 @@
       <p>Spoiler panels, frame rails, and support rails are checked against spars, the trailing edge, and the other spoiler parts. Collision messages identify both conflicting components.</p>
 
       <h2 id="generate">Generate Wing</h2>
-      <p><strong>Generate Wing</strong> validates every panel and then builds ribs, openings, members, controls, joiners, material solids, the mirrored assembly, and display meshes. Progress messages identify the active stage. <strong>Cancel</strong> requests a safe stop after the current geometry operation.</p>
+      <p><strong>Generate Wing</strong> validates every panel and then builds ribs, openings, members, controls, joiners, material solids, the mirrored assembly, and display meshes. Progress messages identify the active stage. <strong>Cancel</strong> interrupts rib lightening-hole layout, hole cutting, and rib meshing, including parallel workers. Other individual solid-modeling operations may need to finish before cancellation takes effect.</p>
       <p>Successful generation enables Generate Plan, Export Parts, and Export STEP. A failed generation reports the specific panel or component and leaves the last valid preview intact.</p>
 
       <h2 id="viewport">3D View</h2>
@@ -315,10 +329,10 @@
         <li>global millimeter or inch display;</li>
         <li>default number of connected panels;</li>
         <li>geometry worker threads, up to the available CPU thread count minus one;</li>
-        <li>complete parameter defaults for every panel, including Add Build Tabs (unchecked initially and available only with nonzero Tip Twist); and</li>
+        <li>complete parameter defaults for every panel, including Add Build Tabs and Top/Bottom Rib Caps (all unchecked initially); and</li>
         <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
       </ul>
-      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the version-1.2 installed defaults.</p>
+      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the installed defaults, with build tabs and both rib-cap options unchecked.</p>
 
       <h2 id="validation">Validation and automatic corrections</h2>
       <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler-to-spar and spoiler-to-TE collisions, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, joiner-to-joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
@@ -337,7 +351,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.2 &middot; Release date: September 7, 2026</footer>
+  <footer>DesignRC 1.3.0 &middot; Release date: September 29, 2026</footer>
 </div>
 </body>
 </html>

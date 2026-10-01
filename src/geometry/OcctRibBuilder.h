@@ -20,6 +20,7 @@ struct PanelBuildTimings {
   double membersMs{};
   double shearWebsMs{};
   double joinersMs{};
+  double ribCapsMs{};
   double displayMeshMs{};
 };
 
@@ -49,6 +50,8 @@ struct MaterialShapeSet {
 using GeometryProgressCallback =
     std::function<void(int, const std::string&)>;
 
+struct GeometryCancelled final {};
+
 [[nodiscard]] TopoDS_Shape buildWingPreview(
     const std::vector<domain::RibDefinition>& ribs,
     double ribThickness,
@@ -60,7 +63,8 @@ using GeometryProgressCallback =
     PanelBuildTimings* timings = nullptr,
     MaterialShapeSet* materialShapes = nullptr,
     const GeometryProgressCallback& progress = {},
-    std::size_t maximumRibWorkers = 0);
+    std::size_t maximumRibWorkers = 0,
+    const std::function<bool()>& isCancelled = {});
 
 [[nodiscard]] std::size_t ribGeometryWorkerCount(
     std::size_t ribCount, std::size_t maximumWorkers = 0);

@@ -5,6 +5,7 @@
 #include <string>
 #include <array>
 #include <functional>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -165,6 +166,12 @@ struct StructureParameters {
   double wiringHoleHeight{6.35};
   bool rib1aPresent{false};
   bool addBuildTabs{false};
+  bool topRibCaps{false};
+  double topRibCapThickness{1.5875};
+  double topRibCapWidth{6.35};
+  bool bottomRibCaps{false};
+  double bottomRibCapThickness{1.5875};
+  double bottomRibCapWidth{6.35};
   bool centerSparWoodJoiner{false};
   bool behindSparJoiner{false};
   int behindSparJoinerType{0}; // 0 none, 1 CF rod, 2 CF tube, 3 aluminum tube
@@ -209,6 +216,14 @@ struct StructuredRib {
   // Full-height wood-joiner cuts divide the exported rib into separate
   // physical pieces. They are also present in booleanCutouts for 3D cutting.
   std::vector<std::vector<Point2>> ribSplitCutouts;
+  // Global build plane: spanNormal * Y + verticalNormal * Z >= offset.
+  // Present only on full ribs with build tabs.
+  struct BuildPlane {
+    double spanNormal{};
+    double verticalNormal{};
+    double offset{};
+  };
+  std::optional<BuildPlane> buildPlane;
 };
 
 struct SpanMember {
@@ -316,9 +331,21 @@ struct SheetingPart {
   std::vector<bool> controlBays;
 };
 
+struct RibCapPart {
+  std::string name;
+  std::size_t ribIndex{};
+  bool top{};
+  double thickness{};
+  // Width runs along the rib normal; the profile follows the airfoil chord.
+  double startOffset{};
+  double endOffset{};
+  std::vector<Point2> profile;
+};
+
 struct StructuredWing {
   std::vector<StructuredRib> ribs;
   std::vector<StructuredRib> riblets;
+  std::vector<RibCapPart> ribCaps;
   std::vector<SpanMember> members;
   std::vector<ProfiledSpanMember> profiledMembers;
   std::vector<ControlSurfacePart> controlSurfaces;
@@ -343,7 +370,10 @@ using RibLighteningProgressCallback =
 void addRibLighteningHoles(
     StructuredWing& wing, const StructureParameters& parameters,
     const RibLighteningProgressCallback& progress = {},
-    std::size_t maximumWorkers = 0);
+    std::size_t maximumWorkers = 0,
+    // Called from worker threads, including inside the search. May throw to
+    // cancel; callers must make the callback safe for concurrent invocation.
+    const std::function<void()>& checkpoint = {});
 
 [[nodiscard]] std::size_t ribLighteningHoleWorkerCount(
     std::size_t ribCount, std::size_t maximumWorkers = 0);

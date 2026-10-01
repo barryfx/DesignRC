@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-current release is **1.2.0**.
+source version is **1.3.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -13,7 +13,8 @@ current release is **1.2.0**.
 - Designs one or more connected half-wing panels and mirrors them into a complete wing.
 - Imports root and tip airfoils from Selig-style `.dat` coordinate files.
 - Interpolates airfoil profiles, chord, sweep, twist, and rib positions across each panel.
-- Adds rib build tabs for assembling twisted wing panels on a flat surface.
+- Adds rib build tabs for assembling wing panels on a flat surface, with or without twist.
+- Adds independent top and bottom rib caps, recessed into clear rib sections and trimmed around existing structure.
 - Generates solid ribs, spars, shear webs, sheeting, leading and trailing edges, turbulators,
   ailerons, flaps, hinge posts, and wing joiners.
 - Displays the assembled wing in an interactive OpenCascade 3D viewport.
@@ -28,20 +29,42 @@ current release is **1.2.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## What's new in 1.2.0
+## What's new in 1.3.0
 
-**Add Build Tabs** is a new checkbox on the **Ribs** tab, also available in **Defaults**.
-It starts unchecked and is enabled when **Specs > Tip Twist** is nonzero. Returning Tip Twist
-to 0.0 clears and disables it.
+**Rib Caps** is a new panel tab, also available in **Settings > Defaults**.
 
-- Adds two 3/16-inch-wide supports to each full rib, normally at 25% and 75% chord, for building
+- Independent **Top Rib Caps** and **Bottom Rib Caps** start unchecked. Each reveals Thickness
+  and Width fields when enabled, supporting global units and explicit inch/mm entry.
+- Default thickness is 1/16 inch (1.5875 mm); default width is 1/4 inch (6.35 mm).
+- Caps follow every clear full-rib section, with matching recesses in the rib. They avoid
+  spars, sheeting, spoilers, and other occupied geometry. Riblets receive neither caps nor recesses.
+- Caps stop at outer panel end-rib faces, including angled multi-panel joints. Bottom caps that
+  overlap build tabs produce a named geometry collision instead of leaving gaps around the tabs.
+- Cap collision checks run across ribs in parallel within the thread limit. Status messages
+  identify the rib number and whether the Top or Bottom cap is being checked.
+- Straight spars now terminate at the outer root and tip rib faces, including angled joints.
+
+**Add Build Tabs**, on the **Ribs** tab and in **Defaults**, now works with or without
+**Specs > Tip Twist**. It starts unchecked, and changing Tip Twist preserves the selection.
+
+- Adds two 3/16-inch-wide supports to each full rib, normally at 15% and 75% chord, for building
   the panel with its intended twist on a flat surface.
-- Calculates a build plane from that panel's untwisted root and tip ribs, lowering it only enough
-  to clear intermediate ribs. Positive twist raises the trailing edge; negative twist raises
-  the leading edge.
+- Takes the build-plane slope from the panel's untwisted root and tip undersides, then checks
+  twisted ribs and their full material thickness for clearance. Positive twist raises the
+  trailing edge; negative twist raises the leading edge.
+- Checks finished tabbed outlines and solids against the build plane, removing protruding
+  lips. Tabbed manufacturing contours use a 0.005 mm curve approximation so spline smoothing
+  cannot recreate a protrusion in an export.
 - Moves tabs clear of spar notches and, where possible, front sheeting or trailing-edge stock.
   Unresolvable collisions stop generation with an error. Tabs appear in rib DXF/SVG/PDF exports
   and STEP solids.
+- The support plane remains airfoil-based, not spar-based. Twisted rib bodies can have clearance
+  above the tab-foot line; the check prevents protrusions below it rather than making every
+  underside tangent to the building surface.
+
+## What's new in 1.2.0
+
+- Introduced **Add Build Tabs** on the **Ribs** tab and in **Defaults** for twisted panels.
 
 ## What's new in 1.1.0
 
@@ -62,7 +85,7 @@ to 0.0 clears and disables it.
 
 ## Download
 
-Release 1.2.0 provides three installers on the
+The previously published 1.2.0 installers are available on the
 [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.2.0):
 
 - `DesignRC-1.2.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
@@ -98,7 +121,7 @@ to verify a download before installing it.
 ## Typical use
 
 1. Select the number of wing panels.
-2. Configure each panel on the **Specs**, **Ribs**, **Spars**, **LE/TE**, **Ailerons/Flaps**, and **Joiner**
+2. Configure each panel on the **Specs**, **Ribs**, **Rib Caps**, **Spars**, **LE/TE**, **Ailerons/Flaps**, and **Joiner**
    tabs.
 3. Import root and tip airfoil `.dat` files where required.
 4. Press **Generate Wing** to validate the design and build the 3D geometry.
@@ -233,7 +256,7 @@ Then build the Release application and installer with:
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
 installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.2 is packaged as 1.2.0. The resulting installer does not require administrator
+version such as 1.3 is packaged as 1.3.0. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
@@ -335,15 +358,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.2.0_amd64.deb
-dist/DesignRC-1.2.0-source.tar.gz
-dist/DesignRC-1.2.0-Linux-x64.sha256
+dist/designrc_1.3.0_amd64.deb
+dist/DesignRC-1.3.0-source.tar.gz
+dist/DesignRC-1.3.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.2.0_amd64.deb
+sudo apt install ./dist/designrc_1.3.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -392,15 +415,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.2.0-1.x86_64.rpm
-dist/DesignRC-1.2.0-source.tar.gz
-dist/DesignRC-1.2.0-Linux-RPM-x64.sha256
+dist/designrc-1.3.0-1.x86_64.rpm
+dist/DesignRC-1.3.0-source.tar.gz
+dist/DesignRC-1.3.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.2.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.3.0-1.x86_64.rpm
 designrc
 ```
 

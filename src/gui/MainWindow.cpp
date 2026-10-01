@@ -304,7 +304,13 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
   s.wiringHoleWidth = d.wiringHoleWidth;
   s.wiringHoleHeight = d.wiringHoleHeight;
-  s.addBuildTabs = d.addBuildTabs && d.twist != 0.0;
+  s.addBuildTabs = d.addBuildTabs;
+  s.topRibCaps = d.topRibCaps;
+  s.topRibCapThickness = d.topRibCapThickness;
+  s.topRibCapWidth = d.topRibCapWidth;
+  s.bottomRibCaps = d.bottomRibCaps;
+  s.bottomRibCapThickness = d.bottomRibCapThickness;
+  s.bottomRibCapWidth = d.bottomRibCapWidth;
   s.rib1aPresent = d.addRib1a;
   const bool useLegacyJoiners = d.joinerPanelMode < 0;
   s.centerSparWoodJoiner = useLegacyJoiners && d.centerSparWoodJoiner;
@@ -1487,7 +1493,8 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
               reportPanelProgress(panelIndex, layoutProgress,
                   QString{"Laying out rib lightening holes (%1/%2)"}
                       .arg(completed).arg(total));
-            }, panelWorkerBudgets[panelIndex]);
+            }, panelWorkerBudgets[panelIndex], checkpoint);
+        checkpoint();
         reportPanelProgress(panelIndex, 5, "Building panel geometry");
         const auto panelProgress = [&](const int localValue,
                                        const std::string& localMessage) {
@@ -1501,7 +1508,9 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
               result.thicknesses[panelIndex],
               &result.panelBuildTimings[panelIndex],
               &panelMaterialShapes[panelIndex], panelProgress,
-              panelWorkerBudgets[panelIndex]);
+              panelWorkerBudgets[panelIndex], [&] { return cancellation->load(); });
+        } catch (const geometry::GeometryCancelled&) {
+          throw UpdateCancelled{};
         } catch (const std::exception& exception) {
           throw std::runtime_error(
               "Panel " + std::to_string(panelIndex + 1) + ": " +
@@ -1532,6 +1541,33 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
 }
 
 } // namespace
+
+int runCancellationBackendRegression() {
+  for (const auto& stage : {QString{"Laying out rib lightening holes"},
+                            QString{"Cutting Lightening Holes"}}) {
+    WingPanelData panel;
+    panel.ribCount = 3;
+    panel.ribLighteningHoles = true;
+    panel.ribLighteningStartRib = 1;
+    panel.ribLighteningStopRib = 3;
+    panel.ribLighteningMinimumWoodMargin = 3.0;
+    panel.ribLighteningMinimumHoleDistance = 5.0;
+    auto cancellation = std::make_shared<std::atomic_bool>(false);
+    bool caught = false;
+    try {
+      static_cast<void>(computePreview({panel, panel}, DisplayUnit::Millimeters,
+          cancellation, [&](int, const QString& message) {
+            if (message.contains(stage)) cancellation->store(true);
+          }, 4));
+    } catch (const UpdateCancelled&) {
+      caught = true;
+    } catch (...) {
+      return 2;
+    }
+    if (!caught || !cancellation->load()) return 1;
+  }
+  return 0;
+}
 
 int runJoinerBackendRegression() {
   const auto buildPanels = [](const std::vector<WingPanelData>& panels) {
@@ -2150,7 +2186,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
     if (!updateCancellation_) return;
     updateCancellation_->store(true);
     cancelUpdateButton_->setEnabled(false);
-    statusBar()->showMessage("Cancelling Update View after the current geometry operation...");
+    statusBar()->showMessage("Cancelling Update View...");
   });
   statusBar()->showMessage("Left drag: orbit  |  Right drag: pan  |  Wheel: zoom");
 }
@@ -2261,8 +2297,6 @@ void MainWindow::openHelp() {
 }
 
 void MainWindow::showAbout() {
-  const QString licensesPath = QDir::toNativeSeparators(
-      QDir{QApplication::applicationDirPath()}.filePath("licenses"));
   QMessageBox::about(this, "About DesignRC",
       QString{"<h2>DesignRC</h2>"
               "<p><b>Parametric built-up RC aircraft wing design and manufacturing.</b></p>"
@@ -2276,18 +2310,19 @@ void MainWindow::showAbout() {
               "3D viewport.</p>"
               "<p>It also creates annotated full-scale wing plans and exports vector "
               "plan PDFs, individual or combined DXF/SVG/PDF cutting parts, and a "
-              "material-colored STEP assembly. Version 1.2 includes independent top and "
-              "bottom trailing-edge sheeting, configurable front-sheeting extents, "
-              "improved joiner geometry and collision checks, and cleaner rib and "
-              "part exports.</p>"
+              "material-colored STEP assembly. Version 1.3.0 adds independent top and "
+              "bottom rib caps with saved defaults, parallel rib-cap collision checks, "
+              "and rib-specific progress messages. Build tabs work with or without "
+              "twist and start at 15% and 75% chord. Rib caps and spars stop at panel "
+              "end-rib faces, including angled joints.</p>"
               "<p>Copyright &copy; 2026 Barry Foust</p>"
               "<p>DesignRC is free software licensed under the GNU General Public License "
               "version 3 only. It comes with absolutely no warranty.</p>"
               "<p>DesignRC uses Qt 6 under LGPL 3.0, Open CASCADE Technology under LGPL 2.1 "
               "with its additional exception, and FreeType under the FreeType License.</p>"
-              "<p>License texts and third-party notices are installed in:<br><code>%3</code></p>"}
-          .arg(QApplication::applicationVersion(), DESIGNRC_RELEASE_DATE,
-               licensesPath.toHtmlEscaped()));
+              "<p>License texts and third-party notices are in the <code>licenses</code> "
+              "folder alongside the DesignRC application executable.</p>"}
+          .arg(QApplication::applicationVersion(), DESIGNRC_RELEASE_DATE));
 }
 
 std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) const {
@@ -3068,7 +3103,13 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
     structure.wiringHoleWidth = d.wiringHoleWidth;
     structure.wiringHoleHeight = d.wiringHoleHeight;
-    structure.addBuildTabs = d.addBuildTabs && d.twist != 0.0;
+    structure.addBuildTabs = d.addBuildTabs;
+    structure.topRibCaps = d.topRibCaps;
+    structure.topRibCapThickness = d.topRibCapThickness;
+    structure.topRibCapWidth = d.topRibCapWidth;
+    structure.bottomRibCaps = d.bottomRibCaps;
+    structure.bottomRibCapThickness = d.bottomRibCapThickness;
+    structure.bottomRibCapWidth = d.bottomRibCapWidth;
     structure.rib1aPresent = panelOne && d.addRib1a;
     structure.centerSparWoodJoiner = panelOne && d.centerSparWoodJoiner;
     structure.behindSparJoiner = panelOne && d.behindSparJoiner;

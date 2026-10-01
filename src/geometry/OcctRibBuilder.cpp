@@ -14,6 +14,7 @@
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Common.hxx>
 #include <BRepBndLib.hxx>
@@ -28,6 +29,7 @@
 #include <Geom_Plane.hxx>
 #include <GeomAPI_Interpolate.hxx>
 #include <Precision.hxx>
+#include <Message_ProgressIndicator.hxx>
 #include <Poly_Triangle.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Standard_Failure.hxx>
@@ -343,7 +345,44 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
                                         PanelBuildTimings* timings,
                                         MaterialShapeSet* materialShapes,
                                         const GeometryProgressCallback& progress,
-                                        const std::size_t maximumRibWorkers) {
+                                        const std::size_t maximumRibWorkers,
+                                        const std::function<bool()>& isCancelled) {
+  const auto checkpoint = [&] {
+    if (isCancelled && isCancelled()) throw GeometryCancelled{};
+  };
+  checkpoint();
+  class CancellationProgress final : public Message_ProgressIndicator {
+  public:
+    explicit CancellationProgress(std::function<bool()> cancelled)
+        : cancelled_{std::move(cancelled)} {}
+  protected:
+    bool UserBreak() override { return cancelled_ && cancelled_(); }
+    void Show(const Message_ProgressScope&, const bool) override {}
+  private:
+    std::function<bool()> cancelled_;
+  };
+  const auto cutOpening = [&](const TopoDS_Shape& stock, const TopoDS_Shape& tool) {
+    checkpoint();
+    Handle(Message_ProgressIndicator) indicator = new CancellationProgress{isCancelled};
+    // The two-shape constructor performs the cut immediately. Supply its
+    // progress range there, rather than running an uncancellable first cut.
+    BRepAlgoAPI_Cut cut{stock, tool, indicator->Start()};
+    checkpoint();
+    if (!cut.IsDone()) throw std::runtime_error("Unable to cut a rib opening");
+    return cut.Shape();
+  };
+  const auto meshRib = [&](const TopoDS_Shape& shape) {
+    checkpoint();
+    IMeshTools_Parameters parameters;
+    parameters.Deflection = 0.75;
+    parameters.Angle = 0.35;
+    parameters.Relative = false;
+    parameters.InParallel = true;
+    Handle(Message_ProgressIndicator) indicator = new CancellationProgress{isCancelled};
+    BRepMesh_IncrementalMesh mesh{shape, parameters, indicator->Start()};
+    checkpoint();
+    if (!mesh.IsDone()) throw std::runtime_error("Unable to create a shaded rib mesh");
+  };
   if (structuredWing.ribs.empty() || ribThickness <= 0.0)
     throw std::invalid_argument("Structured wing preview requires ribs and positive thickness");
   BRep_Builder builder;
@@ -573,6 +612,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   std::vector<std::vector<BuiltRibShape>> builtRibs(
       ribsToBuild.size());
   const auto buildRib = [&](const std::size_t structuredIndex) {
+    checkpoint();
     const auto& structured = *ribsToBuild[structuredIndex];
     const auto outlineSegments = structured.outlineSegments.empty()
         ? domain::makeRibOutlineSegments(structured.outerOutline)
@@ -652,6 +692,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       const auto cutCircularHoles =
           [&](const std::vector<std::vector<domain::Point2>>& holes) {
         for (const auto& hole : holes) {
+          checkpoint();
           domain::Point2 center{};
           for (const auto& point : hole) {
             center.x += point.x;
@@ -668,11 +709,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
               ribStartOffset(structured.rib, ribThickness) - 1.0);
           BRepPrimAPI_MakeCylinder holeTool{
               gp_Ax2{start, gp_Dir{ribNormal}}, radius, ribThickness + 2.0};
-          BRepAlgoAPI_Cut cut{finished, holeTool.Shape()};
-          cut.Build();
-          if (!cut.IsDone())
-            throw std::runtime_error("Unable to cut a circular rib opening");
-          finished = cut.Shape();
+          finished = cutOpening(finished, holeTool.Shape());
           TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
           if (!cutSolids.More())
             throw std::runtime_error("A circular opening removed the rib solid");
@@ -690,6 +727,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       // joiner through-slot is applied last because it intentionally separates
       // a joint rib into two independently retained solids.
       for (const auto& opening : structured.internalCutouts) {
+        checkpoint();
         BRepBuilderAPI_MakePolygon cutPolygon;
         for (const auto& point : opening)
           cutPolygon.Add(transformLocal(
@@ -699,11 +737,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         BRepBuilderAPI_MakeFace cutFace{cutPolygon.Wire()};
         BRepPrimAPI_MakePrism cutTool{
             cutFace.Face(), ribNormal * (ribThickness + 2.0)};
-        BRepAlgoAPI_Cut cut{finished, cutTool.Shape()};
-        cut.Build();
-        if (!cut.IsDone())
-          throw std::runtime_error("Unable to cut an internal rib opening");
-        finished = cut.Shape();
+        finished = cutOpening(finished, cutTool.Shape());
         TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
         if (!cutSolids.More())
           throw std::runtime_error("An internal opening removed the rib solid");
@@ -714,6 +748,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         }
       }
       for (const auto& cutout : structured.booleanCutouts) {
+        checkpoint();
         BRepBuilderAPI_MakePolygon cutPolygon;
         for (const auto& point : cutout)
           cutPolygon.Add(transformLocal(
@@ -723,11 +758,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         BRepBuilderAPI_MakeFace cutFace{cutPolygon.Wire()};
         BRepPrimAPI_MakePrism cutTool{
             cutFace.Face(), ribNormal * (ribThickness + 2.0)};
-        BRepAlgoAPI_Cut cut{finished, cutTool.Shape()};
-        cut.Build();
-        if (!cut.IsDone())
-          throw std::runtime_error("Unable to cut the wood joiner slot");
-        finished = cut.Shape();
+        finished = cutOpening(finished, cutTool.Shape());
         TopExp_Explorer cutSolids{finished, TopAbs_SOLID};
         if (!cutSolids.More())
           throw std::runtime_error("Wood joiner cut removed the rib solid");
@@ -738,6 +769,33 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         }
       }
 
+      if (structured.buildPlane) {
+        const auto& support = *structured.buildPlane;
+        gp_Trsf align;
+        align.SetRotation(gp_Ax1{gp_Pnt{0, 0, 0}, gp_Dir{1, 0, 0}},
+            std::atan2(support.spanNormal, support.verticalNormal));
+        const auto minimumHeight = [&] {
+          Bnd_Box bounds;
+          BRepBndLib::AddOptimal(BRepBuilderAPI_Transform{finished, align}.Shape(),
+                                bounds, false, false);
+          double x0, y0, z0, x1, y1, z1;
+          bounds.Get(x0, y0, z0, x1, y1, z1);
+          return z0;
+        };
+        if (minimumHeight() < support.offset - 1.0e-7) {
+          const gp_Dir normal{0.0, support.spanNormal, support.verticalNormal};
+          const gp_Pnt origin{0.0, support.spanNormal * support.offset,
+                              support.verticalNormal * support.offset};
+          const auto cutter = BRepPrimAPI_MakeHalfSpace{
+              BRepBuilderAPI_MakeFace{gp_Pln{origin, normal}}.Face(),
+              origin.Translated(-gp_Vec{normal})}.Solid();
+          BRepAlgoAPI_Cut cut{finished, cutter};
+          if (!cut.IsDone()) throw std::runtime_error("Unable to trim rib to build plane");
+          finished = cut.Shape();
+          if (finished.IsNull() || minimumHeight() < support.offset - 1.0e-6)
+            throw std::runtime_error("Finished rib extends below its build plane");
+        }
+      }
       std::vector<TopoDS_Shape> resultingSolids;
       for (TopExp_Explorer solids{finished, TopAbs_SOLID}; solids.More();
            solids.Next())
@@ -1314,13 +1372,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
 
     auto positiveRibShape =
         finishRib(structured.positiveHalfBooleanHoles);
+    checkpoint();
     BRepTools::Clean(positiveRibShape);
-    BRepMesh_IncrementalMesh positiveRibMesh{
-        positiveRibShape, 0.75, false, 0.35, true};
-    if (!positiveRibMesh.IsDone())
-      throw std::runtime_error(
-          "Unable to create the shaded mesh for structured rib " +
-          std::to_string(structuredIndex + 1));
+    meshRib(positiveRibShape);
     ensureRibCapTriangulation(positiveRibShape);
     const std::string ribName = structured.name.empty()
         ? "Rib " + std::to_string(structuredIndex + 1) : structured.name;
@@ -1343,13 +1397,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           gp_Ax2{gp_Pnt{0.0, 0.0, 0.0}, gp_Dir{0.0, 1.0, 0.0}});
       auto negativeRibShape =
           finishRib(structured.negativeHalfBooleanHoles);
+      checkpoint();
       BRepTools::Clean(negativeRibShape);
-      BRepMesh_IncrementalMesh negativeRibMesh{
-          negativeRibShape, 0.75, false, 0.35, true};
-      if (!negativeRibMesh.IsDone())
-        throw std::runtime_error(
-            "Unable to create the shaded mesh for structured rib " +
-            std::to_string(structuredIndex + 1) + " left variant");
+      meshRib(negativeRibShape);
       ensureRibCapTriangulation(negativeRibShape);
       builtRibs[structuredIndex].push_back(
           {BRepBuilderAPI_Transform{
@@ -1366,6 +1416,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   for (std::size_t worker = 0; worker < ribWorkerCount; ++worker)
     ribWorkers.push_back(std::async(std::launch::async, [&] {
       for (;;) {
+        checkpoint();
         const std::size_t ribIndex = nextRib.fetch_add(1);
         if (ribIndex >= ribsToBuild.size()) return;
         buildRib(ribIndex);
@@ -1378,6 +1429,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       }
     }));
   for (auto& worker : ribWorkers) worker.get();
+  checkpoint();
   for (const auto& ribParts : builtRibs)
     for (const auto& ribPart : ribParts)
       addShape(ribPart.shape, PartMaterial::Wood,
@@ -1537,14 +1589,52 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     gp_Pnt extendedStart = start;
     gp_Pnt extendedEnd = end;
     const gp_Vec axis{start, end};
-    const gp_Vec extension = axis * (ribThickness * 0.5 / std::abs(axis.Y()));
+    const auto boundaryPlane = [&](const domain::RibDefinition& rib,
+                                   const double offset) {
+      const bool centerRoot = std::abs(rib.spanPosition) < 1.0e-9 &&
+          std::abs(rib.ribThicknessStartFactor) < 1.0e-9;
+      const double angle = centerRoot ? 0.0 :
+          rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+      return gp_Pln{transformLocal(rib, {0.0, 0.0}, offset),
+                    gp_Dir{0.0, std::cos(angle), std::sin(angle)}};
+    };
+    const auto& rootRib = structuredWing.ribs.front().rib;
+    const auto& tipRib = structuredWing.ribs.back().rib;
+    const auto rootPlane = boundaryPlane(rootRib, ribStartOffset(rootRib, ribThickness));
+    const auto tipPlane = boundaryPlane(tipRib, ribEndOffset(tipRib, ribThickness));
+    const gp_Vec direction = axis.Normalized();
+    const double projection = std::min(
+        direction.Dot(gp_Vec{rootPlane.Axis().Direction()}),
+        direction.Dot(gp_Vec{tipPlane.Axis().Direction()}));
+    if (projection <= Precision::Confusion())
+      throw std::runtime_error("Spar axis does not cross the panel end rib planes");
+    // Overbuild enough stock for the entire cross-section to reach both end
+    // planes, then miter it to the actual outer rib faces.
+    const gp_Vec extension = direction *
+        ((ribThickness + member.width + member.height) / projection);
     extendedStart.Translate(-extension);
     extendedEnd.Translate(extension);
-    if (!circular)
-      return makeRectangularSegment(
-          extendedStart, extendedEnd, member.width, member.height);
-    return makeTubeSegment(extendedStart, extendedEnd, member.width,
+    auto shape = !circular ? makeRectangularSegment(
+        extendedStart, extendedEnd, member.width, member.height) :
+        makeTubeSegment(extendedStart, extendedEnd, member.width,
         member.kind == domain::SpanMemberKind::Tube ? member.innerDiameter : 0.0);
+    const auto trimEnd = [&](const gp_Pln& plane, const double outsideSign) {
+      const auto outside = plane.Location().Translated(
+          gp_Vec{plane.Axis().Direction()} * outsideSign);
+      const auto cutter = BRepPrimAPI_MakeHalfSpace{
+          BRepBuilderAPI_MakeFace{plane}.Face(), outside}.Solid();
+      BRepAlgoAPI_Cut cut{shape, cutter};
+      if (!cut.IsDone())
+        throw std::runtime_error("Unable to trim " + member.name + " to the end rib face");
+      shape = cut.Shape();
+    };
+    trimEnd(rootPlane, -1.0);
+    trimEnd(tipPlane, 1.0);
+    TopExp_Explorer solids{shape, TopAbs_SOLID};
+    if (!solids.More()) throw std::runtime_error("End rib trimming removed " + member.name);
+    const auto solid = solids.Current();
+    solids.Next();
+    return solids.More() ? shape : solid;
   };
   struct SpoilerShape { std::string name; TopoDS_Shape shape; bool mirror{true}; };
   std::vector<SpoilerShape> spoilerShapes;
@@ -2054,6 +2144,114 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         joiner.kind == domain::SpanMemberKind::Tube ? joiner.innerDiameter : 0.0),
         materialForName(joiner.name));
   }
+
+  // Caps follow the rib surface, extruded along its normal. Trim their full
+  // width against the completed structure: a swept spar or a spoiler rail
+  // can enter a cap beside the rib even when the center profile is clear.
+  const auto capStageStart = std::chrono::steady_clock::now();
+  std::vector<std::vector<std::size_t>> capsByRib(structuredWing.ribs.size());
+  for (std::size_t i = 0; i < structuredWing.ribCaps.size(); ++i)
+    capsByRib.at(structuredWing.ribCaps[i].ribIndex).push_back(i);
+  std::vector<TopoDS_Shape> capShapes(structuredWing.ribCaps.size());
+  std::atomic_size_t completedCapRibs{0};
+  const auto buildCap = [&](const std::size_t capIndex) {
+    const auto& cap = structuredWing.ribCaps[capIndex];
+    const auto& rib = structuredWing.ribs.at(cap.ribIndex).rib;
+    const double startOffset = cap.ribIndex == 0
+        ? std::max(cap.startOffset, ribStartOffset(rib, ribThickness)) : cap.startOffset;
+    const double endOffset = cap.ribIndex + 1 == structuredWing.ribs.size()
+        ? std::min(cap.endOffset, ribEndOffset(rib, ribThickness)) : cap.endOffset;
+    if (cap.profile.size() < 4 || cap.profile.size() % 2 != 0 || endOffset <= startOffset)
+      throw std::runtime_error("Invalid rib cap profile: " + cap.name);
+    const auto edge = [&](const std::size_t begin, const std::size_t end) {
+      if (end == begin + 1)
+        return BRepBuilderAPI_MakeEdge{
+            transformLocal(rib, cap.profile[begin], startOffset),
+            transformLocal(rib, cap.profile[end], startOffset)}.Edge();
+      const auto points = Handle(OcctPointArray){new OcctPointArray{1, static_cast<int>(end - begin + 1)}};
+      for (std::size_t i = begin; i <= end; ++i)
+        points->SetValue(static_cast<int>(i - begin + 1),
+            transformLocal(rib, cap.profile[i], startOffset));
+      GeomAPI_Interpolate interpolation{points, false, Precision::Confusion()};
+      interpolation.Perform();
+      if (!interpolation.IsDone()) throw std::runtime_error("Unable to interpolate " + cap.name);
+      return BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge();
+    };
+    const auto half = cap.profile.size() / 2;
+    BRepBuilderAPI_MakeWire wire;
+    wire.Add(edge(0, half - 1));
+    wire.Add(edge(half - 1, half));
+    wire.Add(edge(half, cap.profile.size() - 1));
+    wire.Add(BRepBuilderAPI_MakeEdge{
+        transformLocal(rib, cap.profile.back(), startOffset),
+        transformLocal(rib, cap.profile.front(), startOffset)}.Edge());
+    if (!wire.IsDone()) throw std::runtime_error("Unable to construct " + cap.name);
+    BRepBuilderAPI_MakeFace face{wire.Wire()};
+    if (!face.IsDone()) throw std::runtime_error("Unable to fill " + cap.name);
+    const gp_Vec extrusion{transformLocal(rib, cap.profile.front(), startOffset),
+                           transformLocal(rib, cap.profile.front(), endOffset)};
+    TopoDS_Shape shape = BRepPrimAPI_MakePrism{face.Face(), extrusion}.Shape();
+    const auto& ribName = structuredWing.ribs[cap.ribIndex].name;
+    const std::string ribLabel = ribName.empty() ? "Rib " + std::to_string(cap.ribIndex + 1) :
+        ribName.starts_with("R") && !ribName.starts_with("Rib") ? "Rib " + ribName.substr(1) : ribName;
+    if (progress)
+      progress(90 + static_cast<int>(3 * completedCapRibs.load() / structuredWing.ribs.size()),
+          "Checking rib cap collisions for " + ribLabel +
+          (cap.top ? " (Top; " : " (Bottom; ") +
+          std::to_string(completedCapRibs.load()) + "/" +
+          std::to_string(structuredWing.ribs.size()) + " ribs complete)");
+    Bnd_Box bounds;
+    BRepBndLib::Add(shape, bounds);
+    TopTools_ListOfShape cutters;
+    for (const auto& other : nonRibShapes) {
+      if (bounds.IsOut(other.bounds)) continue;
+      cutters.Append(other.shape);
+    }
+    if (!cutters.IsEmpty()) {
+      TopTools_ListOfShape arguments;
+      arguments.Append(shape);
+      BRepAlgoAPI_Cut cut;
+      cut.SetArguments(arguments);
+      cut.SetTools(cutters);
+      // Different rib workers share read-only obstacle shapes. OCCT must
+      // copy any topology it needs to alter instead of mutating those inputs.
+      cut.SetNonDestructive(true);
+      cut.SetRunParallel(false);
+      cut.Build();
+      if (!cut.IsDone()) throw std::runtime_error("Unable to trim " + cap.name + " around the wing structure");
+      shape = cut.Shape();
+    }
+    GProp_GProps properties;
+    BRepGProp::VolumeProperties(shape, properties);
+    if (properties.Mass() > 1.0e-6)
+      capShapes[capIndex] = shape;
+  };
+  if (!structuredWing.ribCaps.empty()) {
+    std::atomic_size_t nextCapRib{0};
+    std::vector<std::future<void>> capWorkers;
+    const auto count = ribGeometryWorkerCount(capsByRib.size(), maximumRibWorkers);
+    for (std::size_t worker = 0; worker < count; ++worker)
+      capWorkers.push_back(std::async(std::launch::async, [&] {
+        for (;;) {
+          const auto ribIndex = nextCapRib.fetch_add(1);
+          if (ribIndex >= capsByRib.size()) return;
+          for (const auto capIndex : capsByRib[ribIndex]) buildCap(capIndex);
+          ++completedCapRibs;
+        }
+      }));
+    for (auto& worker : capWorkers) worker.get();
+    if (progress)
+      progress(94, "Rib cap collision checks complete (" +
+          std::to_string(completedCapRibs.load()) + "/" +
+          std::to_string(capsByRib.size()) + " ribs complete)");
+    // Keep compound mutation and STEP ordering deterministic. Caps have
+    // already been cut against every obstacle, so do not repeat the generic
+    // spar/part Boolean collision pass when registering the finished caps.
+    for (std::size_t i = 0; i < capShapes.size(); ++i)
+      if (!capShapes[i].IsNull())
+        addShape(capShapes[i], PartMaterial::Wood, true, structuredWing.ribCaps[i].name);
+  }
+  if (timings) timings->ribCapsMs = elapsedMs(capStageStart);
 
   const auto isWiringCollisionTarget = [&](const std::string& name) {
     return isSparMember(name) || name == "CF tube" || name == "CF rod" ||

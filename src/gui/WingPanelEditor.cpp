@@ -399,6 +399,8 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(spoilerMinimumCircleDistance);
   PUT(wiringHoles); PUT(wiringHoleStartRib); PUT(wiringHoleEndRib);
   PUT(wiringHoleChordLocationPercent); PUT(wiringHoleWidth); PUT(wiringHoleHeight);
+  PUT(topRibCaps); PUT(topRibCapThickness); PUT(topRibCapWidth);
+  PUT(bottomRibCaps); PUT(bottomRibCapThickness); PUT(bottomRibCapWidth);
   PUT(addBuildTabs); PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
   PUT(behindSparJoinerOd); PUT(behindSparJoinerId); PUT(fiftyPercentJoiner);
   PUT(fiftyPercentJoinerType); PUT(fiftyPercentJoinerOd); PUT(fiftyPercentJoinerId);
@@ -520,6 +522,8 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_D(spoilerMinimumCircleDistance);
   READ_B(wiringHoles); READ_I(wiringHoleStartRib); READ_I(wiringHoleEndRib);
   READ_D(wiringHoleChordLocationPercent); READ_D(wiringHoleWidth); READ_D(wiringHoleHeight);
+  READ_B(topRibCaps); READ_D(topRibCapThickness); READ_D(topRibCapWidth);
+  READ_B(bottomRibCaps); READ_D(bottomRibCapThickness); READ_D(bottomRibCapWidth);
   READ_B(addBuildTabs); READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
   READ_I(behindSparJoinerType); READ_D(behindSparJoinerOd); READ_D(behindSparJoinerId);
   READ_B(fiftyPercentJoiner); READ_I(fiftyPercentJoinerType);
@@ -784,6 +788,8 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
 #define ROUND_LENGTH(name) roundLength(rounded.name)
   ROUND_LENGTH(panelSpan); ROUND_LENGTH(rootChord); ROUND_LENGTH(tipChord); ROUND_LENGTH(sweep);
   ROUND_LENGTH(ribThickness); ROUND_LENGTH(topSparHeight); ROUND_LENGTH(topSparWidth);
+  ROUND_LENGTH(topRibCapThickness); ROUND_LENGTH(topRibCapWidth);
+  ROUND_LENGTH(bottomRibCapThickness); ROUND_LENGTH(bottomRibCapWidth);
   ROUND_LENGTH(bottomSparHeight); ROUND_LENGTH(bottomSparWidth); ROUND_LENGTH(shearWebWidth);
   ROUND_LENGTH(cfTubeOd); ROUND_LENGTH(cfTubeId); ROUND_LENGTH(cfRodOd);
   ROUND_LENGTH(leTopSheetThickness); ROUND_LENGTH(leBottomSheetThickness);
@@ -838,6 +844,9 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
 
 WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   WingPanelData defaults;
+  for (const auto* key : {"topRibCapThickness", "topRibCapWidth",
+                           "bottomRibCapThickness", "bottomRibCapWidth"})
+    defaults.unitOverrides.insert(key, UnitOverride::Global);
   defaults.leadingEdgeType = 2;
   defaults.trailingEdgeType = 2;
   defaults.leTopSheetStopRib = 1;
@@ -1003,6 +1012,9 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   alignmentPin.pinOdUnit = UnitOverride::Millimeters;
   defaults.removableJoiners = {sleeveRod, alignmentPin};
   defaults.unitOverrides.clear();
+  for (const auto* key : {"topRibCapThickness", "topRibCapWidth",
+                           "bottomRibCapThickness", "bottomRibCapWidth"})
+    defaults.unitOverrides.insert(key, UnitOverride::Global);
   for (const auto* key : {
            "aileronHeight", "aileronHingePostHeight", "aileronHingePostWidth",
            "aileronWidth", "bottomRearSparHeight", "bottomRearSparWidth",
@@ -1079,6 +1091,7 @@ WingPanelEditor::WingPanelEditor(const WingPanelData& data, const DisplayUnit gl
   tabs->setTabPosition(QTabWidget::West);
   tabs->addTab(makeSpecsPage(), "Specs");
   tabs->addTab(makeRibsPage(), "Ribs");
+  tabs->addTab(makeRibCapsPage(), "Rib Caps");
   tabs->addTab(makeSparsPage(), "Spars");
   tabs->addTab(makeSheetingPage(), "Sheeting");
   if (showJoinerPage_) tabs->addTab(makeJoinerPage(), "Joiners");
@@ -1147,10 +1160,6 @@ QWidget* WingPanelEditor::makeSpecsPage() {
     updateConditionalControls(); emitChanged();
   });
   connect(twist_, &QDoubleSpinBox::valueChanged, this, [this] {
-    if (addBuildTabs_) {
-      addBuildTabs_->setEnabled(twist_->value() != 0.0);
-      if (!addBuildTabs_->isEnabled()) addBuildTabs_->setChecked(false);
-    }
     emitChanged();
   });
   return scrollPage(content);
@@ -1176,7 +1185,7 @@ QWidget* WingPanelEditor::makeRibsPage() {
   form->addRow("Rib Count", ribCount_);
   form->addRow(ribSpacing_);
   form->addRow("Rib Thickness", ribThickness_);
-  addBuildTabs_ = new QCheckBox{"Add Build Tabs (Enabled if Tip Twist Applied)"};
+  addBuildTabs_ = new QCheckBox{"Add Build Tabs"};
   addBuildTabs_->setObjectName("addBuildTabs");
   form->addRow(addBuildTabs_);
   connect(addBuildTabs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
@@ -1268,6 +1277,42 @@ QWidget* WingPanelEditor::makeRibsPage() {
     updateWiringHoleRibRanges(true);
     emitChanged();
   });
+  return scrollPage(content);
+}
+
+QWidget* WingPanelEditor::makeRibCapsPage() {
+  auto* content = new QWidget;
+  auto* layout = new QVBoxLayout{content};
+  const auto addCaps = [&](const QString& label, const QString& prefix,
+                           QCheckBox*& check, QWidget*& details,
+                           LengthInput*& thickness, LengthInput*& width) {
+    check = new QCheckBox{label};
+    check->setObjectName(prefix + "s");
+    const auto length = [&](const QString& suffix, const double value) {
+      const QString key = prefix + suffix;
+      auto* input = new LengthInput{key, value};
+      input->setGlobalUnit(globalUnit_);
+      input->setOverrideSelectorVisible(showUnitOverrides_);
+      lengths_.insert(key, input);
+      connect(input, &LengthInput::valueChanged, this, &WingPanelEditor::emitChanged);
+      return input;
+    };
+    thickness = length("Thickness", 1.5875);
+    width = length("Width", 6.35);
+    details = detailRow({{"Thickness", thickness}, {"Width", width}});
+    details->setObjectName(prefix + "Details");
+    layout->addWidget(check);
+    layout->addWidget(details);
+    connect(check, &QCheckBox::toggled, this, [this] {
+      updateConditionalControls();
+      emitChanged();
+    });
+  };
+  addCaps("Top Rib Caps", "topRibCap", topRibCaps_, topRibCapDetails_,
+          topRibCapThickness_, topRibCapWidth_);
+  addCaps("Bottom Rib Caps", "bottomRibCap", bottomRibCaps_, bottomRibCapDetails_,
+          bottomRibCapThickness_, bottomRibCapWidth_);
+  layout->addStretch();
   return scrollPage(content);
 }
 
@@ -2563,6 +2608,12 @@ WingPanelData WingPanelEditor::data() const {
     d.unitOverrides.insert("wiringHoleHeight", wiring.height->unitOverride());
   }
   d.addBuildTabs = addBuildTabs_->isChecked();
+  d.topRibCaps = topRibCaps_->isChecked();
+  d.topRibCapThickness = topRibCapThickness_->valueMm();
+  d.topRibCapWidth = topRibCapWidth_->valueMm();
+  d.bottomRibCaps = bottomRibCaps_->isChecked();
+  d.bottomRibCapThickness = bottomRibCapThickness_->valueMm();
+  d.bottomRibCapWidth = bottomRibCapWidth_->valueMm();
   d.addRib1a = showRootChord_ && addRib1a_->isChecked();
   if (showJoinerPage_) {
     d.joinerPanelMode = joinerMode_;
@@ -2702,6 +2753,12 @@ void WingPanelEditor::setData(const WingPanelData& d) {
     airfoilData_.spoilerSupportRailHeight = d.spoilerSupportRailHeight;
   }
   addBuildTabs_->setChecked(d.addBuildTabs);
+  topRibCaps_->setChecked(d.topRibCaps);
+  SET_LENGTH(topRibCapThickness_, topRibCapThickness);
+  SET_LENGTH(topRibCapWidth_, topRibCapWidth);
+  bottomRibCaps_->setChecked(d.bottomRibCaps);
+  SET_LENGTH(bottomRibCapThickness_, bottomRibCapThickness);
+  SET_LENGTH(bottomRibCapWidth_, bottomRibCapWidth);
   addRib1a_->setChecked(showRootChord_ && d.addRib1a);
   if (showJoinerPage_) {
     clearJoinerEditors();
@@ -2801,6 +2858,16 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
+  for (const bool top : {true, false}) {
+    if (!(top ? topRibCaps_ : bottomRibCaps_)->isChecked()) continue;
+    const double thickness = (top ? topRibCapThickness_ : bottomRibCapThickness_)->valueMm();
+    const double width = (top ? topRibCapWidth_ : bottomRibCapWidth_)->valueMm();
+    if (!std::isfinite(thickness) || !std::isfinite(width) || thickness <= 0.0 || width <= 0.0) {
+      error = QString{top ? "Top" : "Bottom"} +
+          " Rib Caps Thickness and Width must be greater than zero.";
+      return false;
+    }
+  }
   const auto validateTeSheeting = [&error](const QString& name,
       const QCheckBox* enabled, const LengthInput* width,
       const LengthInput* thickness, const QCheckBox* taper,
@@ -2911,8 +2978,8 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
-  addBuildTabs_->setEnabled(twist_->value() != 0.0);
-  if (!addBuildTabs_->isEnabled()) addBuildTabs_->setChecked(false);
+  topRibCapDetails_->setVisible(topRibCaps_->isChecked());
+  bottomRibCapDetails_->setVisible(bottomRibCaps_->isChecked());
   ribLighteningHoleDetails_->setVisible(ribLighteningHoles_->isChecked());
   const bool ribletEligible = ribletsAvailable();
   riblets_->setEnabled(ribletEligible);

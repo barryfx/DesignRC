@@ -1,6 +1,11 @@
 #include "geometry/StepExporter.h"
 #include "geometry/OcctRibBuilder.h"
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <cstdio>
+#include <Standard_Failure.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
 #include <STEPControl_Reader.hxx>
@@ -22,6 +27,9 @@
 #include <XCAFDoc_ShapeTool.hxx>
 
 #include <cassert>
+#include <cstdlib>
+#include <atomic>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -56,6 +64,151 @@ TDF_Label findChild(const TDF_Label& assembly, const std::string& name) {
 } // namespace
 
 int main() {
+#ifdef _WIN32
+  _set_error_mode(_OUT_TO_STDERR);
+#endif
+  try {
+    // Adjacent panels meet at a shared angled rib plane. Even wide cap stock
+    // must terminate at each panel's outside root/tip face.
+    double originY = 0.0, originZ = 0.0;
+    for (int panel = 0; panel < 2; ++panel) {
+      using namespace designrc::domain;
+      WingParameters p;
+      p.ribCount = 3; p.halfSpan = 150.0; p.ribThickness = 2.0;
+      p.rootChord = panel == 0 ? 160.0 : 140.0;
+      p.tipChord = panel == 0 ? 140.0 : 120.0; p.dihedralDegrees = 0.0;
+      p.rootTwistDegrees = panel == 0 ? 0.0 : -4.0;
+      p.tipTwistDegrees = panel == 0 ? -4.0 : -8.0;
+      const auto foil = AirfoilProfile::nacaSymmetric(0.12);
+      auto ribs = generateRibs(p, foil, foil);
+      const double inclination = panel == 0 ? 10.0 : 25.0;
+      const double radians = inclination * std::numbers::pi / 180.0;
+      for (std::size_t i = 0; i < ribs.size(); ++i) {
+        const double span = ribs[i].spanPosition;
+        ribs[i].spanPosition = originY + std::cos(radians) * span;
+        ribs[i].dihedralHeight = originZ + std::sin(radians) * span;
+        ribs[i].ribPlaneAngleDegrees = i == 0 ? (panel == 0 ? 0.0 : 17.5) :
+            i + 1 == ribs.size() ? (panel == 0 ? 17.5 : 25.0) : inclination;
+        ribs[i].ribThicknessStartFactor = i == 0 ? 0.0 : i + 1 == ribs.size() ? -1.0 : -0.5;
+      }
+      StructureParameters s;
+      s.ribThickness = p.ribThickness;
+      s.topRibCaps = s.bottomRibCaps = true;
+      s.topRibCapWidth = s.bottomRibCapWidth = 25.4;
+      const auto wing = applyWingStructure(ribs, s);
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(
+          wing, p.ribThickness, nullptr, &materials, {}, 3);
+      assert(BRepCheck_Analyzer{shape}.IsValid());
+      for (const auto& cap : wing.ribCaps) {
+        if (cap.ribIndex != 0 && cap.ribIndex + 1 != ribs.size()) continue;
+        const auto part = std::find_if(materials.parts.begin(), materials.parts.end(),
+            [&](const auto& candidate) { return candidate.name == cap.name; });
+        assert(part != materials.parts.end());
+        const auto& rib = ribs[cap.ribIndex];
+        const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+        for (TopExp_Explorer vertices{part->shape, TopAbs_VERTEX}; vertices.More(); vertices.Next()) {
+          const auto point = BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));
+          const double offset = (point.Y() - rib.spanPosition) * std::cos(angle) +
+              (point.Z() - rib.dihedralHeight) * std::sin(angle);
+          if (cap.ribIndex == 0) assert(offset >= -1.0e-6);
+          else assert(offset <= 1.0e-6);
+        }
+      }
+      originY = ribs.back().spanPosition;
+      originZ = ribs.back().dihedralHeight;
+    }
+    for (const bool obstructed : {false, true}) {
+    using namespace designrc::domain;
+    WingParameters p;
+    p.ribCount = obstructed ? 4 : 3; p.halfSpan = 250.0;
+    p.rootChord = 300.0; p.tipChord = 240.0;
+    p.dihedralDegrees = obstructed ? 0.0 : 12.0; p.tipTwistDegrees = -3.0;
+    const auto foil = AirfoilProfile::nacaSymmetric(0.12);
+    auto ribs = generateRibs(p, foil, foil);
+    ribs.front().ribThicknessStartFactor = 0.0;
+    ribs.back().ribThicknessStartFactor = -1.0;
+    StructureParameters s;
+    s.ribThickness = p.ribThickness;
+    s.topRibCaps = s.bottomRibCaps = true;
+    if (obstructed) {
+      s.topSpar = s.bottomSpar = true;
+      s.leadingEdgeType = 2; s.leadingEdgeWidth = 6.0; s.leadingEdgeHeight = 30.0;
+      s.leTopSheet = true; s.leTopSheetStopRib = 4;
+      s.spoilers = true; s.spoilerStartRib = 1; s.spoilerEndRib = 4;
+      s.spoilerChordLocationPercent = 40.0;
+    }
+    const auto wing = applyWingStructure(ribs, s);
+    designrc::geometry::MaterialShapeSet serialMaterials;
+    designrc::geometry::PanelBuildTimings serialTimings, parallelTimings;
+    const auto serial = designrc::geometry::buildStructuredWingPreview(
+        wing, p.ribThickness, &serialTimings, &serialMaterials, {}, 1);
+    assert(BRepCheck_Analyzer{serial}.IsValid());
+    std::atomic_int capProgressReports{0};
+    const auto report = [&](int, const std::string& message) {
+      if (message.starts_with("Checking rib cap collisions for Rib ")) {
+        assert(message.find("Top") != std::string::npos || message.find("Bottom") != std::string::npos);
+        ++capProgressReports;
+      }
+    };
+    designrc::geometry::MaterialShapeSet materials;
+    const auto shape = designrc::geometry::buildStructuredWingPreview(
+        wing, p.ribThickness, &parallelTimings, &materials, report, 4);
+    assert(capProgressReports == static_cast<int>(wing.ribCaps.size()));
+    assert(serialMaterials.parts.size() == materials.parts.size());
+    for (std::size_t i = 0; i < materials.parts.size(); ++i) {
+      assert(serialMaterials.parts[i].name == materials.parts[i].name);
+      if (materials.parts[i].name.find("rib cap") == std::string::npos) continue;
+      GProp_GProps before, after;
+      BRepGProp::VolumeProperties(serialMaterials.parts[i].shape, before);
+      BRepGProp::VolumeProperties(materials.parts[i].shape, after);
+      assert(std::abs(before.Mass() - after.Mass()) <= 1.0e-6 * std::max(1.0, before.Mass()));
+    }
+    std::fprintf(stderr, "Rib cap collision stage (%s): serial %.1f ms, parallel %.1f ms\n",
+        obstructed ? "with structure" : "bare ribs", serialTimings.ribCapsMs, parallelTimings.ribCapsMs);
+    for (const auto& part : materials.parts)
+      if (!BRepCheck_Analyzer{part.shape}.IsValid())
+        std::fprintf(stderr, "Invalid rib cap test part: %s\n", part.name.c_str());
+    assert(BRepCheck_Analyzer{shape}.IsValid());
+    int caps = 0;
+    for (const auto& cap : materials.parts) {
+      if (cap.name.find("rib cap") == std::string::npos) continue;
+      ++caps;
+      GProp_GProps volume;
+      BRepGProp::VolumeProperties(cap.shape, volume);
+      assert(volume.Mass() > 0.0 && BRepCheck_Analyzer{cap.shape}.IsValid());
+      Bnd_Box capBounds;
+      BRepBndLib::Add(cap.shape, capBounds);
+      for (const auto& other : materials.parts) {
+        if (&cap == &other) continue;
+        Bnd_Box otherBounds;
+        BRepBndLib::Add(other.shape, otherBounds);
+        if (capBounds.IsOut(otherBounds)) continue;
+        BRepAlgoAPI_Common common{cap.shape, other.shape};
+        assert(common.IsDone());
+        GProp_GProps overlap;
+        BRepGProp::VolumeProperties(common.Shape(), overlap);
+        if (overlap.Mass() > 1.0e-3)
+          std::fprintf(stderr, "%s overlaps %s by %.9f mm3\n", cap.name.c_str(), other.name.c_str(), overlap.Mass());
+        assert(overlap.Mass() <= 1.0e-3);
+      }
+    }
+    assert(caps > 0);
+    const auto path = std::filesystem::temp_directory_path() / "designrc_rib_caps.step";
+    designrc::geometry::exportStepAssembly(materials.parts, path, "Rib caps");
+    STEPControl_Reader reader;
+    assert(reader.ReadFile(path.string().c_str()) == IFSelect_RetDone);
+    assert(reader.TransferRoots() > 0);
+    assert(BRepCheck_Analyzer{reader.OneShape()}.IsValid());
+    std::filesystem::remove(path);
+    }
+  } catch (const Standard_Failure& error) {
+    std::fprintf(stderr, "Rib cap geometry: %s\n", error.GetMessageString());
+    return 1;
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "Rib cap geometry: %s\n", error.what());
+    return 1;
+  }
   {
     // The saved glider's AG37-to-AG38 outer panel previously missed the lower
     // surface at rib 4 with its 2 mm LE. Validate the resulting solids as well.
@@ -87,7 +240,7 @@ int main() {
     assert(BRepCheck_Analyzer{reader.OneShape()}.IsValid());
     std::filesystem::remove(path);
   }
-  for (const double twist : {-5.0, 5.0}) {
+  for (const double twist : {-5.0, 0.0, 5.0}) {
     designrc::domain::WingParameters parameters;
     parameters.ribCount = 3;
     parameters.dihedralDegrees = 0.0;

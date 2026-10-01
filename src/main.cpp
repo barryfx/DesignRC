@@ -45,11 +45,13 @@ int main(int argc, char* argv[]) {
 #endif
   if (application.arguments().contains("--joiner-backend-regression"))
     return designrc::gui::runJoinerBackendRegression();
+  if (application.arguments().contains("--cancellation-backend-regression"))
+    return designrc::gui::runCancellationBackendRegression();
 
-  QSplashScreen splash{QPixmap(":/graphics/designrc_splash.png")};
   QScreen* splashScreen = QGuiApplication::screenAt(QCursor::pos());
   if (splashScreen == nullptr)
     splashScreen = QGuiApplication::primaryScreen();
+  QSplashScreen splash{splashScreen, QPixmap(":/graphics/designrc_splash.png")};
   if (splashScreen != nullptr) {
     const QRect availableArea = splashScreen->availableGeometry();
     splash.move(availableArea.center() - splash.rect().center());
@@ -67,6 +69,15 @@ int main(int argc, char* argv[]) {
     QEventLoop delay;
     QTimer::singleShot(remainingSplashTime, &delay, &QEventLoop::quit);
     delay.exec();
+  }
+  // Use the splash's current screen in case a display changed during startup.
+  // Explicit placement is needed before maximizing: otherwise Windows may
+  // choose a different display for the main window.
+  if (QScreen* startupScreen = splash.screen()) {
+    window.setScreen(startupScreen);
+    const QRect availableArea = startupScreen->availableGeometry();
+    window.resize(window.size().boundedTo(availableArea.size()));
+    window.move(availableArea.center() - window.rect().center());
   }
   window.showMaximized();
   splash.finish(&window);

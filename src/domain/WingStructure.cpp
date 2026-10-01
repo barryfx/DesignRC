@@ -339,11 +339,23 @@ std::vector<Point2> applySurfaceRecesses(const std::vector<Point2>& surface,
     // the zero-depth side creates a narrow extruded tab at the edge.
     if (x <= surface.front().x + 1.0e-8) leftDepth = rightDepth;
     if (x >= surface.back().x - 1.0e-8) rightDepth = leftDepth;
-    const double y = interpolateY(surface, x);
+    double leftY = interpolateY(surface, x);
+    double rightY = leftY;
+    // Existing notches and build tabs have vertical edges (two points at X).
+    // Preserve both sides when a cap recess terminates against that edge.
+    const auto first = std::lower_bound(surface.begin(), surface.end(), x - 1.0e-8,
+        [](const Point2& point, const double value) { return point.x < value; });
+    if (first != surface.end() && std::abs(first->x - x) < 1.0e-8) {
+      leftY = first->y;
+      auto last = first;
+      while (std::next(last) != surface.end() && std::abs(std::next(last)->x - x) < 1.0e-8)
+        ++last;
+      rightY = last->y;
+    }
     const double direction = top ? -1.0 : 1.0;
-    result.push_back({x, y + direction * leftDepth});
-    if (std::abs(leftDepth - rightDepth) > 1.0e-8)
-      result.push_back({x, y + direction * rightDepth});
+    result.push_back({x, leftY + direction * leftDepth});
+    if (std::abs((leftY + direction * leftDepth) - (rightY + direction * rightDepth)) > 1.0e-8)
+      result.push_back({x, rightY + direction * rightDepth});
   }
   return result;
 }
@@ -377,6 +389,107 @@ std::vector<Point2> applyNotches(const std::vector<Point2>& surface,
   }
   result.insert(result.end(), surface.begin() + static_cast<std::ptrdiff_t>(source), surface.end());
   return result;
+}
+
+// Resolve tabbed manufacturing contours before export or extrusion. Sampling
+// bounded cubic runs to 0.005 mm avoids a later spline fit putting a tiny lip
+// back below the support line after its vertices have been corrected.
+void constrainTabOutline(std::vector<Point2>& outline,
+                         std::vector<RibOutlineSegment>& segments,
+                         const double sine, const double cosine,
+                         const double floor) {
+  if (outline.empty()) return;
+  if (segments.empty()) segments = makeRibOutlineSegments(outline);
+  std::vector<Point2> boundaries;
+  for (const auto& segment : segments)
+    if (!segment.points.empty()) boundaries.push_back(segment.points.front());
+  std::vector<Point2> sampled;
+  const auto append = [&](const Point2 point) {
+    if (sampled.empty() || std::hypot(point.x - sampled.back().x,
+                                     point.y - sampled.back().y) > 1.0e-9)
+      sampled.push_back(point);
+  };
+  const auto midpoint = [](const Point2 a, const Point2 b) {
+    return Point2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5};
+  };
+  const auto flatten = [&](auto&& self, const Point2 a, const Point2 b,
+                           const Point2 c, const Point2 d, const int depth) -> void {
+    const double length = std::hypot(d.x - a.x, d.y - a.y);
+    const auto deviation = [&](const Point2 p) {
+      if (length < 1.0e-12) return std::hypot(p.x - a.x, p.y - a.y);
+      const double t = std::clamp(((p.x - a.x) * (d.x - a.x) +
+          (p.y - a.y) * (d.y - a.y)) / (length * length), 0.0, 1.0);
+      return std::hypot(p.x - a.x - t * (d.x - a.x),
+                        p.y - a.y - t * (d.y - a.y));
+    };
+    if (depth == 16 || std::max(deviation(b), deviation(c)) <= 0.005) {
+      append(d);
+      return;
+    }
+    const auto ab = midpoint(a, b), bc = midpoint(b, c), cd = midpoint(c, d);
+    const auto abc = midpoint(ab, bc), bcd = midpoint(bc, cd);
+    const auto mid = midpoint(abc, bcd);
+    self(self, a, ab, abc, mid, depth + 1);
+    self(self, mid, bcd, cd, d, depth + 1);
+  };
+  for (const auto& segment : segments) {
+    if (segment.points.empty()) continue;
+    append(segment.points.front());
+    for (std::size_t i = 0; i + 1 < segment.points.size(); ++i) {
+      const auto a = segment.points[i], d = segment.points[i + 1];
+      if (!segment.spline || segment.points.size() < 3) { append(d); continue; }
+      const auto previous = i == 0 ? a : segment.points[i - 1];
+      const auto next = i + 2 < segment.points.size() ? segment.points[i + 2] : d;
+      const auto handle = [&](const Point2 endpoint, Point2 control) {
+        const double length = std::hypot(control.x - endpoint.x, control.y - endpoint.y);
+        const double maximum = std::hypot(d.x - a.x, d.y - a.y) / 3.0;
+        if (length > maximum && length > 1.0e-12) {
+          control.x = endpoint.x + (control.x - endpoint.x) * maximum / length;
+          control.y = endpoint.y + (control.y - endpoint.y) * maximum / length;
+        }
+        return control;
+      };
+      flatten(flatten, a, handle(a, {a.x + (d.x - previous.x) / 6.0,
+                                     a.y + (d.y - previous.y) / 6.0}),
+          handle(d, {d.x - (next.x - a.x) / 6.0,
+                     d.y - (next.y - a.y) / 6.0}), d, 0);
+    }
+  }
+  if (sampled.size() > 1 && std::hypot(sampled.front().x - sampled.back().x,
+      sampled.front().y - sampled.back().y) < 1.0e-9) sampled.pop_back();
+  // Clip each edge to the retained half-plane, preserving exact intersections
+  // instead of moving a notch corner sideways or changing its width.
+  std::vector<Point2> clipped;
+  for (std::size_t i = 0; i < sampled.size(); ++i) {
+    const auto a = sampled[i], b = sampled[(i + 1) % sampled.size()];
+    const double da = sine * a.x + cosine * a.y - floor;
+    const double db = sine * b.x + cosine * b.y - floor;
+    if (da >= -1.0e-9) clipped.push_back(a);
+    if ((da < -1.0e-9 && db > 1.0e-9) || (da > 1.0e-9 && db < -1.0e-9)) {
+      const double t = da / (da - db);
+      clipped.push_back({a.x + t * (b.x - a.x), a.y + t * (b.y - a.y)});
+    }
+  }
+  if (clipped.size() < 3) throw std::invalid_argument("Build plane removed the rib outline");
+  outline = std::move(clipped);
+  segments.clear();
+  const auto isBoundary = [&](const Point2 p) {
+    return std::any_of(boundaries.begin(), boundaries.end(), [&](const Point2 b) {
+      return std::hypot(p.x - b.x, p.y - b.y) < 1.0e-9;
+    });
+  };
+  const auto first = std::find_if(outline.begin(), outline.end(), isBoundary);
+  if (first != outline.end()) std::rotate(outline.begin(), first, outline.end());
+  std::vector<Point2> run{outline.front()};
+  for (std::size_t i = 1; i <= outline.size(); ++i) {
+    const auto point = outline[i % outline.size()];
+    if (std::hypot(point.x - run.back().x, point.y - run.back().y) > 1.0e-9)
+      run.push_back(point);
+    if (isBoundary(point) || i == outline.size()) {
+      if (run.size() > 1) segments.push_back({std::move(run), false});
+      run = {point};
+    }
+  }
 }
 
 std::vector<Point2> applySlopedTopNotch(const std::vector<Point2>& surface,
@@ -454,7 +567,7 @@ bool pointInPolygon(const Point2 point, const std::vector<Point2>& polygon) {
 
 std::vector<std::vector<Point2>> ribLighteningHoleLayout(
     const StructuredRib& rib, const double borderDistance,
-    const double holeDistance) {
+    const double holeDistance, const std::function<void()>& checkpoint) {
   const auto& boundary = rib.partOutline.empty()
       ? rib.outerOutline : rib.partOutline;
   if (boundary.size() < 3) return {};
@@ -483,6 +596,7 @@ std::vector<std::vector<Point2>> ribLighteningHoleLayout(
         return left.y < right.y;
       });
   const auto availableRadius = [&](const Point2 point) {
+    if (checkpoint) checkpoint();
     if (!pointInPolygon(point, boundary))
       return -std::numeric_limits<double>::infinity();
     double radius = distanceToPolygon(point, boundary) - borderDistance;
@@ -986,6 +1100,13 @@ std::vector<RibOutlineSegment> makeRibOutlineSegments(
 StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                    const StructureParameters& p) {
   if (ribs.size() < 2) throw std::invalid_argument("Wing structure requires at least two ribs");
+  for (const bool top : {true, false}) {
+    if (!(top ? p.topRibCaps : p.bottomRibCaps)) continue;
+    const double thickness = top ? p.topRibCapThickness : p.bottomRibCapThickness;
+    const double width = top ? p.topRibCapWidth : p.bottomRibCapWidth;
+    if (!std::isfinite(thickness) || !std::isfinite(width) || thickness <= 0.0 || width <= 0.0)
+      throw std::invalid_argument("Rib Caps Thickness and Width must be greater than zero");
+  }
   if (p.trailingEdgeType == 2 && (p.topTeSheeting || p.bottomTeSheeting))
     throw std::invalid_argument(
         "Sheet TE Stock cannot be combined with Top or Bottom TE Sheeting");
@@ -1010,8 +1131,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       p.bottomTeSheetingTaperStartLocationPercent, "Bottom TE Sheeting");
   StructuredWing wing;
   wing.ribs.reserve(ribs.size());
-  const bool buildTabs = p.addBuildTabs && std::any_of(ribs.begin(), ribs.end(),
-      [](const RibDefinition& rib) { return rib.twistDegrees != 0.0; });
+  const bool buildTabs = p.addBuildTabs;
   // Start with the plane tangent to the untwisted root and tip undersides.
   // Its spanwise slope follows taper as well as panel inclination. If an
   // intermediate airfoil extends below it, translate the plane down just
@@ -1038,10 +1158,23 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   const auto verticalProjection = [&](const RibDefinition& rib) {
     return std::cos(ribAngle(rib) - panelAngle);
   };
+  const auto thicknessProjection = [&](const RibDefinition& rib) {
+    const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+    const double normalHeight = std::sin(angle - panelAngle);
+    return std::min(normalHeight * rib.ribThicknessStartFactor * p.ribThickness,
+        normalHeight * (rib.ribThicknessStartFactor + 1.0) * p.ribThickness);
+  };
   double buildPlane = std::numeric_limits<double>::max();
-  for (const auto& rib : ribs)
+  for (const auto& rib : ribs) {
+    double bottom = untwistedRibBottom(rib);
+    const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
+    const auto translation = ribTwistTranslation(rib);
+    for (const auto point : rib.profile.outline())
+      bottom = std::min(bottom, rib.chord *
+          (std::sin(twist) * point.x + std::cos(twist) * point.y) + translation.y);
     buildPlane = std::min(buildPlane,
-        stationHeight(rib) + verticalProjection(rib) * untwistedRibBottom(rib));
+        stationHeight(rib) + verticalProjection(rib) * bottom + thicknessProjection(rib));
+  }
   ProfiledSpanMember leadingStock{"Block leading edge", {}};
   ProfiledSpanMember trailingStock{"Sheet trailing edge", {}};
   const double trailingEdgeSlotDepth = std::max(0.0,
@@ -1774,6 +1907,10 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       for (const auto& recess : lowerRecesses)
         if (recess.depth > 0.0 && recess.right > recess.left)
           bottomSheetingRanges.emplace_back(recess.left, recess.right);
+    // Keep occupied surface intervals for the cap strips. Caps replace bare
+    // rib surface only; they never add a second layer over existing sheeting.
+    const auto capTopSheeting = p.topRibCaps ? upperRecesses : std::vector<SurfaceRecess>{};
+    const auto capBottomSheeting = p.bottomRibCaps ? lowerRecesses : std::vector<SurfaceRecess>{};
     retainedUpper = applySurfaceRecesses(retainedUpper, std::move(upperRecesses), true);
     retainedLower = applySurfaceRecesses(retainedLower, std::move(lowerRecesses), false);
     std::vector<Notch> topNotches;
@@ -1842,6 +1979,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           spoilerTopLeft - p.spoilerThickness,
           spoilerTopRight - p.spoilerThickness);
     auto notchedLower = applyNotches(retainedLower, bottomNotches, false);
+    std::vector<std::pair<double, double>> buildTabRanges;
     if (buildTabs) {
       constexpr double tabWidth = 25.4 * 3.0 / 16.0;
       const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
@@ -1850,9 +1988,10 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       const double projection = verticalProjection(rib);
       if (cosine <= 1.0e-6 || projection <= 1.0e-6)
         throw std::invalid_argument("Build tabs require twist between -90 and 90 degrees");
-      const double footHeight = (buildPlane - stationHeight(rib)) / projection;
+      const double footHeight =
+          (buildPlane - stationHeight(rib) - thicknessProjection(rib)) / projection;
       std::vector<std::pair<double, double>> occupiedTabs;
-      for (const double fraction : {0.25, 0.75}) {
+      for (const double fraction : {0.15, 0.75}) {
         constexpr double clearance = 1.0;
         const double nominal = fraction * rib.chord;
         std::vector<double> candidates{nominal};
@@ -1908,7 +2047,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                 return left < sheet.second - 1.0e-8 && right > sheet.first + 1.0e-8;
               });
         };
-        if (fraction == 0.25 && collidesWithSheet(center)) {
+        if (fraction == 0.15 && collidesWithSheet(center)) {
           // Try the first clear position aft of the front sheeting and spar.
           // Reserve space ahead of the rear tab so the two supports stay apart.
           double minimumLeft = nominal;
@@ -1955,8 +2094,159 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         for (const auto point : notchedLower)
           if (point.x > right) tabbed.push_back(point);
         notchedLower = std::move(tabbed);
+        buildTabRanges.emplace_back(left, right);
       }
     }
+    const auto addRibCaps = [&](const bool top, std::vector<Point2>& retained) {
+      if (!(top ? p.topRibCaps : p.bottomRibCaps)) return;
+      const double thickness = top ? p.topRibCapThickness : p.bottomRibCapThickness;
+      const double width = top ? p.topRibCapWidth : p.bottomRibCapWidth;
+      const auto& surface = top ? upper : lower;
+      const double left = std::max(minimumX,
+          top ? topSheetingMinimumX : bottomSheetingMinimumX);
+      const double right = std::min({maximumX, retainedMaximumX, controlSheetingMaximumX});
+      if (right <= left + 1.0e-6) return;
+      std::vector<std::pair<double, double>> blocked;
+      for (const auto& recess : top ? capTopSheeting : capBottomSheeting)
+        blocked.emplace_back(recess.left, recess.right);
+      for (const auto& notch : top ? topNotches : bottomNotches)
+        blocked.emplace_back(notch.centerX - notch.width * 0.5,
+                             notch.centerX + notch.width * 0.5);
+      for (const auto& notch : top ? bottomNotches : topNotches) {
+        const double a = notch.centerX - notch.width * 0.5;
+        const double b = notch.centerX + notch.width * 0.5;
+        const double floor = top
+            ? interpolateY(retainedLower, notch.centerX) + notch.depth
+            : interpolateY(retainedUpper, notch.centerX) - notch.depth;
+        const double capFloor = top
+            ? std::min(interpolateY(upper, a), interpolateY(upper, b)) - thickness
+            : std::max(interpolateY(lower, a), interpolateY(lower, b)) + thickness;
+        if (top ? floor >= capFloor - 0.25 : floor <= capFloor + 0.25)
+          blocked.emplace_back(a, b);
+      }
+      if (top && buildSpoiler && ribIndex >= spoiler.startRibIndex && ribIndex <= spoiler.endRibIndex)
+        blocked.emplace_back(spoilerLeft, spoilerRight);
+      // Internal spars and joiners only interrupt a cap if they reach its band.
+      const auto excludeProfile = [&](const auto& profile) {
+        if (profile.empty()) return;
+        double x0 = profile.front().x, x1 = x0;
+        double y0 = profile.front().y, y1 = y0;
+        for (const auto& point : profile) {
+          x0 = std::min(x0, point.x); x1 = std::max(x1, point.x);
+          y0 = std::min(y0, point.y); y1 = std::max(y1, point.y);
+        }
+        if (x1 <= left || x0 >= right) return;
+        double bandLow = std::numeric_limits<double>::max();
+        double bandHigh = std::numeric_limits<double>::lowest();
+        for (const auto& point : clippedSurface(surface, std::max(left, x0), std::min(right, x1))) {
+          bandLow = std::min(bandLow, point.y - (top ? thickness : 0.0));
+          bandHigh = std::max(bandHigh, point.y + (top ? 0.0 : thickness));
+        }
+        if (y1 >= bandLow - 1.0e-8 && y0 <= bandHigh + 1.0e-8)
+          blocked.emplace_back(x0, x1);
+      };
+      for (const auto& profile : sparBooleanCutouts) excludeProfile(profile);
+      for (const auto& profile : sparBooleanHoles) excludeProfile(profile);
+      if (p.carbonSpar)
+        excludeProfile(circle(carbonSparCenters[ribIndex], p.carbonSpar == 1 ? p.cfTubeOd : p.cfRodOd));
+      if (p.wiringHoles && ribIndex + 1 >= static_cast<std::size_t>(p.wiringHoleStartRib) &&
+          ribIndex + 1 <= static_cast<std::size_t>(p.wiringHoleEndRib)) {
+        const double a = p.wiringHoleChordLocationPercent / 100.0 * rib.chord;
+        const double b = a + p.wiringHoleWidth;
+        const double center = camberCenter(rib, (a + b) * 0.5).y;
+        excludeProfile(rectangle({{{a, center - p.wiringHoleHeight * 0.5},
+            {b, center - p.wiringHoleHeight * 0.5},
+            {b, center + p.wiringHoleHeight * 0.5},
+            {a, center + p.wiringHoleHeight * 0.5}}}));
+      }
+      for (const auto& joiner : wing.joiners) {
+        if (ribIndex > joiner.stopRibIndex) continue;
+        if (joiner.kind == SpanMemberKind::Rectangular)
+          excludeProfile(joiner.rectangularProfiles[ribIndex]);
+        else
+          excludeProfile(circle(joiner.centers[ribIndex], joiner.outerDiameter));
+      }
+      // Keep a small rib core where the airfoil becomes too thin for the
+      // requested caps. Solve the boundary on the sampled airfoil segments.
+      const auto remainingDepth = [&](const double x) {
+        const double outerTop = interpolateY(upper, x);
+        const double outerBottom = interpolateY(lower, x);
+        const double oppositeInset = top
+            ? interpolateY(retainedLower, x) - outerBottom
+            : outerTop - interpolateY(retainedUpper, x);
+        const double oppositeCap = top
+            ? (p.bottomRibCaps ? p.bottomRibCapThickness : 0.0)
+            : (p.topRibCaps ? p.topRibCapThickness : 0.0);
+        return outerTop - outerBottom - thickness -
+            std::max(oppositeInset, oppositeCap) - 0.25;
+      };
+      for (std::size_t i = 1; i < upper.size(); ++i) {
+        double a = upper[i - 1].x, b = upper[i].x;
+        const double da = remainingDepth(a);
+        const double db = remainingDepth(b);
+        if (da >= 0.0 && db >= 0.0) continue;
+        if (da * db < 0.0) {
+          const double boundary = a + (b - a) * da / (da - db);
+          if (da < 0.0) b = boundary; else a = boundary;
+        }
+        blocked.emplace_back(a, b);
+      }
+      std::sort(blocked.begin(), blocked.end());
+      std::vector<SurfaceRecess> recesses;
+      const double ribStart = rib.ribThicknessStartFactor * p.ribThickness;
+      double startOffset = ribStart + p.ribThickness * 0.5 - width * 0.5;
+      double endOffset = startOffset + width;
+      // Trim the centered strip at each panel's outside rib faces, including
+      // shared joints. The inboard edge keeps its normal centered position.
+      if (ribIndex == 0) startOffset = std::max(startOffset, ribStart);
+      if (ribIndex + 1 == ribs.size())
+        endOffset = std::min(endOffset, ribStart + p.ribThickness);
+      const auto stationDistance = [&](const RibDefinition& other) {
+        return std::hypot(other.spanPosition - rib.spanPosition,
+                          other.dihedralHeight - rib.dihedralHeight);
+      };
+      if (ribIndex > 0) startOffset = std::max(startOffset, -0.5 * stationDistance(ribs[ribIndex - 1]));
+      if (ribIndex + 1 < ribs.size()) endOffset = std::min(endOffset, 0.5 * stationDistance(ribs[ribIndex + 1]));
+      int segment = 0;
+      const auto append = [&](const double a, const double b) {
+        if (b <= a + 1.0e-4) return;
+        if (!top)
+          for (const auto& tab : buildTabRanges)
+            if (a < tab.second - 1.0e-8 && b > tab.first + 1.0e-8)
+              throw std::invalid_argument(
+                  "Geometric collision between Bottom Rib Cap and Build Tab at rib " +
+                  std::to_string(ribIndex + 1) +
+                  ". Disable Bottom Rib Caps or Add Build Tabs.");
+        auto outer = clippedSurface(surface, a, b);
+        // Match the retained side of an existing notch exactly, including
+        // its sampled end height, so the cap and its recess share a face.
+        for (const auto& point : retained)
+          if (std::abs(point.x - a) < 1.0e-8) outer.front().y = point.y;
+        const auto end = std::find_if(retained.begin(), retained.end(),
+            [b](const Point2 point) { return std::abs(point.x - b) < 1.0e-8; });
+        if (end != retained.end()) outer.back().y = end->y;
+        auto profile = outer;
+        for (auto it = outer.rbegin(); it != outer.rend(); ++it)
+          profile.push_back({it->x, it->y + (top ? -thickness : thickness)});
+        const std::string ribName = p.rib1aPresent && ribIndex == 1 ? "R1a" :
+            "R" + std::to_string(ribIndex + 1 - (p.rib1aPresent && ribIndex > 1 ? 1 : 0));
+        wing.ribCaps.push_back({std::string{top ? "Top" : "Bottom"} + " rib cap " +
+            ribName + "-" + std::to_string(++segment), ribIndex, top, thickness,
+            startOffset, endOffset, std::move(profile)});
+        recesses.push_back({a, b, thickness});
+      };
+      double cursor = left;
+      for (const auto& interval : blocked) {
+        if (interval.second <= cursor || interval.first >= right) continue;
+        append(cursor, std::min(interval.first, right));
+        cursor = std::max(cursor, interval.second);
+        if (cursor >= right) break;
+      }
+      append(cursor, right);
+      retained = applySurfaceRecesses(retained, std::move(recesses), top);
+    };
+    addRibCaps(true, notchedUpper);
+    addRibCaps(false, notchedLower);
     std::vector<Point2> outline;
     outline.reserve(notchedUpper.size() + notchedLower.size() - 1);
     for (auto it = notchedUpper.rbegin(); it != notchedUpper.rend(); ++it) outline.push_back(*it);
@@ -2037,6 +2327,19 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         structured.booleanHoles.push_back(circle(joiner.centers[ribIndex],
             joiner.outerDiameter / std::max(0.25, normalProjection)));
       }
+    }
+    if (buildTabs) {
+      const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
+      const double floor = (buildPlane - stationHeight(rib) - thicknessProjection(rib)) /
+          verticalProjection(rib) - ribTwistTranslation(rib).y;
+      constrainTabOutline(structured.outerOutline, structured.outlineSegments,
+                          std::sin(twist), std::cos(twist), floor);
+      constrainTabOutline(structured.partOutline, structured.partOutlineSegments,
+                          std::sin(twist), std::cos(twist), floor);
+      structured.buildPlane = StructuredRib::BuildPlane{
+          -std::sin(panelAngle), std::cos(panelAngle),
+          buildPlane - std::sin(panelAngle) * ribs.front().spanPosition +
+              std::cos(panelAngle) * ribs.front().dihedralHeight};
     }
     wing.ribs.push_back(std::move(structured));
   }
@@ -2447,6 +2750,8 @@ void addRiblets(StructuredWing& wing,
           -0.5,
           AirfoilProfile::interpolate(
               inner.rib.profile, outer.rib.profile, t)};
+      // Riblets retain the original airfoil surfaces: full-rib cap settings
+      // must not add cap parts or recess the riblet outline.
       const auto [upper, lower] = localSurfaces(rib);
       const Point2 sparModel{
           mix(modelPlanePoint(inner.rib, sparCenters[bay]).x,
@@ -2534,8 +2839,10 @@ std::size_t ribLighteningHoleWorkerCount(
 void addRibLighteningHoles(
     StructuredWing& wing, const StructureParameters& parameters,
     const RibLighteningProgressCallback& progress,
-    const std::size_t maximumWorkers) {
+    const std::size_t maximumWorkers,
+    const std::function<void()>& checkpoint) {
   if (!parameters.ribLighteningHoles) return;
+  if (checkpoint) checkpoint();
   if (parameters.ribLighteningMinimumWoodMargin <= 0.0 ||
       parameters.ribLighteningMinimumHoleDistance < 0.0)
     throw std::invalid_argument(
@@ -2568,12 +2875,14 @@ void addRibLighteningHoles(
         [&, chunkFirst, chunkLast] {
           for (std::size_t jobIndex = chunkFirst;
                jobIndex < chunkLast; ++jobIndex) {
+            if (checkpoint) checkpoint();
             auto& rib = jobIndex < fullRibCount
                 ? wing.ribs[first + jobIndex]
                 : wing.riblets[jobIndex - fullRibCount];
             auto holes = ribLighteningHoleLayout(
                 rib, parameters.ribLighteningMinimumWoodMargin,
-                parameters.ribLighteningMinimumHoleDistance);
+                parameters.ribLighteningMinimumHoleDistance, checkpoint);
+            if (checkpoint) checkpoint();
             rib.internalCutouts.insert(
                 rib.internalCutouts.end(),
                 std::make_move_iterator(holes.begin()),

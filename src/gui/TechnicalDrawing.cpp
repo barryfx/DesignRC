@@ -830,6 +830,20 @@ void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLay
                      rib.leadingEdgeOffset + maximumX)},
         kRibColor, 0.20, true, kWoodFill);
   }
+  for (const auto& cap : wing.ribCaps) {
+    const auto& rib = wing.ribs.at(cap.ribIndex).rib;
+    const double station = flattenedSpanForRib(panel, rib);
+    const auto bounds = std::minmax_element(cap.profile.begin(), cap.profile.end(),
+        [](const auto& a, const auto& b) { return a.x < b.x; });
+    const double left = rib.leadingEdgeOffset + bounds.first->x;
+    const double right = rib.leadingEdgeOffset + bounds.second->x;
+    addPolyline(document, {
+        drawingPoint(layout, mirrored, row, station + cap.startOffset, left),
+        drawingPoint(layout, mirrored, row, station + cap.endOffset, left),
+        drawingPoint(layout, mirrored, row, station + cap.endOffset, right),
+        drawingPoint(layout, mirrored, row, station + cap.startOffset, right)},
+        kRibColor, 0.15, true, Qt::transparent);
+  }
   const auto& root = wing.ribs.front().rib;
   const auto& tip = wing.ribs.back().rib;
   addPolyline(document, {
@@ -956,6 +970,8 @@ double addRootRibSection(TechnicalDrawingDocument& document,
     if (!sheeting.profiles.empty())
       addMappedProfile(sheeting.profiles.front(), Qt::transparent);
   }
+  for (const auto& cap : wing.ribCaps)
+    if (cap.ribIndex == 0) addMappedProfile(cap.profile, Qt::transparent);
   for (const auto& joiner : wing.joiners) {
     if (!joiner.rectangularProfiles.empty()) {
       const auto& source = joiner.rectangularProfiles.front();

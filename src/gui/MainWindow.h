@@ -27,6 +27,7 @@ class PlanViewport;
 enum class CameraView;
 
 int runJoinerBackendRegression();
+int runCancellationBackendRegression();
 
 class MainWindow final : public QMainWindow {
 public:

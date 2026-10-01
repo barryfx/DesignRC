@@ -11,6 +11,12 @@
 #include <TopLoc_Location.hxx>
 #include <TopoDS.hxx>
 #include <Standard_Failure.hxx>
+#include <BRepBndLib.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#include <Bnd_Box.hxx>
+#include <gp_Ax1.hxx>
+#include <gp_Trsf.hxx>
 
 #include <algorithm>
 #include <atomic>
@@ -32,9 +38,179 @@ int runTest(int argc, char* argv[]) {
       std::string{argv[1]} == "--multi-spar-sheeting-solid";
   const bool woodJoinerCollisionOnly = argc > 1 &&
       std::string{argv[1]} == "--wood-joiner-collision";
+  const bool sparEndFacesOnly = argc > 1 &&
+      std::string{argv[1]} == "--spar-end-faces";
+  const bool buildTabClearanceOnly = argc > 1 &&
+      std::string{argv[1]} == "--build-tab-clearance";
+  const bool cancelLighteningOnly = argc > 1 &&
+      std::string{argv[1]} == "--cancel-lightening";
   const bool focusedGeometryOnly =
       teSheetingSolidOnly || multiSparSheetingSolidOnly ||
-      woodJoinerCollisionOnly;
+      woodJoinerCollisionOnly || sparEndFacesOnly || buildTabClearanceOnly || cancelLighteningOnly;
+  if (!focusedGeometryOnly || cancelLighteningOnly) {
+    stage("cancel inside lightening-hole Boolean cuts");
+    using namespace designrc::domain;
+    WingParameters p;
+    p.ribCount = 3; p.rootChord = p.tipChord = 200.0;
+    const auto foil = AirfoilProfile::nacaSymmetric(0.15);
+    StructureParameters s;
+    s.ribLighteningHoles = true;
+    s.ribLighteningStartRib = 1; s.ribLighteningStopRib = 3;
+    s.ribLighteningMinimumWoodMargin = 3.0;
+    s.ribLighteningMinimumHoleDistance = 5.0;
+    auto wing = applyWingStructure(generateRibs(p, foil, foil), s);
+    addRibLighteningHoles(wing, s);
+    if (wing.ribs.front().internalCutouts.empty()) return 120;
+    for (const std::size_t workers : {std::size_t{1}, std::size_t{3}}) {
+      std::atomic_bool cutting{false};
+      std::atomic_int polls{0}, finishedRibs{0};
+      bool cancelled = false;
+      try {
+        static_cast<void>(designrc::geometry::buildStructuredWingPreview(
+            wing, p.ribThickness, nullptr, nullptr,
+            [&](int, const std::string& message) {
+              if (message.find("Cutting Lightening Holes") != std::string::npos) {
+                cutting = true;
+                if (message.find("complete") != std::string::npos) ++finishedRibs;
+              }
+            }, workers, [&] { return cutting && ++polls >= 64; }));
+      } catch (const designrc::geometry::GeometryCancelled&) {
+        cancelled = true;
+      }
+      if (!cancelled || polls < 64 || finishedRibs != 0) return 121;
+    }
+    // The cancellable cut must still produce a valid rib when not cancelled.
+    wing.ribs.erase(wing.ribs.begin() + 1, wing.ribs.end());
+    const auto shape = designrc::geometry::buildStructuredWingPreview(
+        wing, p.ribThickness, nullptr, nullptr, {}, 1, [] { return false; });
+    if (!BRepCheck_Analyzer{shape}.IsValid()) return 122;
+    if (cancelLighteningOnly) return 0;
+  }
+  if (!focusedGeometryOnly || buildTabClearanceOnly) {
+    stage("finished build-tab clearance");
+    using namespace designrc::domain;
+    for (const double twist : {-6.0, 0.0, 6.0}) {
+      WingParameters p;
+      p.ribCount = 3; p.rootChord = 220; p.tipChord = 150;
+      p.halfSpan = 250; p.dihedralDegrees = 12; p.tipTwistDegrees = twist;
+      p.ribThickness = 4.0;
+      const auto foil = AirfoilProfile::nacaSymmetric(0.12);
+      auto tabRibs = generateRibs(p, foil, foil);
+      tabRibs.front().ribThicknessStartFactor = 0.0;
+      tabRibs.back().ribThicknessStartFactor = -1.0;
+      tabRibs.back().ribPlaneAngleDegrees = 20.0;
+      if (twist > 0.0) {
+        for (auto& rib : tabRibs) { rib.spanPosition += 350.0; rib.dihedralHeight += 55.0; }
+        tabRibs.front().ribPlaneAngleDegrees = 8.0;
+      }
+      StructureParameters s;
+      s.ribThickness = p.ribThickness; s.addBuildTabs = true;
+      s.spars = {{25, 1, 0, 2, 3.0, 8.0}};
+      auto wing = applyWingStructure(tabRibs, s);
+      // Inject a residual lip, or a curve dipping below its end points, to
+      // verify the independent completed-solid correction actually runs.
+      if (twist != 0.0) {
+        auto& rib = wing.ribs.front();
+        bool injected = false;
+        for (auto& segment : rib.outlineSegments) {
+          if (segment.points.size() != 2) continue;
+          const auto a = segment.points[0], b = segment.points[1];
+          if (std::abs(std::abs(b.x - a.x) - 25.4 * 3.0 / 16.0) > 1.0e-7) continue;
+          segment.points.insert(segment.points.begin() + 1,
+              Point2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5 - 0.4});
+          segment.spline = twist > 0.0;
+          injected = true;
+          break;
+        }
+        if (!injected) throw std::runtime_error("Missing support edge for clearance regression");
+      }
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(
+          wing, p.ribThickness, nullptr, &materials);
+      if (!BRepCheck_Analyzer{shape}.IsValid())
+        throw std::runtime_error("Invalid build-tab corrected shape");
+      std::size_t checked = 0;
+      for (const auto& part : materials.parts) {
+        if (!part.name.starts_with("Rib ")) continue;
+        const auto& plane = *wing.ribs.at(checked++).buildPlane;
+        gp_Trsf align;
+        align.SetRotation(gp_Ax1{gp_Pnt{0, 0, 0}, gp_Dir{1, 0, 0}},
+            std::atan2(plane.spanNormal, plane.verticalNormal));
+        Bnd_Box bounds;
+        BRepBndLib::AddOptimal(BRepBuilderAPI_Transform{part.shape, align}.Shape(), bounds, false, false);
+        double x0, y0, z0, x1, y1, z1;
+        bounds.Get(x0, y0, z0, x1, y1, z1);
+        if (std::abs(z0 - plane.offset) > 1.0e-6)
+          throw std::runtime_error("Finished rib does not rest on the build plane");
+      }
+      if (checked != 3) throw std::runtime_error("Missing tabbed ribs");
+    }
+    if (buildTabClearanceOnly) return 0;
+  }
+  if (!focusedGeometryOnly || sparEndFacesOnly) {
+    stage("spar outer end faces");
+    using namespace designrc::domain;
+    // Reproduce the two wood spars in RibCapTipOverhang, then cover angled
+    // panel joints, swept spar axes, tubes, rods and carbon strips as well.
+    for (const bool angledJoint : {false, true}) {
+      WingParameters p;
+      p.rootChord = 254.0; p.tipChord = 152.4;
+      p.halfSpan = 300.0; p.ribCount = 3; p.ribThickness = 2.38125;
+      p.dihedralDegrees = 0.0;
+      const auto foil = AirfoilProfile::nacaSymmetric(0.12);
+      auto endRibs = generateRibs(p, foil, foil);
+      const double inclination = (angledJoint ? 25.0 : 4.0) * std::numbers::pi / 180.0;
+      for (std::size_t i = 0; i < endRibs.size(); ++i) {
+        auto& rib = endRibs[i];
+        const double span = rib.spanPosition;
+        rib.spanPosition = (angledJoint ? 350.0 : 0.0) + span * std::cos(inclination);
+        rib.dihedralHeight = span * std::sin(inclination);
+        rib.leadingEdgeOffset = 25.4 * span / p.halfSpan;
+        rib.ribPlaneAngleDegrees = i == 0 ? (angledJoint ? 17.5 : 0.0) :
+            i + 1 == endRibs.size() ? (angledJoint ? 30.0 : 4.0) :
+            inclination * 180.0 / std::numbers::pi;
+        rib.ribThicknessStartFactor = i == 0 ? 0.0 :
+            i + 1 == endRibs.size() ? -1.0 : -0.5;
+      }
+      StructureParameters s;
+      s.ribThickness = p.ribThickness;
+      s.spars = {
+          {25, 0, 0, 2, 3.175, 6.35},
+          {25, 1, 0, 0, 3.175, 6.35},
+          {45, 2, 1, 0, 5, 9, 4, 3},
+          {60, 2, 1, 1, 5, 9, 6, 5, 3},
+          {75, 2, 1, 2, 5, 9, 6, 5, 6, 3, 1}};
+      const auto wing = applyWingStructure(endRibs, s);
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(
+          wing, p.ribThickness, nullptr, &materials);
+      if (shape.IsNull()) throw std::runtime_error("Missing spar end-face geometry");
+      int checked = 0;
+      for (const auto& part : materials.parts) {
+        if (!part.name.starts_with("Spar ")) continue;
+        ++checked;
+        if (!BRepCheck_Analyzer{part.shape}.IsValid())
+          throw std::runtime_error("Invalid trimmed spar: " + part.name);
+        for (const bool tipEnd : {false, true}) {
+          const auto& rib = tipEnd ? endRibs.back() : endRibs.front();
+          const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+          gp_Trsf rotation;
+          rotation.SetRotation(gp_Ax1{gp_Pnt{0, 0, 0}, gp_Dir{1, 0, 0}}, -angle);
+          Bnd_Box bounds;
+          BRepBndLib::AddOptimal(BRepBuilderAPI_Transform{part.shape, rotation}.Shape(), bounds, false, false);
+          double x0, y0, z0, x1, y1, z1;
+          bounds.Get(x0, y0, z0, x1, y1, z1);
+          const double boundary = rib.spanPosition * std::cos(angle) + rib.dihedralHeight * std::sin(angle);
+          // Both outside faces lie on the endpoint stations in this fixture.
+          // Check equality too: stopping short would leave an unfilled notch.
+          if (std::abs((tipEnd ? y1 : y0) - boundary) > 1.0e-5)
+            throw std::runtime_error("Spar does not end at outer rib face: " + part.name);
+        }
+      }
+      if (checked != 5) throw std::runtime_error("Missing spar end-face regressions");
+    }
+    if (sparEndFacesOnly) return 0;
+  }
   const auto cappedGeometryWorkers =
       designrc::geometry::ribGeometryWorkerCount(100, 3);
   if (cappedGeometryWorkers < 1 || cappedGeometryWorkers > 3) return 42;
