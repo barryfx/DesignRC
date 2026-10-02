@@ -221,7 +221,7 @@ int main() {
         designrc::domain::AirfoilProfile::fromDatFile(fixtures / "ag37.dat"),
         designrc::domain::AirfoilProfile::fromDatFile(fixtures / "ag38.dat"));
     designrc::domain::StructureParameters structure;
-    structure.addBuildTabs = true;
+    structure.addFrontBuildTab = structure.addRearBuildTab = true;
     structure.leadingEdgeType = 3;
     structure.leadingEdgeTubeOd = 2.0;
     structure.leadingEdgeTubeId = 1.0;
@@ -252,7 +252,7 @@ int main() {
     structure.bottomSpar = true;
     const auto plain = designrc::geometry::buildStructuredWingPreview(
         designrc::domain::applyWingStructure(ribs, structure), parameters.ribThickness);
-    structure.addBuildTabs = true;
+    structure.addFrontBuildTab = structure.addRearBuildTab = true;
     designrc::geometry::MaterialShapeSet materials;
     const auto tabWing = designrc::domain::applyWingStructure(ribs, structure);
     const auto tabbed = designrc::geometry::buildStructuredWingPreview(

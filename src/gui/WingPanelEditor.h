@@ -119,7 +119,13 @@ struct WingPanelData {
   double sweep{70.0};
   double dihedral{4.0};
   double twist{0.0};
-  bool addBuildTabs{false};
+  bool addFrontBuildTab{false};
+  bool addRearBuildTab{false};
+  double frontBuildTabLocationPercent{15.0};
+  double rearBuildTabLocationPercent{75.0};
+  double buildTabWidth{4.7625};
+  double buildTabHeightAboveTable{0.0};
+  bool addTabRibSeparationLine{false};
   bool topRibCaps{false};
   double topRibCapThickness{1.5875};
   double topRibCapWidth{6.35};
@@ -322,7 +328,14 @@ private:
   LengthInput* sweep_{};
   QDoubleSpinBox* dihedral_{};
   QDoubleSpinBox* twist_{};
-  QCheckBox* addBuildTabs_{};
+  QCheckBox *addFrontBuildTab_{}, *addRearBuildTab_{};
+  QDoubleSpinBox *frontBuildTabLocation_{}, *rearBuildTabLocation_{};
+  LengthInput* buildTabWidth_{};
+  QWidget* buildTabWidthDetails_{};
+  LengthInput* buildTabHeightAboveTable_{};
+  QCheckBox* addTabRibSeparationLine_{};
+  QWidget* tabSeparationDetails_{};
+  QWidget *frontBuildTabDetails_{}, *rearBuildTabDetails_{}, *buildTabHeightDetails_{};
   QCheckBox *topRibCaps_{}, *bottomRibCaps_{};
   QWidget *topRibCapDetails_{}, *bottomRibCapDetails_{};
   LengthInput *topRibCapThickness_{}, *topRibCapWidth_{},

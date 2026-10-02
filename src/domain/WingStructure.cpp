@@ -1131,7 +1131,16 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       p.bottomTeSheetingTaperStartLocationPercent, "Bottom TE Sheeting");
   StructuredWing wing;
   wing.ribs.reserve(ribs.size());
-  const bool buildTabs = p.addBuildTabs;
+  const bool buildTabs = p.addFrontBuildTab || p.addRearBuildTab;
+  if (buildTabs && (!std::isfinite(p.buildTabHeightAboveTable) || p.buildTabHeightAboveTable < 0.0))
+    throw std::invalid_argument("Height Above Work Table must be nonnegative");
+  for (const auto& [enabled, location] : {
+           std::pair{p.addFrontBuildTab, p.frontBuildTabLocationPercent},
+           std::pair{p.addRearBuildTab, p.rearBuildTabLocationPercent}})
+    if (enabled && (!std::isfinite(location) || location < 0.0 || location > 100.0))
+      throw std::invalid_argument("Build tab Location must be between 0% and 100%");
+  if (buildTabs && (!std::isfinite(p.buildTabWidth) || p.buildTabWidth <= 0.0))
+    throw std::invalid_argument("Build tab Width must be greater than zero");
   // Start with the plane tangent to the untwisted root and tip undersides.
   // Its spanwise slope follows taper as well as panel inclination. If an
   // intermediate airfoil extends below it, translate the plane down just
@@ -1175,6 +1184,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     buildPlane = std::min(buildPlane,
         stationHeight(rib) + verticalProjection(rib) * bottom + thicknessProjection(rib));
   }
+  // Offset the support plane along its normal, extending every enabled tab
+  // by the same work-table clearance without moving the wing structure.
+  if (buildTabs) buildPlane -= p.buildTabHeightAboveTable;
   ProfiledSpanMember leadingStock{"Block leading edge", {}};
   ProfiledSpanMember trailingStock{"Sheet trailing edge", {}};
   const double trailingEdgeSlotDepth = std::max(0.0,
@@ -1980,8 +1992,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           spoilerTopRight - p.spoilerThickness);
     auto notchedLower = applyNotches(retainedLower, bottomNotches, false);
     std::vector<std::pair<double, double>> buildTabRanges;
+    std::vector<std::vector<Point2>> tabSeparationLines;
     if (buildTabs) {
-      constexpr double tabWidth = 25.4 * 3.0 / 16.0;
+
       const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
       const auto translation = ribTwistTranslation(rib);
       const double cosine = std::cos(angle);
@@ -1991,11 +2004,24 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       const double footHeight =
           (buildPlane - stationHeight(rib) - thicknessProjection(rib)) / projection;
       std::vector<std::pair<double, double>> occupiedTabs;
-      for (const double fraction : {0.15, 0.75}) {
+      for (const bool front : {true, false}) {
+        if (!(front ? p.addFrontBuildTab : p.addRearBuildTab)) continue;
+        const double tabWidth = p.buildTabWidth;
+        const double fraction = (front ? p.frontBuildTabLocationPercent :
+            p.rearBuildTabLocationPercent) / 100.0;
         constexpr double clearance = 1.0;
         const double nominal = fraction * rib.chord;
+        const auto collidesWithSheet = [&](const double candidate) {
+          const double left = candidate - tabWidth * 0.5;
+          const double right = candidate + tabWidth * 0.5;
+          return std::any_of(bottomSheetingRanges.begin(), bottomSheetingRanges.end(),
+              [&](const auto& sheet) {
+                return left < sheet.second - 1.0e-8 && right > sheet.first + 1.0e-8;
+              });
+        };
+        if (collidesWithSheet(nominal)) continue;
         std::vector<double> candidates{nominal};
-        if (fraction == 0.75)
+        if (!front)
           candidates.push_back(retainedLower.back().x - tabWidth * 0.5 - clearance);
         for (const auto& notch : bottomNotches) {
           candidates.push_back(notch.centerX - (notch.width + tabWidth) * 0.5 - clearance);
@@ -2022,7 +2048,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                 return false;
               // A rear tab must remain an aft support, even when TE stock
               // removes the nominal 75% location on a small tapered rib.
-              if (fraction == 0.75 && left < 0.5 * rib.chord)
+              if (!front && fraction >= 0.5 && left < 0.5 * rib.chord)
                 return false;
               for (const auto& notch : bottomNotches)
                 if (left < notch.centerX + notch.width * 0.5 + clearance - 1.0e-8 &&
@@ -2039,41 +2065,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           throw std::invalid_argument("No room for build tabs clear of bottom spar notches at rib " +
               std::to_string(ribIndex + 1));
         double center = *chosen;
-        const auto collidesWithSheet = [&](const double candidate) {
-          const double left = candidate - tabWidth * 0.5;
-          const double right = candidate + tabWidth * 0.5;
-          return std::any_of(bottomSheetingRanges.begin(), bottomSheetingRanges.end(),
-              [&](const auto& sheet) {
-                return left < sheet.second - 1.0e-8 && right > sheet.first + 1.0e-8;
-              });
-        };
-        if (fraction == 0.15 && collidesWithSheet(center)) {
-          // Try the first clear position aft of the front sheeting and spar.
-          // Reserve space ahead of the rear tab so the two supports stay apart.
-          double minimumLeft = nominal;
-          std::vector<double> aftCandidates;
-          for (const auto& sheet : bottomSheetingRanges) {
-            if (center - tabWidth * 0.5 < sheet.second - 1.0e-8 &&
-                center + tabWidth * 0.5 > sheet.first + 1.0e-8)
-              minimumLeft = std::max(minimumLeft, sheet.second + clearance);
-            aftCandidates.push_back(sheet.second + clearance + tabWidth * 0.5);
-          }
-          for (const auto& notch : bottomNotches)
-            aftCandidates.push_back(notch.centerX + (notch.width + tabWidth) * 0.5 + clearance);
-          std::sort(aftCandidates.begin(), aftCandidates.end());
-          const auto aft = std::find_if(aftCandidates.begin(), aftCandidates.end(),
-              [&](const double candidate) {
-                return candidate - tabWidth * 0.5 >= minimumLeft - 1.0e-8 &&
-                    candidate + tabWidth * 0.5 + clearance < 0.75 * rib.chord - tabWidth * 0.5 &&
-                    clearsSpars(candidate) && !collidesWithSheet(candidate);
-              });
-          if (aft != aftCandidates.end()) center = *aft;
-        }
-        if (collidesWithSheet(center))
-          throw std::invalid_argument("Build tab / bottom sheeting collision at rib " +
-              std::to_string(ribIndex + 1) + " (" +
-              std::to_string(static_cast<int>(fraction * 100)) +
-              "% chord tab). Adjust the sheeting or disable Add Build Tabs.");
+        if (collidesWithSheet(center)) continue;
         const double left = center - tabWidth * 0.5;
         const double right = left + tabWidth;
         if (left <= notchedLower.front().x || right >= notchedLower.back().x)
@@ -2095,6 +2087,15 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           if (point.x > right) tabbed.push_back(point);
         notchedLower = std::move(tabbed);
         buildTabRanges.emplace_back(left, right);
+        if (p.addTabRibSeparationLine) {
+          const double gap = std::min(0.25, tabWidth * 0.25); // Leave room on narrow tabs.
+          const double start = left + gap, end = right - gap;
+          std::vector<Point2> line{{start, interpolateY(lower, start)}};
+          for (const auto point : lower)
+            if (point.x > start && point.x < end) line.push_back(point);
+          line.push_back({end, interpolateY(lower, end)});
+          tabSeparationLines.push_back(std::move(line));
+        }
       }
     }
     const auto addRibCaps = [&](const bool top, std::vector<Point2>& retained) {
@@ -2260,6 +2261,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       outline.pop_back();
 
     StructuredRib structured{rib, std::move(outline), {}, {}, {}};
+    structured.tabSeparationLines = std::move(tabSeparationLines);
     structured.outlineSegments = makeRibOutlineSegments(structured.outerOutline);
     structured.booleanCutouts.insert(structured.booleanCutouts.end(),
         sparBooleanCutouts.begin(), sparBooleanCutouts.end());
@@ -2328,7 +2330,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
             joiner.outerDiameter / std::max(0.25, normalProjection)));
       }
     }
-    if (buildTabs) {
+    if (!buildTabRanges.empty()) {
       const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
       const double floor = (buildPlane - stationHeight(rib) - thicknessProjection(rib)) /
           verticalProjection(rib) - ribTwistTranslation(rib).y;

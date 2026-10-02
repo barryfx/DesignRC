@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.3.0**.
+source version is **1.4.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -29,9 +29,26 @@ source version is **1.3.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
+## What's new in 1.4.0
+
+- Separate **Add Front Build Tab** and **Add Rear Build Tab** options below a divider in Ribs.
+  Each has an editable Location, defaulting to 15% and 75% chord.
+- One shared **Tab Width** field controls both tabs, defaulting to the original 3/16 inch
+  (4.7625 mm). **Height Above Work Table** defaults to zero and extends every enabled tab.
+  Both fields use global units and accept explicit inch/mm entry.
+- Tabs still relocate around spars. A collision with bottom sheeting now omits only the
+  affected tab on that rib instead of stopping generation.
+- Optional **Add Tab/Rib Separation Line** follows the original airfoil contour through actual
+  tabs in 2D exports. Open lines have 0.25 mm end gaps (reduced for very narrow tabs), a separate
+  `TAB_RIB_SEPARATION` DXF layer, and blue SVG/PDF strokes for separate laser settings.
+  These markings do not change the 3D solid.
+- All tab settings are available in **Edit > Defaults** and saved in projects. Older files
+  retain both tabs at 15%/75%, the original width, zero extra height, and separation lines off.
+- Help and About identify version 1.4.0 dated October 2, 2026; About has a shorter description.
+
 ## What's new in 1.3.0
 
-**Rib Caps** is a new panel tab, also available in **Settings > Defaults**.
+**Rib Caps** is a new panel tab, also available in **Edit > Defaults**.
 
 - Independent **Top Rib Caps** and **Bottom Rib Caps** start unchecked. Each reveals Thickness
   and Width fields when enabled, supporting global units and explicit inch/mm entry.
@@ -92,16 +109,16 @@ press **F1**.
 
 ## Download
 
-The 1.3.0 installers are available on the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.3.0):
+The 1.4.0 installers are available on the
+[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.4.0):
 
-- `DesignRC-1.3.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.4.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.3.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.4.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.3.0_amd64.deb
+  sudo apt install ./designrc_1.4.0_amd64.deb
   designrc
   ```
 
@@ -114,15 +131,15 @@ The 1.3.0 installers are available on the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.3.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.4.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.3.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.4.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.3.0-SHA256SUMS.txt`. Use the checksum file
+The release also includes source archives and `DesignRC-1.4.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -263,7 +280,7 @@ Then build the Release application and installer with:
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
 installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.3 is packaged as 1.3.0. The resulting installer does not require administrator
+version such as 1.4 is packaged as 1.4.0. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
@@ -365,15 +382,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.3.0_amd64.deb
-dist/DesignRC-1.3.0-source.tar.gz
-dist/DesignRC-1.3.0-Linux-x64.sha256
+dist/designrc_1.4.0_amd64.deb
+dist/DesignRC-1.4.0-source.tar.gz
+dist/DesignRC-1.4.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.3.0_amd64.deb
+sudo apt install ./dist/designrc_1.4.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -422,15 +439,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.3.0-1.x86_64.rpm
-dist/DesignRC-1.3.0-source.tar.gz
-dist/DesignRC-1.3.0-Linux-RPM-x64.sha256
+dist/designrc-1.4.0-1.x86_64.rpm
+dist/DesignRC-1.4.0-source.tar.gz
+dist/DesignRC-1.4.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.3.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.4.0-1.x86_64.rpm
 designrc
 ```
 

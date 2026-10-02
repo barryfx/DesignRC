@@ -165,7 +165,13 @@ struct StructureParameters {
   double wiringHoleWidth{9.525};
   double wiringHoleHeight{6.35};
   bool rib1aPresent{false};
-  bool addBuildTabs{false};
+  bool addFrontBuildTab{false};
+  bool addRearBuildTab{false};
+  double frontBuildTabLocationPercent{15.0};
+  double rearBuildTabLocationPercent{75.0};
+  double buildTabWidth{4.7625};
+  double buildTabHeightAboveTable{0.0};
+  bool addTabRibSeparationLine{false};
   bool topRibCaps{false};
   double topRibCapThickness{1.5875};
   double topRibCapWidth{6.35};
@@ -224,6 +230,8 @@ struct StructuredRib {
     double offset{};
   };
   std::optional<BuildPlane> buildPlane;
+  // Open marking contours only; never cut into the 3D solid.
+  std::vector<std::vector<Point2>> tabSeparationLines;
 };
 
 struct SpanMember {

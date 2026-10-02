@@ -401,7 +401,9 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(wiringHoleChordLocationPercent); PUT(wiringHoleWidth); PUT(wiringHoleHeight);
   PUT(topRibCaps); PUT(topRibCapThickness); PUT(topRibCapWidth);
   PUT(bottomRibCaps); PUT(bottomRibCapThickness); PUT(bottomRibCapWidth);
-  PUT(addBuildTabs); PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
+  PUT(addFrontBuildTab); PUT(addRearBuildTab);
+  PUT(buildTabWidth); PUT(frontBuildTabLocationPercent); PUT(rearBuildTabLocationPercent); PUT(buildTabHeightAboveTable); PUT(addTabRibSeparationLine);
+  PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
   PUT(behindSparJoinerOd); PUT(behindSparJoinerId); PUT(fiftyPercentJoiner);
   PUT(fiftyPercentJoinerType); PUT(fiftyPercentJoinerOd); PUT(fiftyPercentJoinerId);
   PUT(sparShearWebs); PUT(joinerPanelMode);
@@ -524,7 +526,11 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_D(wiringHoleChordLocationPercent); READ_D(wiringHoleWidth); READ_D(wiringHoleHeight);
   READ_B(topRibCaps); READ_D(topRibCapThickness); READ_D(topRibCapWidth);
   READ_B(bottomRibCaps); READ_D(bottomRibCapThickness); READ_D(bottomRibCapWidth);
-  READ_B(addBuildTabs); READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
+  // Older projects and saved Defaults used a single checkbox for both tabs.
+  d.addFrontBuildTab = d.addRearBuildTab = o.value("addBuildTabs").toBool(false);
+  READ_B(addFrontBuildTab); READ_B(addRearBuildTab);
+  READ_D(buildTabWidth); READ_D(frontBuildTabLocationPercent); READ_D(rearBuildTabLocationPercent); READ_D(buildTabHeightAboveTable); READ_B(addTabRibSeparationLine);
+  READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
   READ_I(behindSparJoinerType); READ_D(behindSparJoinerOd); READ_D(behindSparJoinerId);
   READ_B(fiftyPercentJoiner); READ_I(fiftyPercentJoinerType);
   READ_D(fiftyPercentJoinerOd); READ_D(fiftyPercentJoinerId);
@@ -1185,10 +1191,6 @@ QWidget* WingPanelEditor::makeRibsPage() {
   form->addRow("Rib Count", ribCount_);
   form->addRow(ribSpacing_);
   form->addRow("Rib Thickness", ribThickness_);
-  addBuildTabs_ = new QCheckBox{"Add Build Tabs"};
-  addBuildTabs_->setObjectName("addBuildTabs");
-  form->addRow(addBuildTabs_);
-  connect(addBuildTabs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   addRib1a_ = new QCheckBox{
       "Add Rib 1a (Adds an extra rib between ribs 1 and 2 for extra strength)"};
   addRib1a_->setObjectName("addRib1a");
@@ -1250,6 +1252,65 @@ QWidget* WingPanelEditor::makeRibsPage() {
   ribletLayout->addWidget(detailRow({{"End Rib", ribletEndRib_}}));
   ribletLayout->addWidget(detailRow({{"Riblets per Bay", ribletsPerBay_}}));
   form->addRow(ribletDetails_);
+  auto* separator = new QFrame;
+  separator->setFrameShape(QFrame::HLine);
+  layout->addWidget(separator);
+  const auto addTabControl = [&](const QString& label, const QString& key,
+                                  QCheckBox*& check, QDoubleSpinBox*& location,
+                                  QWidget*& details, const double defaultLocation) {
+    check = new QCheckBox{label};
+    check->setObjectName(key == "front" ? "addFrontBuildTab" : "addRearBuildTab");
+    location = new QDoubleSpinBox;
+    location->setObjectName(key + "BuildTabLocationPercent");
+    location->setRange(0.0, 100.0);
+    location->setDecimals(2);
+    location->setSingleStep(1.0);
+    location->setSuffix("%");
+    location->setValue(defaultLocation);
+    details = detailRow({{"Location", location}});
+    details->setObjectName(key + "BuildTabDetails");
+    layout->addWidget(check);
+    layout->addWidget(details);
+    connect(check, &QCheckBox::toggled, this, [this] {
+      updateConditionalControls(); emitChanged();
+    });
+    connect(location, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+  };
+  addTabControl("Add Front Build Tab", "front", addFrontBuildTab_,
+                frontBuildTabLocation_, frontBuildTabDetails_, 15.0);
+  addTabControl("Add Rear Build Tab", "rear", addRearBuildTab_,
+                rearBuildTabLocation_, rearBuildTabDetails_, 75.0);
+  buildTabWidth_ = new LengthInput{"buildTabWidth", 4.7625};
+  buildTabWidth_->setGlobalUnit(globalUnit_);
+  buildTabWidth_->setOverrideSelectorVisible(showUnitOverrides_);
+  lengths_.insert("buildTabWidth", buildTabWidth_);
+  buildTabWidthDetails_ = detailRow({{"Tab Width", buildTabWidth_}});
+  buildTabWidthDetails_->layout()->setContentsMargins(0, 2, 0, 4);
+  buildTabWidthDetails_->setObjectName("buildTabWidthDetails");
+  layout->addWidget(buildTabWidthDetails_);
+  connect(buildTabWidth_, &LengthInput::valueChanged, this, &WingPanelEditor::emitChanged);
+  buildTabHeightAboveTable_ = new LengthInput{"buildTabHeightAboveTable", 0.0};
+  buildTabHeightAboveTable_->setGlobalUnit(globalUnit_);
+  buildTabHeightAboveTable_->setOverrideSelectorVisible(showUnitOverrides_);
+  lengths_.insert("buildTabHeightAboveTable", buildTabHeightAboveTable_);
+  buildTabHeightDetails_ = detailRow({{"Height Above Work Table", buildTabHeightAboveTable_}});
+  buildTabHeightDetails_->layout()->setContentsMargins(0, 2, 0, 4);
+  buildTabHeightDetails_->setObjectName("buildTabHeightDetails");
+  layout->addWidget(buildTabHeightDetails_);
+  connect(buildTabHeightAboveTable_, &LengthInput::valueChanged, this, &WingPanelEditor::emitChanged);
+  tabSeparationDetails_ = new QWidget;
+  tabSeparationDetails_->setObjectName("tabSeparationDetails");
+  auto* separationLayout = new QVBoxLayout{tabSeparationDetails_};
+  separationLayout->setContentsMargins(0, 0, 0, 0);
+  addTabRibSeparationLine_ = new QCheckBox{"Add Tab/Rib Separation Line"};
+  addTabRibSeparationLine_->setObjectName("addTabRibSeparationLine");
+  separationLayout->addWidget(addTabRibSeparationLine_);
+  auto* explanation = new QLabel{
+      "This creates a line along the airfoil outline through the tab for sanding/cutting."};
+  explanation->setWordWrap(true);
+  separationLayout->addWidget(explanation);
+  layout->addWidget(tabSeparationDetails_);
+  connect(addTabRibSeparationLine_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   layout->addStretch();
   connect(span_, &LengthInput::valueChanged,
           this, &WingPanelEditor::updateRibSpacing);
@@ -2607,7 +2668,13 @@ WingPanelData WingPanelEditor::data() const {
     d.unitOverrides.insert("wiringHoleWidth", wiring.width->unitOverride());
     d.unitOverrides.insert("wiringHoleHeight", wiring.height->unitOverride());
   }
-  d.addBuildTabs = addBuildTabs_->isChecked();
+  d.addFrontBuildTab = addFrontBuildTab_->isChecked();
+  d.addRearBuildTab = addRearBuildTab_->isChecked();
+  d.buildTabWidth = buildTabWidth_->valueMm();
+  d.frontBuildTabLocationPercent = frontBuildTabLocation_->value();
+  d.rearBuildTabLocationPercent = rearBuildTabLocation_->value();
+  d.buildTabHeightAboveTable = buildTabHeightAboveTable_->valueMm();
+  d.addTabRibSeparationLine = addTabRibSeparationLine_->isChecked();
   d.topRibCaps = topRibCaps_->isChecked();
   d.topRibCapThickness = topRibCapThickness_->valueMm();
   d.topRibCapWidth = topRibCapWidth_->valueMm();
@@ -2752,7 +2819,13 @@ void WingPanelEditor::setData(const WingPanelData& d) {
         spoilerMinimumCircleDistance_, spoilerMinimumCircleDistance);
     airfoilData_.spoilerSupportRailHeight = d.spoilerSupportRailHeight;
   }
-  addBuildTabs_->setChecked(d.addBuildTabs);
+  addFrontBuildTab_->setChecked(d.addFrontBuildTab);
+  addRearBuildTab_->setChecked(d.addRearBuildTab);
+  SET_LENGTH(buildTabWidth_, buildTabWidth);
+  frontBuildTabLocation_->setValue(d.frontBuildTabLocationPercent);
+  rearBuildTabLocation_->setValue(d.rearBuildTabLocationPercent);
+  SET_LENGTH(buildTabHeightAboveTable_, buildTabHeightAboveTable);
+  addTabRibSeparationLine_->setChecked(d.addTabRibSeparationLine);
   topRibCaps_->setChecked(d.topRibCaps);
   SET_LENGTH(topRibCapThickness_, topRibCapThickness);
   SET_LENGTH(topRibCapWidth_, topRibCapWidth);
@@ -2858,6 +2931,17 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
+  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked()) &&
+      (!std::isfinite(buildTabWidth_->valueMm()) || buildTabWidth_->valueMm() <= 0.0)) {
+    error = "Tab Width must be greater than zero.";
+    return false;
+  }
+  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked()) &&
+      (!std::isfinite(buildTabHeightAboveTable_->valueMm()) ||
+       buildTabHeightAboveTable_->valueMm() < 0.0)) {
+    error = "Height Above Work Table must be nonnegative.";
+    return false;
+  }
   for (const bool top : {true, false}) {
     if (!(top ? topRibCaps_ : bottomRibCaps_)->isChecked()) continue;
     const double thickness = (top ? topRibCapThickness_ : bottomRibCapThickness_)->valueMm();
@@ -2978,6 +3062,11 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  frontBuildTabDetails_->setVisible(addFrontBuildTab_->isChecked());
+  rearBuildTabDetails_->setVisible(addRearBuildTab_->isChecked());
+  buildTabWidthDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
+  buildTabHeightDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
+  tabSeparationDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
   topRibCapDetails_->setVisible(topRibCaps_->isChecked());
   bottomRibCapDetails_->setVisible(bottomRibCaps_->isChecked());
   ribLighteningHoleDetails_->setVisible(ribLighteningHoles_->isChecked());

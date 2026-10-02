@@ -52,6 +52,8 @@ void drawParts(QPainter& painter, const std::vector<domain::PartDrawing>& parts,
   for (const auto& part : parts) {
     for (const auto& drawingPath : part.paths) {
       if (drawingPath.points.size() < 2) continue;
+      pen.setColor(drawingPath.layer == "TAB_RIB_SEPARATION" ? Qt::blue : Qt::black);
+      painter.setPen(pen);
       if (drawingPath.spline && drawingPath.points.size() >= 3) {
         QPainterPath path{pagePoint(drawingPath.points.front())};
         for (std::size_t index = 0;
@@ -81,6 +83,8 @@ void drawParts(QPainter& painter, const std::vector<domain::PartDrawing>& parts,
       if (drawingPath.closed) painter.drawPolygon(polygon);
       else painter.drawPolyline(polygon);
     }
+    pen.setColor(Qt::black);
+    painter.setPen(pen);
     const auto placement = domain::partLabelPlacement(part);
     if (!placement) continue;
     double minimumX = part.labelOutline.front().x;

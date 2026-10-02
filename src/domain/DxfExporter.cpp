@@ -52,7 +52,8 @@ std::string populatedR2000Template(
                  << "\n330\n1\n100\nAcDbSymbolTableRecord\n"
                     "100\nAcDbLayerTableRecord\n  2\n"
                  << layer
-                 << "\n 70\n0\n 62\n7\n  6\nContinuous\n"
+                 << "\n 70\n0\n 62\n" << (layer == "TAB_RIB_SEPARATION" ? 5 : 7)
+                 << "\n  6\nContinuous\n"
                     "370\n-3\n390\n13\n";
   }
   document.insert(layerTableEnd + 1, layerRecords.str());
@@ -383,7 +384,10 @@ void writeSvgDrawingPath(std::ostream& output, const PartDrawingPath& path,
     output << (path.closed ? "    <polygon points=\"" : "    <polyline points=\"");
     for (const auto point : path.points)
       output << svgX(point.x) << ',' << svgY(point.y) << ' ';
-    output << "\"/>\n";
+    output << "\"";
+    if (path.layer == "TAB_RIB_SEPARATION")
+      output << " stroke=\"#0000ff\" data-layer=\"TAB_RIB_SEPARATION\"";
+    output << "/>\n";
     return;
   }
   output << "    <path d=\"M " << svgX(path.points.front().x) << ' '
@@ -610,6 +614,8 @@ PartDrawing makeStructuredRibPartDrawing(const StructuredRib& rib,
       drawing.paths.push_back({hole, "RIB_HOLES"});
   for (const auto& opening : rib.internalCutouts)
     drawing.paths.push_back({opening, "RIB_HOLES"});
+  for (const auto& line : rib.tabSeparationLines)
+    drawing.paths.push_back({line, "TAB_RIB_SEPARATION", false, false});
   drawing.labelOutline = finishedOutline;
   drawing.labelExclusions = rib.holes;
   drawing.labelExclusions.insert(drawing.labelExclusions.end(),

@@ -104,7 +104,11 @@ int runTest(int argc, char* argv[]) {
         tabRibs.front().ribPlaneAngleDegrees = 8.0;
       }
       StructureParameters s;
-      s.ribThickness = p.ribThickness; s.addBuildTabs = true;
+      s.ribThickness = p.ribThickness; s.addFrontBuildTab = s.addRearBuildTab = true;
+      s.frontBuildTabLocationPercent = 20.0;
+      s.rearBuildTabLocationPercent = 70.0;
+      s.buildTabHeightAboveTable = 12.7;
+      s.buildTabWidth = 8.0;
       s.spars = {{25, 1, 0, 2, 3.0, 8.0}};
       auto wing = applyWingStructure(tabRibs, s);
       // Inject a residual lip, or a curve dipping below its end points, to
@@ -115,7 +119,7 @@ int runTest(int argc, char* argv[]) {
         for (auto& segment : rib.outlineSegments) {
           if (segment.points.size() != 2) continue;
           const auto a = segment.points[0], b = segment.points[1];
-          if (std::abs(std::abs(b.x - a.x) - 25.4 * 3.0 / 16.0) > 1.0e-7) continue;
+          if (std::abs(std::abs(b.x - a.x) - s.buildTabWidth) > 1.0e-7) continue;
           segment.points.insert(segment.points.begin() + 1,
               Point2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5 - 0.4});
           segment.spline = twist > 0.0;

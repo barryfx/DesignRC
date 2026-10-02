@@ -63,6 +63,167 @@ int main() {
   {
     using namespace designrc::domain;
     WingParameters parameters;
+    parameters.ribCount = 3;
+    const auto ribs = generateRibs(parameters, thick, thin);
+    StructureParameters s;
+    s.addFrontBuildTab = s.addRearBuildTab = true;
+    s.buildTabHeightAboveTable = 5.0;
+    s.buildTabWidth = 8.0;
+    const auto unmarked = applyWingStructure(ribs, s);
+    assert(unmarked.ribs.front().tabSeparationLines.empty());
+    s.addTabRibSeparationLine = true;
+    const auto marked = applyWingStructure(ribs, s);
+    for (std::size_t i = 0; i < marked.ribs.size(); ++i) {
+      const auto& rib = marked.ribs[i];
+      assert(rib.tabSeparationLines.size() == 2);
+      assert(rib.outerOutline.size() == unmarked.ribs[i].outerOutline.size());
+      for (std::size_t j = 0; j < rib.outerOutline.size(); ++j) {
+        assert(rib.outerOutline[j].x == unmarked.ribs[i].outerOutline[j].x);
+        assert(rib.outerOutline[j].y == unmarked.ribs[i].outerOutline[j].y);
+      }
+      for (std::size_t j = 0; j < 2; ++j) {
+        const auto& line = rib.tabSeparationLines[j];
+        const double center = (j == 0 ? 0.15 : 0.75) * rib.rib.chord;
+        assert(std::abs(line.front().x - (center - s.buildTabWidth / 2.0 + 0.25)) < 1.0e-8);
+        assert(std::abs(line.back().x - (center + s.buildTabWidth / 2.0 - 0.25)) < 1.0e-8);
+        // Every marking vertex follows the unmodified lower airfoil contour.
+        for (const auto point : line) {
+          bool onContour = false;
+          const auto& outline = rib.rib.profile.outline();
+          for (std::size_t k = 1; k < outline.size(); ++k) {
+            const auto a = outline[k - 1], b = outline[k];
+            const double x = point.x / rib.rib.chord;
+            if (b.x <= a.x || x < a.x || x > b.x) continue;
+            const double y = (a.y + (b.y - a.y) * (x - a.x) / (b.x - a.x)) * rib.rib.chord;
+            if (std::abs(point.y - y) < 1.0e-7) onContour = true;
+          }
+          assert(onContour);
+        }
+      }
+      int markings = 0;
+      for (const auto& path : makeStructuredRibPartDrawing(rib, "Marked rib").paths)
+        if (path.layer == "TAB_RIB_SEPARATION") {
+          assert(!path.closed && !path.spline);
+          ++markings;
+        }
+      assert(markings == 2);
+    }
+    const auto markDxf = std::filesystem::temp_directory_path() / "designrc_tab_marks.dxf";
+    const auto markSvg = std::filesystem::temp_directory_path() / "designrc_tab_marks.svg";
+    exportStructuredRibDxf(marked.ribs.front(), markDxf, "Marked rib");
+    exportStructuredRibSvg(marked.ribs.front(), markSvg, "Marked rib");
+    std::ifstream dxfMarks{markDxf}, svgMarks{markSvg};
+    const std::string dxfText{std::istreambuf_iterator<char>{dxfMarks}, {}};
+    const std::string svgText{std::istreambuf_iterator<char>{svgMarks}, {}};
+    assert(dxfText.find("TAB_RIB_SEPARATION") != std::string::npos);
+    assert(svgText.find("stroke=\"#0000ff\" data-layer=\"TAB_RIB_SEPARATION\"") != std::string::npos);
+    dxfMarks.close(); svgMarks.close();
+    std::filesystem::remove(markDxf); std::filesystem::remove(markSvg);
+    // Full bottom sheeting omits both tabs only at the covered stations.
+    s.leBottomSheet = true;
+    s.leBottomSheetUpToSpar = false;
+    s.leBottomSheetStopChordPercent = 100.0;
+    s.leBottomSheetStopRib = 2;
+    const auto covered = applyWingStructure(ribs, s);
+    assert(covered.ribs[0].tabSeparationLines.empty() && !covered.ribs[0].buildPlane);
+    assert(covered.ribs[1].tabSeparationLines.empty() && !covered.ribs[1].buildPlane);
+    assert(covered.ribs[2].tabSeparationLines.size() == 2 && covered.ribs[2].buildPlane);
+    s.leBottomSheetStopChordPercent = 30.0;
+    const auto frontCovered = applyWingStructure(ribs, s);
+    assert(frontCovered.ribs[0].tabSeparationLines.size() == 1);
+    assert(frontCovered.ribs[0].tabSeparationLines.front().front().x > 0.7 * ribs.front().chord);
+    s.leBottomSheet = false;
+    for (const double invalidWidth : {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
+      s.buildTabWidth = invalidWidth;
+      bool rejected = false;
+      try { (void)applyWingStructure(ribs, s); }
+      catch (const std::invalid_argument&) { rejected = true; }
+      assert(rejected);
+    }
+    s.buildTabWidth = 0.4;
+    const auto narrow = applyWingStructure(ribs, s);
+    for (const auto& line : narrow.ribs.front().tabSeparationLines)
+      assert(std::abs(line.back().x - line.front().x - 0.2) < 1.0e-8);
+    s.addFrontBuildTab = s.addRearBuildTab = false;
+    assert(applyWingStructure(ribs, s).ribs.front().tabSeparationLines.empty());
+  }
+  // Independent tabs, custom locations, and a common clearance remain correct
+  // across all ribs and both twist directions.
+  for (const double twist : {-6.0, 0.0, 6.0}) {
+    using namespace designrc::domain;
+    WingParameters parameters;
+    parameters.rootChord = parameters.tipChord = 200.0;
+    parameters.dihedralDegrees = 0.0;
+    parameters.tipTwistDegrees = twist;
+    parameters.ribCount = 3;
+    const auto ribs = generateRibs(parameters, thick, thick);
+    for (const int mask : {1, 2, 3}) {
+      StructureParameters s;
+      s.addFrontBuildTab = (mask & 1) != 0;
+      s.addRearBuildTab = (mask & 2) != 0;
+      s.frontBuildTabLocationPercent = 22.25;
+      s.rearBuildTabLocationPercent = 68.5;
+      const auto baseline = applyWingStructure(ribs, s);
+      s.buildTabHeightAboveTable = 12.7;
+      const auto raised = applyWingStructure(ribs, s);
+      for (std::size_t i = 0; i < raised.ribs.size(); ++i) {
+        const auto& rib = raised.ribs[i];
+        assert(std::abs(baseline.ribs[i].buildPlane->offset - rib.buildPlane->offset - 12.7) < 1.0e-8);
+        const double angle = rib.rib.twistDegrees * std::numbers::pi / 180.0;
+        const auto translation = ribTwistTranslation(rib.rib);
+        int frontFeet = 0, rearFeet = 0;
+        const auto drawing = makeStructuredRibPartDrawing(rib, "Raised tab rib");
+        for (const auto& path : drawing.paths) {
+          if (path.spline || path.points.size() != 2) continue;
+          const auto a = path.points.front(), b = path.points.back();
+          const auto onPlane = [&](const Point2 point) {
+            return std::abs(std::sin(angle) * point.x + std::cos(angle) * point.y +
+                translation.y - rib.buildPlane->offset) < 1.0e-7;
+          };
+          if (!onPlane(a) || !onPlane(b)) continue;
+          assert(std::abs(std::abs(a.x - b.x) - 25.4 * 3.0 / 16.0) < 1.0e-7);
+          const double center = (a.x + b.x) * 50.0 / rib.rib.chord;
+          if (std::abs(center - s.frontBuildTabLocationPercent) < 1.0e-7) ++frontFeet;
+          if (std::abs(center - s.rearBuildTabLocationPercent) < 1.0e-7) ++rearFeet;
+        }
+        assert(frontFeet == (s.addFrontBuildTab ? 1 : 0));
+        assert(rearFeet == (s.addRearBuildTab ? 1 : 0));
+      }
+      s.buildTabHeightAboveTable = -1.0;
+      bool rejected = false;
+      try { (void)applyWingStructure(ribs, s); }
+      catch (const std::invalid_argument&) { rejected = true; }
+      assert(rejected);
+    }
+    for (const bool front : {true, false}) {
+      StructureParameters s;
+      s.addFrontBuildTab = front;
+      s.addRearBuildTab = !front;
+      s.frontBuildTabLocationPercent = 25.0;
+      s.rearBuildTabLocationPercent = 60.0;
+      s.bottomSpar = true;
+      s.bottomRearSpar = true;
+      s.buildTabHeightAboveTable = 10.0;
+      const auto shifted = applyWingStructure(ribs, s);
+      for (const auto& rib : shifted.ribs) {
+        int feet = 0;
+        for (const auto& path : makeStructuredRibPartDrawing(rib, "Shifted tab").paths) {
+          if (path.spline || path.points.size() != 2) continue;
+          const auto a = path.points.front(), b = path.points.back();
+          if (std::abs(std::abs(a.x - b.x) - 25.4 * 3.0 / 16.0) > 1.0e-7) continue;
+          const double center = (front ? 0.25 : 0.60) * rib.rib.chord;
+          const double width = front ? s.bottomSparWidth : s.bottomRearSparWidth;
+          assert(std::max(a.x, b.x) < center - width * 0.5 ||
+                 std::min(a.x, b.x) > center + width * 0.5);
+          ++feet;
+        }
+        assert(feet == 1);
+      }
+    }
+  }
+  {
+    using namespace designrc::domain;
+    WingParameters parameters;
     parameters.ribCount = 5;
     parameters.dihedralDegrees = 8.0;
     parameters.tipTwistDegrees = -4.0;
@@ -128,7 +289,7 @@ int main() {
       assert(cap.profile[cap.profile.size() / 2 - 1].x <= a + 1.0e-8 || cap.profile.front().x >= b - 1.0e-8);
     }
     structure.spoilers = false;
-    structure.addBuildTabs = true;
+    structure.addFrontBuildTab = structure.addRearBuildTab = true;
     bool capTabCollision = false;
     try { static_cast<void>(applyWingStructure(ribs, structure)); }
     catch (const std::invalid_argument& error) {
@@ -140,7 +301,7 @@ int main() {
     const auto topWithTabs = applyWingStructure(ribs, structure);
     assert(!topWithTabs.ribCaps.empty());
     for (const auto& cap : topWithTabs.ribCaps) assert(cap.top);
-    structure.addBuildTabs = false;
+    structure.addFrontBuildTab = structure.addRearBuildTab = false;
     structure.bottomRibCaps = true;
     // Disabling either face removes only its caps.
     structure.topRibCaps = false;
@@ -161,7 +322,7 @@ int main() {
     tabParameters.tipTwistDegrees = twist;
     const auto tabRibs = generateRibs(tabParameters, thick, thin);
     StructureParameters tabStructure;
-    tabStructure.addBuildTabs = true;
+    tabStructure.addFrontBuildTab = tabStructure.addRearBuildTab = true;
     const auto tabWing = applyWingStructure(tabRibs, tabStructure);
     const double rootBottom = untwistedRibBottom(tabRibs.front());
     const double slope = (untwistedRibBottom(tabRibs.back()) - rootBottom) / tabParameters.halfSpan;
@@ -209,7 +370,7 @@ int main() {
     }
     for (const int sheetType : {0, 1, 2}) {
       StructureParameters sheetStructure;
-      sheetStructure.addBuildTabs = true;
+      sheetStructure.addFrontBuildTab = sheetStructure.addRearBuildTab = true;
       sheetStructure.leBottomSheet = sheetType == 0;
       sheetStructure.leBottomSheetUpToSpar = false;
       sheetStructure.leBottomSheetStopChordPercent = 80.0;
@@ -217,19 +378,14 @@ int main() {
       sheetStructure.bottomTeSheeting = sheetType == 2;
       sheetStructure.bottomTeSheetingWidth = 100.0;
       sheetStructure.bottomTeSheetingThickness = 0.5;
-      bool collision = false;
-      try {
-        static_cast<void>(applyWingStructure(tabRibs, sheetStructure));
-      } catch (const std::invalid_argument& error) {
-        collision = std::string{error.what()}.find("Build tab / bottom sheeting collision at rib 1") != std::string::npos;
-      }
-      assert(collision);
-      sheetStructure.addBuildTabs = false;
+      // Covered tabs are omitted without failing wing generation.
+      static_cast<void>(applyWingStructure(tabRibs, sheetStructure));
+      sheetStructure.addFrontBuildTab = sheetStructure.addRearBuildTab = false;
       static_cast<void>(applyWingStructure(tabRibs, sheetStructure));
     }
     for (const double sheetEnd : {24.0, 30.0, 50.0}) {
       StructureParameters sheetStructure;
-      sheetStructure.addBuildTabs = true;
+      sheetStructure.addFrontBuildTab = sheetStructure.addRearBuildTab = true;
       sheetStructure.bottomSpar = true;
       sheetStructure.leBottomSheet = true;
       sheetStructure.leBottomSheetUpToSpar = false;
@@ -243,20 +399,14 @@ int main() {
           const double left = std::min(segment.points[0].x, segment.points[1].x);
           const double right = std::max(segment.points[0].x, segment.points[1].x);
           if (std::abs(right - left - 25.4 * 3.0 / 16.0) > 1.0e-7) continue;
-          if ((left + right) * 0.5 < 0.70 * rib.rib.chord) {
-            const double expectedLeft = std::max(sheetEnd / 100.0 * rib.rib.chord,
-                0.25 * rib.rib.chord + sheetStructure.bottomSparWidth * 0.5) + 1.0;
-            assert(std::abs(left - expectedLeft) < 1.0e-7);
-          } else {
-            assert(std::abs((left + right) * 0.5 - 0.75 * rib.rib.chord) < 1.0e-7);
-          }
+          assert(std::abs((left + right) * 0.5 - 0.75 * rib.rib.chord) < 1.0e-7);
           ++feet;
         }
-        assert(feet == 2);
+        assert(feet == 1);
       }
     }
     StructureParameters clearSheet;
-    clearSheet.addBuildTabs = true;
+    clearSheet.addFrontBuildTab = clearSheet.addRearBuildTab = true;
     clearSheet.leBottomSheet = true;
     clearSheet.leBottomSheetUpToSpar = false;
     clearSheet.leBottomSheetStopChordPercent = 10.0;
@@ -267,7 +417,7 @@ int main() {
     tabParameters.tipTwistDegrees = 0.0;
     const auto flat = generateRibs(tabParameters, thick, thin);
     const auto flatTabs = applyWingStructure(flat, tabStructure);
-    tabStructure.addBuildTabs = false;
+    tabStructure.addFrontBuildTab = tabStructure.addRearBuildTab = false;
     const auto plain = applyWingStructure(flat, tabStructure);
     assert(flatTabs.ribs.back().outerOutline.size() > plain.ribs.back().outerOutline.size());
   }
@@ -281,7 +431,7 @@ int main() {
     ribs.front().ribThicknessStartFactor = 0.0;
     ribs.back().ribPlaneAngleDegrees = 18.0;
     StructureParameters structure;
-    structure.addBuildTabs = true;
+    structure.addFrontBuildTab = structure.addRearBuildTab = true;
     for (const bool thickerMiddle : {false, true}) {
     if (thickerMiddle) ribs[1].profile = AirfoilProfile::nacaSymmetric(0.30);
     const auto wing = applyWingStructure(ribs, structure);
@@ -348,7 +498,7 @@ int main() {
     p.rootChord = p.tipChord = 200.0;
     p.tipTwistDegrees = 4.0;
     StructureParameters structure;
-    structure.addBuildTabs = true;
+    structure.addFrontBuildTab = structure.addRearBuildTab = true;
     SparParameters spar;
     spar.material = 0;
     spar.verticalLocation = 1;

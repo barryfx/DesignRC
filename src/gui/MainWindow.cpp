@@ -304,7 +304,13 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
   s.wiringHoleWidth = d.wiringHoleWidth;
   s.wiringHoleHeight = d.wiringHoleHeight;
-  s.addBuildTabs = d.addBuildTabs;
+  s.addFrontBuildTab = d.addFrontBuildTab;
+  s.addRearBuildTab = d.addRearBuildTab;
+  s.buildTabWidth = d.buildTabWidth;
+  s.frontBuildTabLocationPercent = d.frontBuildTabLocationPercent;
+  s.rearBuildTabLocationPercent = d.rearBuildTabLocationPercent;
+  s.buildTabHeightAboveTable = d.buildTabHeightAboveTable;
+  s.addTabRibSeparationLine = d.addTabRibSeparationLine;
   s.topRibCaps = d.topRibCaps;
   s.topRibCapThickness = d.topRibCapThickness;
   s.topRibCapWidth = d.topRibCapWidth;
@@ -2301,20 +2307,6 @@ void MainWindow::showAbout() {
       QString{"<h2>DesignRC</h2>"
               "<p><b>Parametric built-up RC aircraft wing design and manufacturing.</b></p>"
               "<p>Version %1 &middot; Release date: %2</p>"
-              "<p>DesignRC turns a multi-panel half-wing definition into a complete "
-              "mirrored solid assembly. It imports root and tip airfoils; generates "
-              "solid ribs, tapered root-to-tip spars, shear webs, front, rear, and "
-              "trailing-edge sheeting, leading and trailing edges, collision-checked "
-              "joiners, wiring holes, spline-lofted ailerons and flaps, hinge posts, "
-              "and spar-aware spoilers; and displays the result in an interactive "
-              "3D viewport.</p>"
-              "<p>It also creates annotated full-scale wing plans and exports vector "
-              "plan PDFs, individual or combined DXF/SVG/PDF cutting parts, and a "
-              "material-colored STEP assembly. Version 1.3.0 adds independent top and "
-              "bottom rib caps with saved defaults, parallel rib-cap collision checks, "
-              "and rib-specific progress messages. Build tabs work with or without "
-              "twist and start at 15% and 75% chord. Rib caps and spars stop at panel "
-              "end-rib faces, including angled joints.</p>"
               "<p>Copyright &copy; 2026 Barry Foust</p>"
               "<p>DesignRC is free software licensed under the GNU General Public License "
               "version 3 only. It comes with absolutely no warranty.</p>"
@@ -3103,7 +3095,13 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
     structure.wiringHoleWidth = d.wiringHoleWidth;
     structure.wiringHoleHeight = d.wiringHoleHeight;
-    structure.addBuildTabs = d.addBuildTabs;
+    structure.addFrontBuildTab = d.addFrontBuildTab;
+    structure.addRearBuildTab = d.addRearBuildTab;
+    structure.buildTabWidth = d.buildTabWidth;
+    structure.frontBuildTabLocationPercent = d.frontBuildTabLocationPercent;
+    structure.rearBuildTabLocationPercent = d.rearBuildTabLocationPercent;
+    structure.buildTabHeightAboveTable = d.buildTabHeightAboveTable;
+    structure.addTabRibSeparationLine = d.addTabRibSeparationLine;
     structure.topRibCaps = d.topRibCaps;
     structure.topRibCapThickness = d.topRibCapThickness;
     structure.topRibCapWidth = d.topRibCapWidth;

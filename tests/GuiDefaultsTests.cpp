@@ -135,7 +135,11 @@ int main(int argc, char* argv[]) {
       ribs[i].ribThicknessStartFactor = i == 0 ? 0.0 : i + 1 == ribs.size() ? -1.0 : -0.5;
     }
     StructureParameters structure;
-    structure.addBuildTabs = data.addBuildTabs;
+    structure.addFrontBuildTab = data.addFrontBuildTab;
+    structure.addRearBuildTab = data.addRearBuildTab;
+    structure.frontBuildTabLocationPercent = data.frontBuildTabLocationPercent;
+    structure.rearBuildTabLocationPercent = data.rearBuildTabLocationPercent;
+    structure.buildTabHeightAboveTable = data.buildTabHeightAboveTable;
     structure.leadingEdgeType = data.leadingEdgeType;
     structure.leadingEdgeTubeOd = data.leadingEdgeTubeOd;
     structure.leadingEdgeTubeId = data.leadingEdgeTubeId;
@@ -194,7 +198,7 @@ int main(int argc, char* argv[]) {
           assert(std::abs(elevation - plane) < 1.0e-7);
         }
       }
-      assert(front == (data.addBuildTabs ? 1 : 0) && rear == (data.addBuildTabs ? 1 : 0));
+      assert(front == (data.addFrontBuildTab ? 1 : 0) && rear == (data.addRearBuildTab ? 1 : 0));
     }
     // Changing the preceding panels' contribution to the assembly origin
     // must not change this panel's manufacturing contours or build plane.
@@ -439,37 +443,104 @@ int main(int argc, char* argv[]) {
   auto* dihedralSpin = spacingEditor.findChild<QDoubleSpinBox*>("dihedral");
   auto* twistSpin = spacingEditor.findChild<QDoubleSpinBox*>("twist");
   assert(dihedralSpin != nullptr && twistSpin != nullptr);
-  auto* buildTabs = spacingEditor.findChild<QCheckBox*>("addBuildTabs");
+  auto* buildTabs = spacingEditor.findChild<QCheckBox*>("addFrontBuildTab");
   assert(buildTabs && !buildTabs->isChecked() && buildTabs->isEnabled());
-  assert(buildTabs->text() == "Add Build Tabs");
+  assert(buildTabs->text() == "Add Front Build Tab");
   buildTabs->setChecked(true);
   const auto flatTabData = panelDataFromJson(panelDataToJson(spacingEditor.data()));
-  assert(flatTabData.twist == 0.0 && flatTabData.addBuildTabs);
+  assert(flatTabData.twist == 0.0 && flatTabData.addFrontBuildTab);
   WingPanelEditor flatTabEditor{flatTabData, DisplayUnit::Millimeters};
-  assert(flatTabEditor.data().addBuildTabs);
+  assert(flatTabEditor.data().addFrontBuildTab);
   twistSpin->setValue(3.0);
   assert(buildTabs->isEnabled());
   buildTabs->setChecked(true);
-  assert(panelDataFromJson(panelDataToJson(spacingEditor.data())).addBuildTabs);
+  assert(panelDataFromJson(panelDataToJson(spacingEditor.data())).addFrontBuildTab);
   twistSpin->setValue(-3.0);
   assert(buildTabs->isEnabled());
   twistSpin->setValue(0.0);
   assert(buildTabs->isEnabled());
   assert(buildTabs->isChecked());
-  assert(spacingEditor.data().addBuildTabs);
+  assert(spacingEditor.data().addFrontBuildTab);
   twistSpin->setValue(3.0);
   assert(buildTabs->isEnabled() && buildTabs->isChecked());
   twistSpin->setValue(0.0);
-  auto* defaultBuildTabs = defaultsRibsEditor.findChild<QCheckBox*>("addBuildTabs");
+  auto* defaultBuildTabs = defaultsRibsEditor.findChild<QCheckBox*>("addFrontBuildTab");
   assert(defaultBuildTabs && defaultBuildTabs->isEnabled() && !defaultBuildTabs->isChecked());
   defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(2.0);
   defaultBuildTabs->setChecked(true);
-  assert(panelDataFromJson(panelDataToJson(defaultsRibsEditor.data())).addBuildTabs);
+  assert(panelDataFromJson(panelDataToJson(defaultsRibsEditor.data())).addFrontBuildTab);
   defaultsRibsEditor.findChild<QDoubleSpinBox*>("twist")->setValue(0.0);
   assert(defaultBuildTabs->isEnabled() && defaultBuildTabs->isChecked());
-  assert(defaultsRibsEditor.data().addBuildTabs);
-  assert(!installedDefaultPanelData(DisplayUnit::Inches).addBuildTabs);
-  assert(!installedDefaultPanelData(DisplayUnit::Millimeters).addBuildTabs);
+  assert(defaultsRibsEditor.data().addFrontBuildTab);
+  assert(!installedDefaultPanelData(DisplayUnit::Inches).addFrontBuildTab);
+  assert(!installedDefaultPanelData(DisplayUnit::Millimeters).addFrontBuildTab);
+  // Old project/default JSON migrates both tabs; explicit new flags win.
+  for (const bool legacyEnabled : {false, true}) {
+    const auto migrated = panelDataFromJson(QJsonObject{{"addBuildTabs", legacyEnabled}});
+    assert(migrated.addFrontBuildTab == legacyEnabled && migrated.addRearBuildTab == legacyEnabled);
+    assert(migrated.frontBuildTabLocationPercent == 15.0);
+    assert(migrated.rearBuildTabLocationPercent == 75.0);
+    assert(migrated.buildTabHeightAboveTable == 0.0);
+    assert(migrated.buildTabWidth == 4.7625);
+    const auto restored = panelDataFromJson(panelDataToJson(migrated));
+    assert(restored.addFrontBuildTab == legacyEnabled && restored.addRearBuildTab == legacyEnabled);
+  }
+  const auto mixed = panelDataFromJson(QJsonObject{{"addBuildTabs", true}, {"addFrontBuildTab", false}});
+  assert(!mixed.addFrontBuildTab && mixed.addRearBuildTab);
+  const auto empty = panelDataFromJson(QJsonObject{});
+  assert(!empty.addFrontBuildTab && !empty.addRearBuildTab);
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    WingPanelEditor tabEditor{installedDefaultPanelData(unit), unit, true, true, true};
+    auto* front = tabEditor.findChild<QCheckBox*>("addFrontBuildTab");
+    auto* rear = tabEditor.findChild<QCheckBox*>("addRearBuildTab");
+    auto* frontDetails = tabEditor.findChild<QWidget*>("frontBuildTabDetails");
+    auto* rearDetails = tabEditor.findChild<QWidget*>("rearBuildTabDetails");
+    auto* heightDetails = tabEditor.findChild<QWidget*>("buildTabHeightDetails");
+    auto* height = tabEditor.findChild<LengthInput*>("buildTabHeightAboveTable");
+    auto* width = tabEditor.findChild<LengthInput*>("buildTabWidth");
+    auto* widthDetails = tabEditor.findChild<QWidget*>("buildTabWidthDetails");
+    assert(width && width->valueMm() == 4.7625 && widthDetails->isHidden());
+    assert(width->unitOverride() == UnitOverride::Global);
+    auto* separation = tabEditor.findChild<QCheckBox*>("addTabRibSeparationLine");
+    auto* separationDetails = tabEditor.findChild<QWidget*>("tabSeparationDetails");
+    assert(separation && !separation->isChecked() && separationDetails->isHidden());
+    assert(front && rear && height && !front->isChecked() && !rear->isChecked());
+    assert(frontDetails->isHidden() && rearDetails->isHidden() && heightDetails->isHidden());
+    assert(height->valueMm() == 0.0 && height->unitOverride() == UnitOverride::Global);
+    rear->setChecked(true);
+    assert(!widthDetails->isHidden());
+    assert(!separationDetails->isHidden());
+    separation->setChecked(true);
+    assert(frontDetails->isHidden() && !rearDetails->isHidden() && !heightDetails->isHidden());
+    front->setChecked(true);
+    rear->setChecked(false);
+    assert(!frontDetails->isHidden() && rearDetails->isHidden() && !heightDetails->isHidden());
+    tabEditor.findChild<QDoubleSpinBox*>("frontBuildTabLocationPercent")->setValue(22.25);
+    tabEditor.findChild<QDoubleSpinBox*>("rearBuildTabLocationPercent")->setValue(68.5);
+    auto* heightSpin = height->findChild<QDoubleSpinBox*>();
+    heightSpin->findChild<QLineEdit*>()->setText(unit == DisplayUnit::Millimeters ? "1/2 in" : "12.7mm");
+    heightSpin->interpretText();
+    auto* widthSpin = width->findChild<QDoubleSpinBox*>();
+    widthSpin->findChild<QLineEdit*>()->setText(unit == DisplayUnit::Millimeters ? "1/4 in" : "6.35mm");
+    widthSpin->interpretText();
+    const auto saved = panelDataFromJson(panelDataToJson(tabEditor.data()));
+    assert(saved.addFrontBuildTab && !saved.addRearBuildTab);
+    assert(saved.addTabRibSeparationLine);
+    assert(std::abs(saved.buildTabWidth - 6.35) < 1.0e-8);
+    assert(saved.frontBuildTabLocationPercent == 22.25 && saved.rearBuildTabLocationPercent == 68.5);
+    assert(std::abs(saved.buildTabHeightAboveTable - 12.7) < 1.0e-8);
+    WingPanelEditor restored{saved, unit};
+    assert(std::abs(restored.data().buildTabHeightAboveTable - 12.7) < 1.0e-8);
+    assert(restored.data().addTabRibSeparationLine);
+    assert(std::abs(restored.data().buildTabWidth - 6.35) < 1.0e-8);
+    assert(restored.data().unitOverrides.value("buildTabWidth") == saved.unitOverrides.value("buildTabWidth"));
+    assert(restored.data().unitOverrides.value("buildTabHeightAboveTable") ==
+           saved.unitOverrides.value("buildTabHeightAboveTable"));
+    front->setChecked(false);
+    assert(heightDetails->isHidden());
+    assert(separationDetails->isHidden());
+    assert(widthDetails->isHidden());
+  }
   assert(dihedralSpin->width() == twistSpin->width());
   assert(dihedralSpin->width() == panelSpanSpin->width());
   assert(spacingEditor.findChild<QSpinBox*>("ribCount")->width() ==

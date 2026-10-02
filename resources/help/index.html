@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.3.0 User Help</title>
+  <title>DesignRC 1.4.0 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,13 +44,14 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.3.0 User Help</h1>
+    <h1>DesignRC 1.4.0 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
+      <a href="#new-1-4">What's new in 1.4.0</a>
       <a href="#new-1-3">What's new in 1.3.0</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
@@ -89,9 +90,19 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
+      <h2 id="new-1-4">What's new in 1.4.0</h2>
+      <ul>
+        <li><strong>Independent build tabs:</strong> Add Front Build Tab and Add Rear Build Tab each reveal a Location field, defaulting to 15% and 75% chord.</li>
+        <li><strong>Shared Tab Width:</strong> controls both tabs and defaults to 3/16 inch (4.7625 mm). Width and Height Above Work Table use global units and accept explicit inch/mm input.</li>
+        <li><strong>Height Above Work Table:</strong> defaults to zero. A positive value extends the tabs by moving the support plane away from the ribs without changing the wing geometry.</li>
+        <li><strong>Sheeting clearance:</strong> bottom sheeting omits the affected tab on that rib instead of stopping generation. Spar-related relocation remains available.</li>
+        <li><strong>Add Tab/Rib Separation Line:</strong> optional open markings follow the original airfoil contour across each generated tab. They export on the TAB_RIB_SEPARATION DXF layer and in blue in SVG/PDF, with small end gaps for separate laser settings.</li>
+        <li><strong>Defaults and compatibility:</strong> all these controls are in Edit &gt; Defaults. Older projects with Add Build Tabs enabled load with both tabs at 15%/75%, the original width, zero extra height, and separation lines off.</li>
+      </ul>
+
       <h2 id="new-1-3">What's new in 1.3.0</h2>
       <ul>
-        <li><strong>Rib Caps tab:</strong> independent Top Rib Caps and Bottom Rib Caps, with Thickness and Width fields using the normal unit-entry rules. Both options are also available in Settings &gt; Defaults and start unchecked.</li>
+        <li><strong>Rib Caps tab:</strong> independent Top Rib Caps and Bottom Rib Caps, with Thickness and Width fields using the normal unit-entry rules. Both options are also available in Edit &gt; Defaults and start unchecked.</li>
         <li><strong>Cap fitting:</strong> caps occupy clear full-rib sections, with matching recesses in the ribs. They avoid existing structure, stop at panel end-rib faces, and exclude riblets. A bottom-cap/build-tab overlap reports a geometry collision.</li>
         <li><strong>Faster cap checks:</strong> rib-cap collision work runs across ribs in parallel, within the configured thread limit. Progress identifies the rib number and Top or Bottom cap.</li>
         <li><strong>Build tabs:</strong> available with or without twist, with the front tab now at 15% chord and the rear at 75%. Existing spar and sheeting interference handling is retained. Finished outlines and solids are checked against the support plane, including rib thickness.</li>
@@ -184,12 +195,14 @@
       <dl>
         <dt>Rib Count</dt><dd>Number of regular rib stations including root and tip. The calculated center spacing is displayed below it.</dd>
         <dt>Rib Thickness</dt><dd>Sheet thickness used for solid ribs, slots, rib faces, and member endpoints.</dd>
-        <dt>Add Build Tabs</dt>
+        <dt>Add Front Build Tab / Add Rear Build Tab</dt>
         <dd>
-          <p>Adds temporary supports so a wing panel can be built on a flat surface with or without twist. The checkbox is available for all <strong>Specs &gt; Tip Twist</strong> values, including <strong>0.0</strong>. Changing Tip Twist preserves the selection.</p>
-          <p>Each panel uses its own support plane, with a slope based on the untwisted root and tip undersides. Tab feet compensate for twist and the full rib thickness. Finished outlines and solids are checked and trimmed to keep notch lips or curve overshoot above that plane. Tabbed rib contours use a 0.005 mm curve approximation in manufacturing exports and the solid model.</p>
-          <p>The front tab starts at 15% chord and the rear tab at 75%. Tabs move as needed to clear spar notches and sheeting.</p>
-          <p>The plane is not referenced to the bottom spar. A twisted rib body can sit above the line between the tab feet; the tabs support it at its intended angle. The clearance check prevents protrusions below this plane, but does not make every rib underside tangent to it.</p>
+          <p>Below the divider, enable either or both temporary supports. Each checkbox reveals its own inset <strong>Location</strong> field: front defaults to 15% chord and rear to 75%. The options work with or without Tip Twist.</p>
+          <p><strong>Tab Width</strong> is shared by both tabs and defaults to 3/16 inch (4.7625 mm). <strong>Height Above Work Table</strong> defaults to zero and extends all enabled tabs by the specified clearance from the original support plane. Both fields follow global units and accept explicit inch or millimeter entry; Tab Width must be positive and height cannot be negative.</p>
+          <p>Tabs move to clear spar notches. If bottom sheeting covers a tab position, that tab is omitted on the affected rib. The other tab and tabs on other ribs remain eligible. Unresolvable spar collisions still report an error.</p>
+          <p><strong>Add Tab/Rib Separation Line</strong> starts unchecked. When checked, 2D rib exports include an open line along the original airfoil contour across each actual tab for sanding or cutting. The line stops 0.25 mm short of each tab side (one-quarter of the width for tabs narrower than 1 mm). It uses a separate <code>TAB_RIB_SEPARATION</code> DXF layer and blue SVG/PDF strokes so it can receive different laser settings. It does not cut the 3D solid, and omitted tabs receive no marking.</p>
+          <p>Each panel uses its own support plane, based on its untwisted root and tip undersides. Tab feet account for twist and rib thickness. Finished outlines and solids are checked against the plane; tabbed manufacturing contours use a 0.005 mm curve approximation. The plane is airfoil-based, not spar-based, and twisted rib bodies may sit above the tab-foot line.</p>
+          <p>All tab options are saved in projects and Edit &gt; Defaults. Older projects retain their original two-tab behavior, original width, zero extra height, and no separation lines.</p>
         </dd>
         <dt>Add Rib 1a</dt><dd>Panel 1 only. Adds a center-section reinforcement rib midway between the first two regular stations; later rib labels adjust accordingly.</dd>
         <dt>Lightening Holes</dt><dd>Creates optimized circular rib holes over the selected rib range while honoring minimum border and inter-hole distances. This can significantly increase generation time.</dd>
@@ -329,7 +342,7 @@
         <li>global millimeter or inch display;</li>
         <li>default number of connected panels;</li>
         <li>geometry worker threads, up to the available CPU thread count minus one;</li>
-        <li>complete parameter defaults for every panel, including Add Build Tabs and Top/Bottom Rib Caps (all unchecked initially); and</li>
+        <li>complete parameter defaults for every panel, including independent Front/Rear Build Tabs, their Locations, shared Tab Width, Height Above Work Table, Tab/Rib Separation Line, and Top/Bottom Rib Caps (checkboxes start unchecked); and</li>
         <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
       </ul>
       <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the installed defaults, with build tabs and both rib-cap options unchecked.</p>
@@ -351,7 +364,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.3.0 &middot; Release date: September 29, 2026</footer>
+  <footer>DesignRC 1.4.0 &middot; Release date: October 2, 2026</footer>
 </div>
 </body>
 </html>
