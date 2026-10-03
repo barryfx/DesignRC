@@ -60,6 +60,188 @@ int main() {
 
   const auto thick = AirfoilProfile::nacaSymmetric(0.18);
   const auto thin = AirfoilProfile::nacaSymmetric(0.08);
+  for (const int type : {6, 7}) {
+    using namespace designrc::domain;
+    WingParameters p; p.ribCount = 3; p.rootChord = 180.0; p.tipChord = 150.0;
+    const auto ribs = generateRibs(p, thick, thin);
+    StructureParameters s; s.leadingEdgeType = type;
+    const auto wing = applyWingStructure(ribs, s);
+    assert(wing.profiledMembers.size() == 1);
+    const auto& member = wing.profiledMembers.front();
+    assert(member.profiles.size() == ribs.size() && member.profileSegments.size() == ribs.size());
+    for (std::size_t i = 0; i < ribs.size(); ++i) {
+      const auto& segments = member.profileSegments[i];
+      if (type == 6) {
+        assert(segments.size() == 6);
+        for (int side = 0; side < 2; ++side) {
+          double length = 0.0;
+          for (std::size_t j = 1; j < segments[side].points.size(); ++j) {
+            const auto a = segments[side].points[j - 1], b = segments[side].points[j];
+            length += std::hypot(a.x - b.x, a.y - b.y);
+          }
+          assert(std::abs(length - s.moldedLeadingEdgeWidth * 0.5) < 0.03);
+        }
+        const auto outerNose = segments[0].points.back();
+        const auto innerNose = segments[4].points.front();
+        assert(std::abs(std::hypot(innerNose.x - outerNose.x, innerNose.y - outerNose.y) -
+            s.moldedLeadingEdgeThickness) < 1.0e-8);
+        assert(innerNose.x > outerNose.x);
+      } else {
+        assert(segments.size() == 5);
+        assert(std::abs(segments[3].points.front().x - s.notchedLeadingEdgeWidth) < 1.0e-8);
+        assert(std::abs(segments[3].points.back().y - segments[3].points.front().y -
+            s.notchedLeadingEdgeHeight) < 1.0e-8);
+        int notchLines = 0;
+        for (const auto& segment : wing.ribs[i].outlineSegments)
+          if (!segment.spline && segment.points.size() == 2 &&
+              (std::abs(segment.points[0].x - s.notchedLeadingEdgeWidth) < 1.0e-8 ||
+               std::abs(segment.points[1].x - s.notchedLeadingEdgeWidth) < 1.0e-8)) ++notchLines;
+        assert(notchLines == 3);
+      }
+    }
+  }
+  {
+    using namespace designrc::domain;
+    WingParameters p; p.ribCount = 3;
+    const auto ribs = generateRibs(p, thin, thin);
+    StructureParameters s; s.leadingEdgeType = 5; s.diamondLeadingEdgeWidth = 12.7;
+    const auto wing = applyWingStructure(ribs, s);
+    assert(wing.profiledMembers.size() == 1 && wing.profiledMembers.front().diamondNose);
+    for (const auto& profile : wing.profiledMembers.front().profiles) {
+      assert(profile.size() > 4);
+      const auto apex = profile.back();
+      assert(std::abs(apex.x - 12.7 * std::sqrt(2.0)) < 1.0e-8);
+      for (const auto point : {profile.front(), profile[profile.size() - 2]})
+        assert(std::abs(apex.x - point.x - std::abs(apex.y - point.y)) < 1.0e-8);
+    }
+    for (const auto& rib : wing.ribs) {
+      int vEdges = 0;
+      for (const auto& segment : rib.outlineSegments) {
+        if (segment.spline || segment.points.size() != 2) continue;
+        const auto a = segment.points.front(), b = segment.points.back();
+        if (std::abs(a.x - 12.7 * std::sqrt(2.0)) < 1.0e-8 ||
+            std::abs(b.x - 12.7 * std::sqrt(2.0)) < 1.0e-8) {
+          assert(std::abs(std::abs(a.x - b.x) - std::abs(a.y - b.y)) < 1.0e-8);
+          ++vEdges;
+        }
+      }
+      assert(vEdges == 2);
+    }
+    s.diamondLeadingEdgeWidth = 0.1;
+    auto mixedRibs = generateRibs(p, thin, thick);
+    const auto corrected = applyWingStructure(mixedRibs, s);
+    assert(corrected.diamondLeadingEdgeWidth > 0.1);
+    s.diamondLeadingEdgeWidth = corrected.diamondLeadingEdgeWidth;
+    const auto repeated = applyWingStructure(mixedRibs, s);
+    assert(repeated.diamondLeadingEdgeWidth == s.diamondLeadingEdgeWidth);
+    assert(repeated.profiledMembers.front().profiles.size() == mixedRibs.size());
+    for (std::size_t i = 0; i < mixedRibs.size(); ++i) {
+      const auto& profile = repeated.profiledMembers.front().profiles[i];
+      assert(std::abs(profile.back().x - s.diamondLeadingEdgeWidth * std::sqrt(2.0)) < 1.0e-8);
+      const auto foil = mixedRibs[i].profile.resampled(81);
+      for (std::size_t j = 1; j + 2 < profile.size(); ++j) {
+        const auto point = profile[j];
+        const auto found = std::find_if(foil.begin(), foil.end(), [&](const auto normalized) {
+          return std::hypot(point.x - normalized.x * mixedRibs[i].chord,
+                            point.y - normalized.y * mixedRibs[i].chord) < 1.0e-8;
+        });
+        assert(found != foil.end());
+      }
+    }
+  }
+  // Four independent supports, including simultaneous upper/lower tabs.
+  for (const double twist : {-5.0, 0.0, 5.0}) {
+    using namespace designrc::domain;
+    WingParameters p;
+    p.ribCount = 3; p.tipTwistDegrees = twist;
+    const auto ribs = generateRibs(p, thick, thin);
+    for (int mask = 1; mask < 16; ++mask) {
+      StructureParameters s;
+      s.addFrontBuildTab = (mask & 1) != 0;
+      s.addRearBuildTab = (mask & 2) != 0;
+      s.addTopFrontBuildTab = (mask & 4) != 0;
+      s.addTopRearBuildTab = (mask & 8) != 0;
+      s.topFrontBuildTabLocationPercent = 20.0;
+      s.topRearBuildTabLocationPercent = 70.0;
+      s.addTabRibSeparationLine = true;
+      s.buildTabHeightAboveTable = 10.0;
+      const auto wing = applyWingStructure(ribs, s);
+      for (const auto& rib : wing.ribs) {
+        assert(rib.buildPlane.has_value() == ((mask & 3) != 0));
+        assert(rib.topBuildPlane.has_value() == ((mask & 12) != 0));
+        const int count = int(s.addFrontBuildTab) + int(s.addRearBuildTab) +
+            int(s.addTopFrontBuildTab) + int(s.addTopRearBuildTab);
+        assert(rib.tabSeparationLines.size() == count);
+        for (const auto& line : rib.tabSeparationLines) {
+          const double center = (line.front().x + line.back().x) * 0.5 / rib.rib.chord;
+          if (line.front().y > 0.0)
+            assert(std::abs(center - 0.20) < 1.0e-8 || std::abs(center - 0.70) < 1.0e-8);
+          else
+            assert(std::abs(center - 0.15) < 1.0e-8 || std::abs(center - 0.75) < 1.0e-8);
+        }
+      }
+    }
+    for (const bool top : {false, true}) {
+      StructureParameters s;
+      s.addTopFrontBuildTab = s.addTopRearBuildTab = top;
+      s.addFrontBuildTab = s.addRearBuildTab = !top;
+      s.leTopSheet = top; s.leBottomSheet = !top;
+      s.leTopSheetUpToSpar = s.leBottomSheetUpToSpar = false;
+      s.leTopSheetStopChordPercent = s.leBottomSheetStopChordPercent = 85.0;
+      s.leTopSheetStopRib = s.leBottomSheetStopRib = 3;
+      s.addTabRibSeparationLine = true;
+      s.buildTabHeightAboveTable = 5.0;
+      const auto omitted = applyWingStructure(ribs, s);
+      for (const auto& rib : omitted.ribs) assert(rib.tabSeparationLines.empty());
+      s.addTabsToSheetedRibs = true;
+      const auto included = applyWingStructure(ribs, s);
+      for (const auto& rib : included.ribs) assert(rib.tabSeparationLines.size() == 2);
+      // The override changes ribs only; sheeting remains uncut.
+      assert(included.sheeting.size() == omitted.sheeting.size());
+      for (std::size_t i = 0; i < included.sheeting.size(); ++i) {
+        const auto& before = omitted.sheeting[i].profiles;
+        const auto& after = included.sheeting[i].profiles;
+        assert(before.size() == after.size());
+        for (std::size_t j = 0; j < before.size(); ++j) {
+          assert(before[j].size() == after[j].size());
+          for (std::size_t k = 0; k < before[j].size(); ++k) {
+            assert(before[j][k].x == after[j][k].x);
+            assert(before[j][k].y == after[j][k].y);
+          }
+        }
+      }
+    }
+  }
+  {
+    using namespace designrc::domain;
+    WingParameters p; p.ribCount = 3;
+    const auto ribs = generateRibs(p, thick, thin);
+    StructureParameters s;
+    s.addTopFrontBuildTab = true;
+    s.topFrontBuildTabLocationPercent = 25.0;
+    s.topSpar = true;
+    s.addTabRibSeparationLine = true;
+    s.buildTabHeightAboveTable = 5.0;
+    const auto shifted = applyWingStructure(ribs, s);
+    for (const auto& rib : shifted.ribs) {
+      assert(rib.tabSeparationLines.size() == 1);
+      assert(rib.tabSeparationLines.front().back().x <
+          rib.rib.chord * 0.25 - s.topSparWidth * 0.5);
+    }
+    s.topRibCaps = true;
+    const auto cappedTabs = applyWingStructure(ribs, s);
+    assert(!cappedTabs.warnings.empty());
+    s.addTopFrontBuildTab = false;
+    const auto capsOnly = applyWingStructure(ribs, s);
+    assert(capsOnly.ribCaps.size() == cappedTabs.ribCaps.size());
+    for (std::size_t i = 0; i < capsOnly.ribCaps.size(); ++i) {
+      const auto& a = capsOnly.ribCaps[i].profile;
+      const auto& b = cappedTabs.ribCaps[i].profile;
+      assert(a.size() == b.size());
+      for (std::size_t j = 0; j < a.size(); ++j)
+        assert(a[j].x == b[j].x && a[j].y == b[j].y);
+    }
+  }
   {
     using namespace designrc::domain;
     WingParameters parameters;
@@ -290,13 +472,8 @@ int main() {
     }
     structure.spoilers = false;
     structure.addFrontBuildTab = structure.addRearBuildTab = true;
-    bool capTabCollision = false;
-    try { static_cast<void>(applyWingStructure(ribs, structure)); }
-    catch (const std::invalid_argument& error) {
-      capTabCollision = std::string{error.what()}.find(
-          "Geometric collision between Bottom Rib Cap and Build Tab at rib 1") != std::string::npos;
-    }
-    assert(capTabCollision);
+    const auto capTabWing = applyWingStructure(ribs, structure);
+    assert(!capTabWing.warnings.empty());
     structure.bottomRibCaps = false;
     const auto topWithTabs = applyWingStructure(ribs, structure);
     assert(!topWithTabs.ribCaps.empty());

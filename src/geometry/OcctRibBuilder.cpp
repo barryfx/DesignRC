@@ -226,7 +226,7 @@ TopoDS_Wire makeSplineProfileWire(
     const domain::RibDefinition& rib,
     const std::vector<domain::Point2>& profile,
     const std::size_t splitIndex, const double yOffset,
-    const char* description) {
+    const char* description, const bool diamondNose = false) {
   if (profile.size() < 3 || splitIndex == 0 ||
       splitIndex + 1 >= profile.size())
     throw std::runtime_error(
@@ -257,11 +257,18 @@ TopoDS_Wire makeSplineProfileWire(
   };
 
   const auto firstPoint = transformLocal(rib, profile.front(), yOffset);
-  const auto lastPoint = transformLocal(rib, profile.back(), yOffset);
+  const auto end = profile.size() - (diamondNose ? 2 : 1);
+  const auto lastPoint = transformLocal(rib, profile[end], yOffset);
   BRepBuilderAPI_MakeWire wire;
   wire.Add(makeContourEdge(0, splitIndex));
-  wire.Add(makeContourEdge(splitIndex, profile.size() - 1));
-  wire.Add(BRepBuilderAPI_MakeEdge{lastPoint, firstPoint}.Edge());
+  wire.Add(makeContourEdge(splitIndex, end));
+  if (diamondNose) {
+    const auto apex = transformLocal(rib, profile.back(), yOffset);
+    wire.Add(BRepBuilderAPI_MakeEdge{lastPoint, apex}.Edge());
+    wire.Add(BRepBuilderAPI_MakeEdge{apex, firstPoint}.Edge());
+  } else {
+    wire.Add(BRepBuilderAPI_MakeEdge{lastPoint, firstPoint}.Edge());
+  }
   if (!wire.IsDone())
     throw std::runtime_error(
         std::string{"Unable to construct spline "} + description +
@@ -769,8 +776,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         }
       }
 
-      if (structured.buildPlane) {
-        const auto& support = *structured.buildPlane;
+      for (const auto& plane : {structured.buildPlane, structured.topBuildPlane}) {
+        if (!plane) continue;
+        const auto& support = *plane;
         gp_Trsf align;
         align.SetRotation(gp_Ax1{gp_Pnt{0, 0, 0}, gp_Dir{1, 0, 0}},
             std::atan2(support.spanNormal, support.verticalNormal));
@@ -1451,6 +1459,28 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
       loft.CheckCompatibility(false);
       const auto addProfile = [&](const std::size_t i, const double yOffset) {
+        if (!member.profileSegments.empty()) {
+          BRepBuilderAPI_MakeWire wire;
+          for (const auto& segment : member.profileSegments.at(i)) {
+            if (segment.spline && segment.points.size() > 2) {
+              const auto points = Handle(OcctPointArray){new OcctPointArray{1, static_cast<int>(segment.points.size())}};
+              for (std::size_t j = 0; j < segment.points.size(); ++j)
+                points->SetValue(static_cast<int>(j + 1), transformLocal(structuredWing.ribs[i].rib, segment.points[j], yOffset));
+              GeomAPI_Interpolate interpolation{points, false, Precision::Confusion()};
+              interpolation.Perform();
+              if (!interpolation.IsDone()) throw std::runtime_error("Unable to interpolate leading edge");
+              wire.Add(BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge());
+            } else {
+              for (std::size_t j = 1; j < segment.points.size(); ++j)
+                wire.Add(BRepBuilderAPI_MakeEdge{
+                    transformLocal(structuredWing.ribs[i].rib, segment.points[j - 1], yOffset),
+                    transformLocal(structuredWing.ribs[i].rib, segment.points[j], yOffset)}.Edge());
+            }
+          }
+          if (!wire.IsDone()) throw std::runtime_error("Unable to construct leading-edge section");
+          loft.AddWire(wire.Wire());
+          return;
+        }
         if (splineTrailingEdge) {
           const auto& profile = member.profiles[i];
           const auto trailing = std::max_element(
@@ -1475,7 +1505,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             std::distance(profile.begin(), leading));
         loft.AddWire(makeSplineProfileWire(
             structuredWing.ribs[i].rib, profile, leadingIndex,
-            yOffset, "leading-edge"));
+            yOffset, "leading-edge", member.diamondNose));
       };
       // LE/TE stock is straight over each uninterrupted range. Using profiles
       // at every rib split the ruled loft into thousands of small faces and
@@ -1484,6 +1514,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       // with one straight ruled span between corresponding profile vertices.
       addProfile(first,
           ribStartOffset(structuredWing.ribs[first].rib, ribThickness));
+      if (member.diamondNose || !member.profileSegments.empty())
+        for (std::size_t i = first + 1; i < last; ++i) addProfile(i, 0.0);
       addProfile(last,
           ribEndOffset(structuredWing.ribs[last].rib, ribThickness));
       loft.Build();

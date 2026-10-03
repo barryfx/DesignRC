@@ -29,6 +29,33 @@ source version is **1.4.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
+## Unreleased changes
+
+- **Molded LE Sheet** wraps the airfoil nose with recessed curved sheeting. Width is the
+  total wrap distance, split equally above and below the nose (default 5/8 inch), with
+  1/16-inch default Thickness.
+- **Notched LE** adds a centered, rounded stick and matching rib notch, defaulting to
+  3/8-inch Width and 3/16-inch Height. Both new LE types include unit-aware fields,
+  project persistence, Defaults, and Help.
+
+- **Diamond LE (Square Balsa Rotated 45 Degrees)** adds square balsa leading-edge stock
+  and a straight V notch in each rib. The exposed nose follows the interpolated airfoil.
+  Undersized Width values increase automatically to fit every rib in the panel; the corrected
+  unit-aware Width is saved in the project. Defaults also includes the option.
+- Build-tab/rib-cap overlaps now produce construction warnings instead of stopping generation.
+  Temporary tabs pass through unchanged cap solids, including in STEP exports.
+
+- Four independent rib-tab choices: Bottom Rear, Bottom Front, Top Rear, and Top Front.
+  Each has its own Location; front defaults to 15% and rear to 75% chord. Width,
+  work-table clearance, and separation-line settings are shared.
+- Top tabs support upside-down construction using an upper support plane without changing
+  the wing's twist. Top tabs avoid top spars and spoilers.
+- **Add Tabs to Ribs With Sheeting** retains temporary tabs where sheeting will be installed
+  after construction. Tabs intentionally overlap intact sheeting in the preview and STEP;
+  no sheeting slots are cut. Remove tabs before finishing the wing.
+- All new options are available in **Edit > Defaults**. Older projects keep their bottom
+  tabs, with top tabs and the sheeting override disabled.
+
 ## What's new in 1.4.0
 
 - Separate **Add Front Build Tab** and **Add Rear Build Tab** options below a divider in Ribs.

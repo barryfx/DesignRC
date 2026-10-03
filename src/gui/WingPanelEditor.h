@@ -119,6 +119,12 @@ struct WingPanelData {
   double sweep{70.0};
   double dihedral{4.0};
   double twist{0.0};
+  bool addTopFrontBuildTab{false};
+  bool addTopRearBuildTab{false};
+  double topFrontBuildTabLocationPercent{15.0};
+  double topRearBuildTabLocationPercent{75.0};
+  bool addTabsToSheetedRibs{false};
+  // Keep the original JSON keys for backward-compatible bottom tabs.
   bool addFrontBuildTab{false};
   bool addRearBuildTab{false};
   double frontBuildTabLocationPercent{15.0};
@@ -165,6 +171,11 @@ struct WingPanelData {
   std::vector<SparDefaults> spars{SparDefaults{}};
   bool sparShearWebs{false};
 
+  double moldedLeadingEdgeWidth{15.875};
+  double moldedLeadingEdgeThickness{1.5875};
+  double notchedLeadingEdgeWidth{9.525};
+  double notchedLeadingEdgeHeight{4.7625};
+  double diamondLeadingEdgeWidth{6.35};
   int leadingEdgeType{0}; double leadingEdgeWidth{5.0}; double leadingEdgeHeight{7.0};
   double leadingEdgeTubeOd{2.0}; double leadingEdgeTubeId{1.0}; double leadingEdgeRodOd{2.0};
   int trailingEdgeType{0}; double trailingEdgeWidth{20.0}; double trailingEdgeHeight{3.0};
@@ -233,6 +244,7 @@ public:
   void setData(const WingPanelData& data);
   void setJoinerAddDefaults(const WingPanelData& defaults);
   void setGlobalUnit(DisplayUnit unit);
+  void setDiamondLeadingEdgeWidthMm(double width);
   void setLeadingEdgeHeightMm(double height);
   void setTrailingEdgeHeightMm(double height);
   [[nodiscard]] bool validate(QString& error);
@@ -328,6 +340,9 @@ private:
   LengthInput* sweep_{};
   QDoubleSpinBox* dihedral_{};
   QDoubleSpinBox* twist_{};
+  QCheckBox *addTopFrontBuildTab_{}, *addTopRearBuildTab_{}, *addTabsToSheetedRibs_{};
+  QDoubleSpinBox *topFrontBuildTabLocation_{}, *topRearBuildTabLocation_{};
+  QWidget *topFrontBuildTabDetails_{}, *topRearBuildTabDetails_{};
   QCheckBox *addFrontBuildTab_{}, *addRearBuildTab_{};
   QDoubleSpinBox *frontBuildTabLocation_{}, *rearBuildTabLocation_{};
   LengthInput* buildTabWidth_{};
@@ -375,6 +390,12 @@ private:
   LengthInput* sparShearWebThickness_{};
   int nextSparEditorId_{1};
 
+  QRadioButton *moldedLe_{}, *notchedLe_{};
+  QWidget *moldedLeDetails_{}, *notchedLeDetails_{};
+  LengthInput *moldedLeWidth_{}, *moldedLeThickness_{}, *notchedLeWidth_{}, *notchedLeHeight_{};
+  QRadioButton* diamondLe_{};
+  QWidget* diamondLeDetails_{};
+  LengthInput* diamondLeWidth_{};
   QRadioButton *blockLe_{}, *tubeLe_{}, *rodLe_{}, *sheetTe_{};
   QWidget *stockLeDetails_{}, *tubeLeDetails_{}, *rodLeDetails_{}, *stockTeDetails_{}, *slottedDetails_{},
       *topTeSheetingDetails_{}, *bottomTeSheetingDetails_{},

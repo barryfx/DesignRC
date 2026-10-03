@@ -61,12 +61,178 @@ TDF_Label findChild(const TDF_Label& assembly, const std::string& name) {
   return {};
 }
 
+void testSheetedTabs() {
+    // Construction tabs intentionally intersect intact sheeting in STEP.
+    using namespace designrc::domain;
+    WingParameters p;
+    p.ribCount = 2; p.rootChord = p.tipChord = 150.0; p.halfSpan = 100.0;
+    const auto foil = AirfoilProfile::nacaSymmetric(0.12);
+    const auto ribs = generateRibs(p, foil, foil);
+    StructureParameters s;
+    s.addTopFrontBuildTab = s.addFrontBuildTab = true;
+    s.addTabsToSheetedRibs = true;
+    s.buildTabHeightAboveTable = 5.0;
+    s.leTopSheet = s.leBottomSheet = true;
+    s.leTopSheetUpToSpar = s.leBottomSheetUpToSpar = false;
+    s.leTopSheetStopChordPercent = s.leBottomSheetStopChordPercent = 40.0;
+    s.leTopSheetStopRib = s.leBottomSheetStopRib = 2;
+    // A leading-edge block leaves a rib core between the two sheet recesses.
+    s.leadingEdgeType = 2;
+    s.leadingEdgeWidth = 6.0;
+    s.leadingEdgeHeight = 25.0;
+    designrc::geometry::MaterialShapeSet materials;
+    const auto shape = designrc::geometry::buildStructuredWingPreview(
+        applyWingStructure(ribs, s), p.ribThickness, nullptr, &materials);
+    for (const auto& part : materials.parts)
+      if (!BRepCheck_Analyzer{part.shape}.IsValid())
+        std::fprintf(stderr, "Invalid sheeted-tab part: %s\n", part.name.c_str());
+    assert(BRepCheck_Analyzer{shape}.IsValid());
+    int overlaps = 0;
+    double volume = 0.0;
+    for (auto& part : materials.parts) {
+      part.mirrorInAssembly = false;
+      GProp_GProps properties;
+      BRepGProp::VolumeProperties(part.shape, properties, 1.0e-9);
+      volume += properties.Mass();
+      if (!part.name.starts_with("Rib ")) continue;
+      for (const auto& sheet : materials.parts) {
+        if (sheet.name.find("sheet") == std::string::npos &&
+            sheet.name.find("Sheet") == std::string::npos) continue;
+        BRepAlgoAPI_Common common{part.shape, sheet.shape};
+        assert(common.IsDone());
+        GProp_GProps overlap;
+        BRepGProp::VolumeProperties(common.Shape(), overlap);
+        if (overlap.Mass() > 0.01) ++overlaps;
+      }
+    }
+    assert(overlaps >= 2);
+    const auto path = std::filesystem::temp_directory_path() / "designrc_sheeted_tabs.step";
+    designrc::geometry::exportStepAssembly(materials.parts, path, "Temporary tabs through sheeting");
+    STEPControl_Reader reader;
+    assert(reader.ReadFile(path.string().c_str()) == IFSelect_RetDone);
+    assert(reader.TransferRoots() > 0);
+    assert(BRepCheck_Analyzer{reader.OneShape()}.IsValid());
+    GProp_GProps imported;
+    BRepGProp::VolumeProperties(reader.OneShape(), imported, 1.0e-9);
+    if (std::abs(imported.Mass() - volume) >= volume * 5.0e-4)
+      std::fprintf(stderr, "Sheeted-tab STEP volume: expected %.9f, imported %.9f\n", volume, imported.Mass());
+    assert(std::abs(imported.Mass() - volume) < volume * 5.0e-4);
+    std::filesystem::remove(path);
+}
+
+void testDiamondAndCapTabs() {
+  using namespace designrc::domain;
+  WingParameters p;
+  p.ribCount = 3; p.rootChord = 180.0; p.tipChord = 150.0; p.halfSpan = 100.0;
+  p.tipTwistDegrees = 3.0;
+  const auto foil = AirfoilProfile::nacaSymmetric(0.10);
+  const auto ribs = generateRibs(p, foil, foil);
+  StructureParameters s;
+  s.leadingEdgeType = 5; s.diamondLeadingEdgeWidth = 12.7;
+  const auto bareDiamond = designrc::geometry::buildStructuredWingPreview(
+      applyWingStructure(ribs, s), p.ribThickness);
+  assert(BRepCheck_Analyzer{bareDiamond}.IsValid());
+  s.topRibCaps = s.bottomRibCaps = true;
+  auto capBaseline = s; capBaseline.leadingEdgeType = 0;
+  const auto baselineShape = designrc::geometry::buildStructuredWingPreview(
+      applyWingStructure(ribs, capBaseline), p.ribThickness);
+  assert(BRepCheck_Analyzer{baselineShape}.IsValid());
+  designrc::geometry::MaterialShapeSet plain;
+  const auto plainShape = designrc::geometry::buildStructuredWingPreview(
+      applyWingStructure(ribs, s), p.ribThickness, nullptr, &plain);
+  for (const auto& part : plain.parts)
+    if (!BRepCheck_Analyzer{part.shape}.IsValid())
+      std::fprintf(stderr, "Invalid diamond part: %s\n", part.name.c_str());
+  assert(BRepCheck_Analyzer{plainShape}.IsValid());
+  s.addFrontBuildTab = s.addTopFrontBuildTab = true;
+  s.buildTabHeightAboveTable = 5.0;
+  const auto wing = applyWingStructure(ribs, s);
+  assert(wing.warnings.size() == p.ribCount * 2);
+  designrc::geometry::MaterialShapeSet tabbed;
+  const auto shape = designrc::geometry::buildStructuredWingPreview(
+      wing, p.ribThickness, nullptr, &tabbed);
+  assert(BRepCheck_Analyzer{shape}.IsValid());
+  int caps = 0;
+  double total = 0.0;
+  for (const auto& part : tabbed.parts) {
+    GProp_GProps properties;
+    BRepGProp::VolumeProperties(part.shape, properties, 1.0e-9);
+    total += properties.Mass();
+    if (part.name.find("rib cap") == std::string::npos) continue;
+    ++caps;
+    const auto original = std::find_if(plain.parts.begin(), plain.parts.end(),
+        [&](const auto& other) { return other.name == part.name; });
+    assert(original != plain.parts.end());
+    GProp_GProps before;
+    BRepGProp::VolumeProperties(original->shape, before, 1.0e-9);
+    assert(std::abs(before.Mass() - properties.Mass()) < 1.0e-6);
+  }
+  assert(caps == p.ribCount * 2);
+  const auto path = std::filesystem::temp_directory_path() / "designrc_diamond_cap_tabs.step";
+  designrc::geometry::exportStepAssembly(tabbed.parts, path, "Diamond LE and temporary tabs through caps");
+  STEPControl_Reader reader;
+  assert(reader.ReadFile(path.string().c_str()) == IFSelect_RetDone);
+  assert(reader.TransferRoots() > 0);
+  assert(BRepCheck_Analyzer{reader.OneShape()}.IsValid());
+  GProp_GProps imported;
+  BRepGProp::VolumeProperties(reader.OneShape(), imported, 1.0e-9);
+  assert(std::abs(imported.Mass() - total) < total * 5.0e-4);
+  std::filesystem::remove(path);
+}
+
+void testMoldedAndNotchedLeadingEdges() {
+  using namespace designrc::domain;
+  for (const int type : {6, 7}) {
+    WingParameters p;
+    p.ribCount = 3; p.rootChord = 180.0; p.tipChord = 150.0; p.halfSpan = 150.0;
+    p.tipTwistDegrees = 3.0;
+    const auto ribs = generateRibs(p, AirfoilProfile::nacaSymmetric(0.12), AirfoilProfile::nacaSymmetric(0.10));
+    StructureParameters s; s.leadingEdgeType = type;
+    const auto wing = applyWingStructure(ribs, s);
+    designrc::geometry::MaterialShapeSet materials;
+    const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, nullptr, &materials);
+    for (const auto& part : materials.parts)
+      if (!BRepCheck_Analyzer{part.shape}.IsValid()) std::fprintf(stderr, "Invalid new LE part: %s\n", part.name.c_str());
+    assert(BRepCheck_Analyzer{shape}.IsValid());
+    const auto stock = std::find_if(materials.parts.begin(), materials.parts.end(),
+        [](const auto& part) { return part.name.find("leading edge") != std::string::npos; });
+    assert(stock != materials.parts.end());
+    double total = 0.0;
+    for (const auto& part : materials.parts) {
+      GProp_GProps volume;
+      BRepGProp::VolumeProperties(part.shape, volume, 1.0e-9);
+      assert(volume.Mass() > 0.0);
+      total += volume.Mass();
+    }
+    const auto path = std::filesystem::temp_directory_path() / ("designrc_le_" + std::to_string(type) + ".step");
+    designrc::geometry::exportStepAssembly(materials.parts, path, "New leading edges");
+    STEPControl_Reader reader;
+    assert(reader.ReadFile(path.string().c_str()) == IFSelect_RetDone);
+    assert(reader.TransferRoots() > 0 && BRepCheck_Analyzer{reader.OneShape()}.IsValid());
+    GProp_GProps imported;
+    BRepGProp::VolumeProperties(reader.OneShape(), imported, 1.0e-9);
+    assert(std::abs(imported.Mass() - total) < total * 5.0e-4);
+    std::filesystem::remove(path);
+    s.topRibCaps = s.bottomRibCaps = true;
+    s.addFrontBuildTab = s.addTopFrontBuildTab = true;
+    s.buildTabHeightAboveTable = 5.0;
+    const auto withSupports = designrc::geometry::buildStructuredWingPreview(
+        applyWingStructure(ribs, s), p.ribThickness);
+    assert(BRepCheck_Analyzer{withSupports}.IsValid());
+  }
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char* argv[]) {
 #ifdef _WIN32
   _set_error_mode(_OUT_TO_STDERR);
 #endif
+  if (argc > 1 && std::string{argv[1]} == "--sheeted-tabs") { testSheetedTabs(); return 0; }
+  if (argc > 1 && std::string{argv[1]} == "--diamond-cap-tabs") { testDiamondAndCapTabs(); return 0; }
+  if (argc > 1 && std::string{argv[1]} == "--molded-notched-le") { testMoldedAndNotchedLeadingEdges(); return 0; }
+  testMoldedAndNotchedLeadingEdges();
+  testDiamondAndCapTabs();
   try {
     // Adjacent panels meet at a shared angled rib plane. Even wide cap stock
     // must terminate at each panel's outside root/tip face.
@@ -240,6 +406,7 @@ int main() {
     assert(BRepCheck_Analyzer{reader.OneShape()}.IsValid());
     std::filesystem::remove(path);
   }
+  testSheetedTabs();
   for (const double twist : {-5.0, 0.0, 5.0}) {
     designrc::domain::WingParameters parameters;
     parameters.ribCount = 3;

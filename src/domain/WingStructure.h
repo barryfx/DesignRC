@@ -101,7 +101,12 @@ struct StructureParameters {
   bool bottomRearSpar{false};
   double bottomRearSparHeight{4.0};
   double bottomRearSparWidth{4.0};
-  int leadingEdgeType{0}; // 0 none, 2 block, 3 tube, 4 rod
+  double moldedLeadingEdgeWidth{15.875};
+  double moldedLeadingEdgeThickness{1.5875};
+  double notchedLeadingEdgeWidth{9.525};
+  double notchedLeadingEdgeHeight{4.7625};
+  double diamondLeadingEdgeWidth{6.35};
+  int leadingEdgeType{0}; // 0 none, 2 block, 3 tube, 4 rod, 5 diamond, 6 molded sheet, 7 notched
   double leadingEdgeWidth{5.0};
   double leadingEdgeHeight{7.0};
   double leadingEdgeTubeOd{2.0};
@@ -165,6 +170,12 @@ struct StructureParameters {
   double wiringHoleWidth{9.525};
   double wiringHoleHeight{6.35};
   bool rib1aPresent{false};
+  bool addTopFrontBuildTab{false};
+  bool addTopRearBuildTab{false};
+  double topFrontBuildTabLocationPercent{15.0};
+  double topRearBuildTabLocationPercent{75.0};
+  bool addTabsToSheetedRibs{false};
+  // Existing serialized front/rear fields remain the bottom-tab settings.
   bool addFrontBuildTab{false};
   bool addRearBuildTab{false};
   double frontBuildTabLocationPercent{15.0};
@@ -230,6 +241,7 @@ struct StructuredRib {
     double offset{};
   };
   std::optional<BuildPlane> buildPlane;
+  std::optional<BuildPlane> topBuildPlane;
   // Open marking contours only; never cut into the 3D solid.
   std::vector<std::vector<Point2>> tabSeparationLines;
 };
@@ -259,6 +271,8 @@ struct ProfiledSpanMember {
   std::vector<std::vector<Point2>> profiles;
   std::vector<std::vector<Point2>> slotProfiles;
   std::vector<std::pair<std::size_t, std::size_t>> activeRanges;
+  bool diamondNose{false};
+  std::vector<std::vector<RibOutlineSegment>> profileSegments;
 };
 
 struct ControlSurfacePart {
@@ -351,6 +365,8 @@ struct RibCapPart {
 };
 
 struct StructuredWing {
+  double diamondLeadingEdgeWidth{}; // Effective stock size, including automatic correction.
+  std::vector<std::string> warnings;
   std::vector<StructuredRib> ribs;
   std::vector<StructuredRib> riblets;
   std::vector<RibCapPart> ribCaps;

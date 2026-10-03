@@ -37,6 +37,8 @@ protected:
   void closeEvent(QCloseEvent* event) override;
 
 private:
+  void applyDiamondWidthCorrections(const std::vector<domain::StructuredWing>& panels,
+                                   std::size_t firstPanel = 0);
   void buildMenus();
   void setCameraView(CameraView cameraView);
   void rebuildPanelTabs(const std::vector<WingPanelData>& panels);

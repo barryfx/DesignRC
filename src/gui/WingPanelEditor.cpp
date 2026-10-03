@@ -380,6 +380,8 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(teBottomSheetThickness); PUT(teBottomSheetStopRib); PUT(turbulators); PUT(turbulatorCount); PUT(turbulatorHeight);
   PUT(turbulatorWidth); PUT(topRearSpar); PUT(topRearSparHeight); PUT(topRearSparWidth);
   PUT(bottomRearSpar); PUT(bottomRearSparHeight); PUT(bottomRearSparWidth);
+  PUT(moldedLeadingEdgeWidth); PUT(moldedLeadingEdgeThickness); PUT(notchedLeadingEdgeWidth); PUT(notchedLeadingEdgeHeight);
+  PUT(diamondLeadingEdgeWidth);
   PUT(leadingEdgeWidth); PUT(leadingEdgeHeight); PUT(leadingEdgeTubeOd); PUT(leadingEdgeTubeId);
   PUT(leadingEdgeRodOd); PUT(trailingEdgeWidth); PUT(trailingEdgeHeight);
   PUT(slottedForRibs); PUT(topTeSheeting); PUT(topTeSheetingWidth);
@@ -401,6 +403,7 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(wiringHoleChordLocationPercent); PUT(wiringHoleWidth); PUT(wiringHoleHeight);
   PUT(topRibCaps); PUT(topRibCapThickness); PUT(topRibCapWidth);
   PUT(bottomRibCaps); PUT(bottomRibCapThickness); PUT(bottomRibCapWidth);
+  PUT(addTopFrontBuildTab); PUT(addTopRearBuildTab); PUT(topFrontBuildTabLocationPercent); PUT(topRearBuildTabLocationPercent); PUT(addTabsToSheetedRibs);
   PUT(addFrontBuildTab); PUT(addRearBuildTab);
   PUT(buildTabWidth); PUT(frontBuildTabLocationPercent); PUT(rearBuildTabLocationPercent); PUT(buildTabHeightAboveTable); PUT(addTabRibSeparationLine);
   PUT(addRib1a); PUT(centerSparWoodJoiner); PUT(behindSparJoiner); PUT(behindSparJoinerType);
@@ -504,6 +507,8 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_I(turbulatorCount); READ_D(turbulatorHeight); READ_D(turbulatorWidth); READ_B(topRearSpar);
   READ_D(topRearSparHeight); READ_D(topRearSparWidth); READ_B(bottomRearSpar); READ_D(bottomRearSparHeight);
   READ_D(bottomRearSparWidth); READ_I(leadingEdgeType); READ_D(leadingEdgeWidth); READ_D(leadingEdgeHeight);
+  READ_D(moldedLeadingEdgeWidth); READ_D(moldedLeadingEdgeThickness); READ_D(notchedLeadingEdgeWidth); READ_D(notchedLeadingEdgeHeight);
+  READ_D(diamondLeadingEdgeWidth);
   READ_D(leadingEdgeTubeOd); READ_D(leadingEdgeTubeId); READ_D(leadingEdgeRodOd); READ_I(trailingEdgeType);
   READ_D(trailingEdgeWidth); READ_D(trailingEdgeHeight); READ_B(slottedForRibs);
   READ_B(topTeSheeting); READ_D(topTeSheetingWidth);
@@ -528,6 +533,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_B(bottomRibCaps); READ_D(bottomRibCapThickness); READ_D(bottomRibCapWidth);
   // Older projects and saved Defaults used a single checkbox for both tabs.
   d.addFrontBuildTab = d.addRearBuildTab = o.value("addBuildTabs").toBool(false);
+  READ_B(addTopFrontBuildTab); READ_B(addTopRearBuildTab); READ_D(topFrontBuildTabLocationPercent); READ_D(topRearBuildTabLocationPercent); READ_B(addTabsToSheetedRibs);
   READ_B(addFrontBuildTab); READ_B(addRearBuildTab);
   READ_D(buildTabWidth); READ_D(frontBuildTabLocationPercent); READ_D(rearBuildTabLocationPercent); READ_D(buildTabHeightAboveTable); READ_B(addTabRibSeparationLine);
   READ_B(addRib1a); READ_B(centerSparWoodJoiner); READ_B(behindSparJoiner);
@@ -803,6 +809,8 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
   ROUND_LENGTH(turbulatorHeight); ROUND_LENGTH(turbulatorWidth);
   ROUND_LENGTH(topRearSparHeight); ROUND_LENGTH(topRearSparWidth);
   ROUND_LENGTH(bottomRearSparHeight); ROUND_LENGTH(bottomRearSparWidth);
+  ROUND_LENGTH(moldedLeadingEdgeWidth); ROUND_LENGTH(moldedLeadingEdgeThickness); ROUND_LENGTH(notchedLeadingEdgeWidth); ROUND_LENGTH(notchedLeadingEdgeHeight);
+  ROUND_LENGTH(diamondLeadingEdgeWidth);
   ROUND_LENGTH(leadingEdgeWidth); ROUND_LENGTH(leadingEdgeHeight);
   ROUND_LENGTH(leadingEdgeTubeOd); ROUND_LENGTH(leadingEdgeTubeId); ROUND_LENGTH(leadingEdgeRodOd);
   ROUND_LENGTH(trailingEdgeWidth); ROUND_LENGTH(trailingEdgeHeight);
@@ -869,7 +877,7 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "aileronHeight", "aileronWidth", "bottomRearSparHeight",
            "bottomRearSparWidth", "bottomSparHeight", "bottomSparWidth",
            "flapHeight", "flapWidth", "leBottomSheetThickness",
-           "leTopSheetThickness", "leadingEdgeHeight", "leadingEdgeWidth",
+           "leTopSheetThickness", "leadingEdgeHeight", "moldedLeadingEdgeWidth", "moldedLeadingEdgeThickness", "notchedLeadingEdgeWidth", "notchedLeadingEdgeHeight", "diamondLeadingEdgeWidth", "leadingEdgeWidth",
            "panelSpan",
            "ribLighteningMinimumHoleDistance",
            "ribLighteningMinimumWoodMargin", "ribThickness", "rootChord",
@@ -1027,7 +1035,7 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "bottomSparHeight", "bottomSparWidth", "flapHeight",
            "flapHingePostHeight", "flapHingePostWidth", "flapWidth",
            "leBottomSheetThickness", "leTopSheetThickness", "leadingEdgeHeight",
-           "leadingEdgeWidth",
+           "moldedLeadingEdgeWidth", "moldedLeadingEdgeThickness", "notchedLeadingEdgeWidth", "notchedLeadingEdgeHeight", "diamondLeadingEdgeWidth", "leadingEdgeWidth",
            "panelSpan", "ribLighteningMinimumHoleDistance",
            "ribLighteningMinimumWoodMargin", "ribThickness", "rootChord",
            "shearWebWidth",
@@ -1259,7 +1267,7 @@ QWidget* WingPanelEditor::makeRibsPage() {
                                   QCheckBox*& check, QDoubleSpinBox*& location,
                                   QWidget*& details, const double defaultLocation) {
     check = new QCheckBox{label};
-    check->setObjectName(key == "front" ? "addFrontBuildTab" : "addRearBuildTab");
+    check->setObjectName("add" + key.left(1).toUpper() + key.mid(1) + "BuildTab");
     location = new QDoubleSpinBox;
     location->setObjectName(key + "BuildTabLocationPercent");
     location->setRange(0.0, 100.0);
@@ -1276,10 +1284,18 @@ QWidget* WingPanelEditor::makeRibsPage() {
     });
     connect(location, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
   };
-  addTabControl("Add Front Build Tab", "front", addFrontBuildTab_,
-                frontBuildTabLocation_, frontBuildTabDetails_, 15.0);
-  addTabControl("Add Rear Build Tab", "rear", addRearBuildTab_,
+  addTabControl("Add Bottom Rear Build Tabs", "rear", addRearBuildTab_,
                 rearBuildTabLocation_, rearBuildTabDetails_, 75.0);
+  addTabControl("Add Bottom Front Build Tabs", "front", addFrontBuildTab_,
+                frontBuildTabLocation_, frontBuildTabDetails_, 15.0);
+  addTabControl("Add Top Rear Build Tabs", "topRear", addTopRearBuildTab_,
+                topRearBuildTabLocation_, topRearBuildTabDetails_, 75.0);
+  addTabControl("Add Top Front Build Tabs", "topFront", addTopFrontBuildTab_,
+                topFrontBuildTabLocation_, topFrontBuildTabDetails_, 15.0);
+  addTabsToSheetedRibs_ = new QCheckBox{"Add Tabs to Ribs With Sheeting (Otherwise no tabs where sheeting)"};
+  addTabsToSheetedRibs_->setObjectName("addTabsToSheetedRibs");
+  layout->addWidget(addTabsToSheetedRibs_);
+  connect(addTabsToSheetedRibs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   buildTabWidth_ = new LengthInput{"buildTabWidth", 4.7625};
   buildTabWidth_->setGlobalUnit(globalUnit_);
   buildTabWidth_->setOverrideSelectorVisible(showUnitOverrides_);
@@ -1783,6 +1799,32 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
   layout->addWidget(blockLe_);
   leWidth_ = makeLength("leadingEdgeWidth", 5); leHeight_ = makeLength("leadingEdgeHeight", 7);
   stockLeDetails_ = detailRow({{"Width", leWidth_}, {"Height", leHeight_}}); layout->addWidget(stockLeDetails_);
+  diamondLe_ = new QRadioButton{"Diamond LE (Square Balsa Rotated 45 Degrees)"};
+  diamondLe_->setObjectName("diamondLe");
+  leGroup->addButton(diamondLe_);
+  layout->addWidget(diamondLe_);
+  diamondLeWidth_ = makeLength("diamondLeadingEdgeWidth", 6.35);
+  diamondLeDetails_ = detailRow({{"Width", diamondLeWidth_}});
+  diamondLeDetails_->setObjectName("diamondLeDetails");
+  layout->addWidget(diamondLeDetails_);
+  moldedLe_ = new QRadioButton{"Molded LE Sheet"};
+  moldedLe_->setObjectName("moldedLe");
+  leGroup->addButton(moldedLe_);
+  layout->addWidget(moldedLe_);
+  moldedLeWidth_ = makeLength("moldedLeadingEdgeWidth", 15.875);
+  moldedLeThickness_ = makeLength("moldedLeadingEdgeThickness", 1.5875);
+  moldedLeDetails_ = detailRow({{"Width", moldedLeWidth_}, {"Thickness", moldedLeThickness_}});
+  moldedLeDetails_->setObjectName("moldedLeDetails");
+  layout->addWidget(moldedLeDetails_);
+  notchedLe_ = new QRadioButton{"Notched LE"};
+  notchedLe_->setObjectName("notchedLe");
+  leGroup->addButton(notchedLe_);
+  layout->addWidget(notchedLe_);
+  notchedLeWidth_ = makeLength("notchedLeadingEdgeWidth", 9.525);
+  notchedLeHeight_ = makeLength("notchedLeadingEdgeHeight", 4.7625);
+  notchedLeDetails_ = detailRow({{"Width", notchedLeWidth_}, {"Height", notchedLeHeight_}});
+  notchedLeDetails_->setObjectName("notchedLeDetails");
+  layout->addWidget(notchedLeDetails_);
   layout->addWidget(tubeLe_);
   leTubeOd_ = makeLength("leadingEdgeTubeOd", 2); leTubeId_ = makeLength("leadingEdgeTubeId", 1);
   tubeLeDetails_ = detailRow({{"OD", leTubeOd_}, {"ID", leTubeId_}}); layout->addWidget(tubeLeDetails_);
@@ -1849,7 +1891,7 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
       "bottomTeSheetingThickness", "bottomTeSheetingTaperStartLocationPercent",
       bottomTeSheeting_, bottomTeWidth_, bottomTeThickness_, bottomTeTaper_,
       bottomTeTaperStart_, bottomTeSheetingDetails_, bottomTeTaperDetails_);
-  for (auto* button : {blockLe_, tubeLe_, rodLe_, sheetTe_})
+  for (auto* button : {blockLe_, diamondLe_, moldedLe_, notchedLe_, tubeLe_, rodLe_, sheetTe_})
     connect(button, &QRadioButton::toggled, this, [this, button](const bool checked) {
       if (button == sheetTe_ && checked) {
         topTeSheeting_->setChecked(false);
@@ -2617,7 +2659,12 @@ WingPanelData WingPanelEditor::data() const {
   d.turbulatorHeight = turbulatorHeight_->valueMm(); d.turbulatorWidth = turbulatorWidth_->valueMm();
   d.topRearSpar = topRearSpar_->isChecked(); d.topRearSparHeight = topRearHeight_->valueMm(); d.topRearSparWidth = topRearWidth_->valueMm();
   d.bottomRearSpar = bottomRearSpar_->isChecked(); d.bottomRearSparHeight = bottomRearHeight_->valueMm(); d.bottomRearSparWidth = bottomRearWidth_->valueMm();
-  d.leadingEdgeType = blockLe_->isChecked() ? 2 : tubeLe_->isChecked() ? 3 : rodLe_->isChecked() ? 4 : 0;
+  d.moldedLeadingEdgeWidth = moldedLeWidth_->valueMm();
+  d.moldedLeadingEdgeThickness = moldedLeThickness_->valueMm();
+  d.notchedLeadingEdgeWidth = notchedLeWidth_->valueMm();
+  d.notchedLeadingEdgeHeight = notchedLeHeight_->valueMm();
+  d.diamondLeadingEdgeWidth = diamondLeWidth_->valueMm();
+  d.leadingEdgeType = moldedLe_->isChecked() ? 6 : notchedLe_->isChecked() ? 7 : diamondLe_->isChecked() ? 5 : blockLe_->isChecked() ? 2 : tubeLe_->isChecked() ? 3 : rodLe_->isChecked() ? 4 : 0;
   d.leadingEdgeWidth = leWidth_->valueMm(); d.leadingEdgeHeight = leHeight_->valueMm(); d.leadingEdgeTubeOd = leTubeOd_->valueMm();
   d.leadingEdgeTubeId = leTubeId_->valueMm(); d.leadingEdgeRodOd = leRodOd_->valueMm();
   d.trailingEdgeType = sheetTe_->isChecked() ? 2 : 0;
@@ -2668,6 +2715,11 @@ WingPanelData WingPanelEditor::data() const {
     d.unitOverrides.insert("wiringHoleWidth", wiring.width->unitOverride());
     d.unitOverrides.insert("wiringHoleHeight", wiring.height->unitOverride());
   }
+  d.addTopFrontBuildTab = addTopFrontBuildTab_->isChecked();
+  d.addTopRearBuildTab = addTopRearBuildTab_->isChecked();
+  d.topFrontBuildTabLocationPercent = topFrontBuildTabLocation_->value();
+  d.topRearBuildTabLocationPercent = topRearBuildTabLocation_->value();
+  d.addTabsToSheetedRibs = addTabsToSheetedRibs_->isChecked();
   d.addFrontBuildTab = addFrontBuildTab_->isChecked();
   d.addRearBuildTab = addRearBuildTab_->isChecked();
   d.buildTabWidth = buildTabWidth_->valueMm();
@@ -2788,6 +2840,14 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   turbulators_->setChecked(d.turbulators); turbulatorCount_->setValue(d.turbulatorCount); SET_LENGTH(turbulatorHeight_, turbulatorHeight); SET_LENGTH(turbulatorWidth_, turbulatorWidth);
   topRearSpar_->setChecked(d.topRearSpar); SET_LENGTH(topRearHeight_, topRearSparHeight); SET_LENGTH(topRearWidth_, topRearSparWidth);
   bottomRearSpar_->setChecked(d.bottomRearSpar); SET_LENGTH(bottomRearHeight_, bottomRearSparHeight); SET_LENGTH(bottomRearWidth_, bottomRearSparWidth);
+  moldedLe_->setChecked(d.leadingEdgeType == 6);
+  notchedLe_->setChecked(d.leadingEdgeType == 7);
+  SET_LENGTH(moldedLeWidth_, moldedLeadingEdgeWidth);
+  SET_LENGTH(moldedLeThickness_, moldedLeadingEdgeThickness);
+  SET_LENGTH(notchedLeWidth_, notchedLeadingEdgeWidth);
+  SET_LENGTH(notchedLeHeight_, notchedLeadingEdgeHeight);
+  diamondLe_->setChecked(d.leadingEdgeType == 5);
+  SET_LENGTH(diamondLeWidth_, diamondLeadingEdgeWidth);
   blockLe_->setChecked(d.leadingEdgeType == 1 || d.leadingEdgeType == 2); tubeLe_->setChecked(d.leadingEdgeType == 3); rodLe_->setChecked(d.leadingEdgeType == 4);
   SET_LENGTH(leWidth_, leadingEdgeWidth); SET_LENGTH(leHeight_, leadingEdgeHeight); SET_LENGTH(leTubeOd_, leadingEdgeTubeOd); SET_LENGTH(leTubeId_, leadingEdgeTubeId); SET_LENGTH(leRodOd_, leadingEdgeRodOd);
   sheetTe_->setChecked(d.trailingEdgeType == 1 || d.trailingEdgeType == 2); SET_LENGTH(teWidth_, trailingEdgeWidth); SET_LENGTH(teHeight_, trailingEdgeHeight); slottedForRibs_->setChecked(d.slottedForRibs);
@@ -2819,6 +2879,11 @@ void WingPanelEditor::setData(const WingPanelData& d) {
         spoilerMinimumCircleDistance_, spoilerMinimumCircleDistance);
     airfoilData_.spoilerSupportRailHeight = d.spoilerSupportRailHeight;
   }
+  addTopFrontBuildTab_->setChecked(d.addTopFrontBuildTab);
+  addTopRearBuildTab_->setChecked(d.addTopRearBuildTab);
+  topFrontBuildTabLocation_->setValue(d.topFrontBuildTabLocationPercent);
+  topRearBuildTabLocation_->setValue(d.topRearBuildTabLocationPercent);
+  addTabsToSheetedRibs_->setChecked(d.addTabsToSheetedRibs);
   addFrontBuildTab_->setChecked(d.addFrontBuildTab);
   addRearBuildTab_->setChecked(d.addRearBuildTab);
   SET_LENGTH(buildTabWidth_, buildTabWidth);
@@ -2901,6 +2966,11 @@ void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
   updateRibSpacing();
 }
 
+void WingPanelEditor::setDiamondLeadingEdgeWidthMm(const double width) {
+  diamondLeWidth_->setValueMm(width);
+  emitChanged();
+}
+
 void WingPanelEditor::setLeadingEdgeHeightMm(const double height) {
   if (!leHeight_) return;
   leHeight_->setValueMm(height);
@@ -2931,12 +3001,27 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
-  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked()) &&
+  for (const auto& [enabled, input] : {
+           std::pair{moldedLe_->isChecked(), moldedLeWidth_},
+           std::pair{moldedLe_->isChecked(), moldedLeThickness_},
+           std::pair{notchedLe_->isChecked(), notchedLeWidth_},
+           std::pair{notchedLe_->isChecked(), notchedLeHeight_}}) {
+    if (enabled && (!std::isfinite(input->valueMm()) || input->valueMm() <= 0.0)) {
+      error = "Leading-edge dimensions must be greater than zero.";
+      return false;
+    }
+  }
+  if (diamondLe_->isChecked() && (!std::isfinite(diamondLeWidth_->valueMm()) ||
+      diamondLeWidth_->valueMm() <= 0.0)) {
+    error = "Diamond LE Width must be greater than zero.";
+    return false;
+  }
+  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() || addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked()) &&
       (!std::isfinite(buildTabWidth_->valueMm()) || buildTabWidth_->valueMm() <= 0.0)) {
     error = "Tab Width must be greater than zero.";
     return false;
   }
-  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked()) &&
+  if ((addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() || addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked()) &&
       (!std::isfinite(buildTabHeightAboveTable_->valueMm()) ||
        buildTabHeightAboveTable_->valueMm() < 0.0)) {
     error = "Height Above Work Table must be nonnegative.";
@@ -3062,11 +3147,15 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  topFrontBuildTabDetails_->setVisible(addTopFrontBuildTab_->isChecked());
+  topRearBuildTabDetails_->setVisible(addTopRearBuildTab_->isChecked());
+  addTabsToSheetedRibs_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() ||
+      addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked());
   frontBuildTabDetails_->setVisible(addFrontBuildTab_->isChecked());
   rearBuildTabDetails_->setVisible(addRearBuildTab_->isChecked());
-  buildTabWidthDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
-  buildTabHeightDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
-  tabSeparationDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked());
+  buildTabWidthDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() || addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked());
+  buildTabHeightDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() || addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked());
+  tabSeparationDetails_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() || addTopFrontBuildTab_->isChecked() || addTopRearBuildTab_->isChecked());
   topRibCapDetails_->setVisible(topRibCaps_->isChecked());
   bottomRibCapDetails_->setVisible(bottomRibCaps_->isChecked());
   ribLighteningHoleDetails_->setVisible(ribLighteningHoles_->isChecked());
@@ -3083,6 +3172,9 @@ void WingPanelEditor::updateConditionalControls() {
   leBottomSheetStopChordPercent_->setEnabled(!leBottomSheetUpToSpar_->isChecked());
   teTopSheetDetails_->setVisible(teTopSheet_->isChecked()); teBottomSheetDetails_->setVisible(teBottomSheet_->isChecked());
   turbulatorDetails_->setVisible(turbulators_->isChecked()); topRearDetails_->setVisible(topRearSpar_->isChecked()); bottomRearDetails_->setVisible(bottomRearSpar_->isChecked());
+  moldedLeDetails_->setVisible(moldedLe_->isChecked());
+  notchedLeDetails_->setVisible(notchedLe_->isChecked());
+  diamondLeDetails_->setVisible(diamondLe_->isChecked());
   stockLeDetails_->setVisible(blockLe_->isChecked()); tubeLeDetails_->setVisible(tubeLe_->isChecked()); rodLeDetails_->setVisible(rodLe_->isChecked());
   stockTeDetails_->setVisible(sheetTe_->isChecked()); slottedDetails_->setVisible(sheetTe_->isChecked());
   topTeSheetingDetails_->setVisible(topTeSheeting_->isChecked());

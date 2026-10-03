@@ -445,7 +445,7 @@ int main(int argc, char* argv[]) {
   assert(dihedralSpin != nullptr && twistSpin != nullptr);
   auto* buildTabs = spacingEditor.findChild<QCheckBox*>("addFrontBuildTab");
   assert(buildTabs && !buildTabs->isChecked() && buildTabs->isEnabled());
-  assert(buildTabs->text() == "Add Front Build Tab");
+  assert(buildTabs->text() == "Add Bottom Front Build Tabs");
   buildTabs->setChecked(true);
   const auto flatTabData = panelDataFromJson(panelDataToJson(spacingEditor.data()));
   assert(flatTabData.twist == 0.0 && flatTabData.addFrontBuildTab);
@@ -482,6 +482,8 @@ int main(int argc, char* argv[]) {
     assert(migrated.rearBuildTabLocationPercent == 75.0);
     assert(migrated.buildTabHeightAboveTable == 0.0);
     assert(migrated.buildTabWidth == 4.7625);
+    assert(!migrated.addTopFrontBuildTab && !migrated.addTopRearBuildTab);
+    assert(!migrated.addTabsToSheetedRibs);
     const auto restored = panelDataFromJson(panelDataToJson(migrated));
     assert(restored.addFrontBuildTab == legacyEnabled && restored.addRearBuildTab == legacyEnabled);
   }
@@ -489,6 +491,63 @@ int main(int argc, char* argv[]) {
   assert(!mixed.addFrontBuildTab && mixed.addRearBuildTab);
   const auto empty = panelDataFromJson(QJsonObject{});
   assert(!empty.addFrontBuildTab && !empty.addRearBuildTab);
+  assert(empty.moldedLeadingEdgeWidth == 15.875 && empty.moldedLeadingEdgeThickness == 1.5875);
+  assert(empty.notchedLeadingEdgeWidth == 9.525 && empty.notchedLeadingEdgeHeight == 4.7625);
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    WingPanelEditor leEditor{installedDefaultPanelData(unit), unit, true, true, true};
+    auto* molded = leEditor.findChild<QRadioButton*>("moldedLe");
+    auto* notched = leEditor.findChild<QRadioButton*>("notchedLe");
+    auto* moldedWidth = leEditor.findChild<LengthInput*>("moldedLeadingEdgeWidth");
+    auto* moldedThickness = leEditor.findChild<LengthInput*>("moldedLeadingEdgeThickness");
+    auto* notchedWidth = leEditor.findChild<LengthInput*>("notchedLeadingEdgeWidth");
+    auto* notchedHeight = leEditor.findChild<LengthInput*>("notchedLeadingEdgeHeight");
+    assert(molded && notched && moldedWidth && moldedThickness && notchedWidth && notchedHeight);
+    assert(moldedWidth->valueMm() == 15.875 && moldedThickness->valueMm() == 1.5875);
+    assert(notchedWidth->valueMm() == 9.525 && notchedHeight->valueMm() == 4.7625);
+    molded->setChecked(true);
+    assert(!notched->isChecked() && leEditor.data().leadingEdgeType == 6);
+    assert(!leEditor.findChild<QWidget*>("moldedLeDetails")->isHidden());
+    assert(leEditor.findChild<QWidget*>("notchedLeDetails")->isHidden());
+    for (auto* input : {moldedWidth, moldedThickness, notchedWidth, notchedHeight}) {
+      auto* spin = input->findChild<QDoubleSpinBox*>();
+      spin->findChild<QLineEdit*>()->setText(unit == DisplayUnit::Millimeters ? "1/4 in" : "6.35mm");
+      spin->interpretText();
+      assert(std::abs(input->valueMm() - 6.35) < 1.0e-8);
+    }
+    auto saved = panelDataFromJson(panelDataToJson(leEditor.data()));
+    assert(saved.leadingEdgeType == 6 && std::abs(saved.moldedLeadingEdgeWidth - 6.35) < 1.0e-8);
+    WingPanelEditor restoredMolded{saved, unit};
+    assert(restoredMolded.findChild<QRadioButton*>("moldedLe")->isChecked());
+    notched->setChecked(true);
+    assert(!molded->isChecked() && leEditor.findChild<QWidget*>("moldedLeDetails")->isHidden());
+    assert(!leEditor.findChild<QWidget*>("notchedLeDetails")->isHidden());
+    saved = panelDataFromJson(panelDataToJson(leEditor.data()));
+    assert(saved.leadingEdgeType == 7 && std::abs(saved.notchedLeadingEdgeHeight - 6.35) < 1.0e-8);
+    WingPanelEditor restoredNotched{saved, unit};
+    assert(restoredNotched.findChild<QRadioButton*>("notchedLe")->isChecked());
+  }
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    WingPanelEditor diamondEditor{installedDefaultPanelData(unit), unit, true, true, true};
+    auto* diamond = diamondEditor.findChild<QRadioButton*>("diamondLe");
+    auto* width = diamondEditor.findChild<LengthInput*>("diamondLeadingEdgeWidth");
+    auto* details = diamondEditor.findChild<QWidget*>("diamondLeDetails");
+    assert(diamond && width && details && details->isHidden());
+    diamond->setChecked(true);
+    assert(!details->isHidden() && diamondEditor.data().leadingEdgeType == 5);
+    auto* spin = width->findChild<QDoubleSpinBox*>();
+    spin->findChild<QLineEdit*>()->setText(unit == DisplayUnit::Millimeters ? "1/2 in" : "12.7mm");
+    spin->interpretText();
+    const auto saved = panelDataFromJson(panelDataToJson(diamondEditor.data()));
+    assert(saved.leadingEdgeType == 5 && std::abs(saved.diamondLeadingEdgeWidth - 12.7) < 1.0e-8);
+    WingPanelEditor restored{saved, unit};
+    assert(restored.findChild<QRadioButton*>("diamondLe")->isChecked());
+    assert(restored.data().unitOverrides.value("diamondLeadingEdgeWidth") ==
+        saved.unitOverrides.value("diamondLeadingEdgeWidth"));
+    restored.setDiamondLeadingEdgeWidthMm(9.87);
+    assert(std::abs(restored.data().diamondLeadingEdgeWidth - 9.87) < 1.0e-8);
+    assert(restored.data().unitOverrides.value("diamondLeadingEdgeWidth") ==
+        saved.unitOverrides.value("diamondLeadingEdgeWidth"));
+  }
   for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
     WingPanelEditor tabEditor{installedDefaultPanelData(unit), unit, true, true, true};
     auto* front = tabEditor.findChild<QCheckBox*>("addFrontBuildTab");
@@ -540,6 +599,29 @@ int main(int argc, char* argv[]) {
     assert(heightDetails->isHidden());
     assert(separationDetails->isHidden());
     assert(widthDetails->isHidden());
+    auto* topFront = tabEditor.findChild<QCheckBox*>("addTopFrontBuildTab");
+    auto* topRear = tabEditor.findChild<QCheckBox*>("addTopRearBuildTab");
+    auto* sheeted = tabEditor.findChild<QCheckBox*>("addTabsToSheetedRibs");
+    assert(topFront && topRear && sheeted && sheeted->isHidden());
+    assert(sheeted->text() == "Add Tabs to Ribs With Sheeting (Otherwise no tabs where sheeting)");
+    assert(topFront->text() == "Add Top Front Build Tabs");
+    assert(topRear->text() == "Add Top Rear Build Tabs");
+    assert(rear->text() == "Add Bottom Rear Build Tabs");
+    topFront->setChecked(true);
+    assert(!heightDetails->isHidden() && !widthDetails->isHidden() && !sheeted->isHidden());
+    assert(!tabEditor.findChild<QWidget*>("topFrontBuildTabDetails")->isHidden());
+    assert(tabEditor.findChild<QWidget*>("topRearBuildTabDetails")->isHidden());
+    topRear->setChecked(true);
+    sheeted->setChecked(true);
+    tabEditor.findChild<QDoubleSpinBox*>("topFrontBuildTabLocationPercent")->setValue(19.5);
+    tabEditor.findChild<QDoubleSpinBox*>("topRearBuildTabLocationPercent")->setValue(71.5);
+    const auto topSaved = panelDataFromJson(panelDataToJson(tabEditor.data()));
+    WingPanelEditor topRestored{topSaved, unit, true, true, true};
+    assert(topRestored.data().addTopFrontBuildTab && topRestored.data().addTopRearBuildTab);
+    assert(topRestored.data().addTabsToSheetedRibs);
+    assert(!topRestored.data().addFrontBuildTab && !topRestored.data().addRearBuildTab);
+    assert(topRestored.data().topFrontBuildTabLocationPercent == 19.5);
+    assert(topRestored.data().topRearBuildTabLocationPercent == 71.5);
   }
   assert(dihedralSpin->width() == twistSpin->width());
   assert(dihedralSpin->width() == panelSpanSpin->width());

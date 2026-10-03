@@ -89,6 +89,7 @@ int runTest(int argc, char* argv[]) {
   if (!focusedGeometryOnly || buildTabClearanceOnly) {
     stage("finished build-tab clearance");
     using namespace designrc::domain;
+    for (const int sides : {1, 2, 3}) {
     for (const double twist : {-6.0, 0.0, 6.0}) {
       WingParameters p;
       p.ribCount = 3; p.rootChord = 220; p.tipChord = 150;
@@ -104,9 +105,13 @@ int runTest(int argc, char* argv[]) {
         tabRibs.front().ribPlaneAngleDegrees = 8.0;
       }
       StructureParameters s;
-      s.ribThickness = p.ribThickness; s.addFrontBuildTab = s.addRearBuildTab = true;
+      s.ribThickness = p.ribThickness;
+      s.addFrontBuildTab = s.addRearBuildTab = (sides & 1) != 0;
+      s.addTopFrontBuildTab = s.addTopRearBuildTab = (sides & 2) != 0;
       s.frontBuildTabLocationPercent = 20.0;
       s.rearBuildTabLocationPercent = 70.0;
+      s.topFrontBuildTabLocationPercent = 20.0;
+      s.topRearBuildTabLocationPercent = 70.0;
       s.buildTabHeightAboveTable = 12.7;
       s.buildTabWidth = 8.0;
       s.spars = {{25, 1, 0, 2, 3.0, 8.0}};
@@ -121,7 +126,8 @@ int runTest(int argc, char* argv[]) {
           const auto a = segment.points[0], b = segment.points[1];
           if (std::abs(std::abs(b.x - a.x) - s.buildTabWidth) > 1.0e-7) continue;
           segment.points.insert(segment.points.begin() + 1,
-              Point2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5 - 0.4});
+              Point2{(a.x + b.x) * 0.5, (a.y + b.y) * 0.5 +
+                  ((a.y + b.y) > 0.0 ? 0.4 : -0.4)});
           segment.spline = twist > 0.0;
           injected = true;
           break;
@@ -136,7 +142,10 @@ int runTest(int argc, char* argv[]) {
       std::size_t checked = 0;
       for (const auto& part : materials.parts) {
         if (!part.name.starts_with("Rib ")) continue;
-        const auto& plane = *wing.ribs.at(checked++).buildPlane;
+        const auto& rib = wing.ribs.at(checked++);
+        for (const auto& support : {rib.buildPlane, rib.topBuildPlane}) {
+        if (!support) continue;
+        const auto& plane = *support;
         gp_Trsf align;
         align.SetRotation(gp_Ax1{gp_Pnt{0, 0, 0}, gp_Dir{1, 0, 0}},
             std::atan2(plane.spanNormal, plane.verticalNormal));
@@ -146,8 +155,10 @@ int runTest(int argc, char* argv[]) {
         bounds.Get(x0, y0, z0, x1, y1, z1);
         if (std::abs(z0 - plane.offset) > 1.0e-6)
           throw std::runtime_error("Finished rib does not rest on the build plane");
+        }
       }
       if (checked != 3) throw std::runtime_error("Missing tabbed ribs");
+    }
     }
     if (buildTabClearanceOnly) return 0;
   }

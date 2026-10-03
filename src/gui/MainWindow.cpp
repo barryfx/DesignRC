@@ -87,6 +87,21 @@ public:
   ~BusyCursor() { QApplication::restoreOverrideCursor(); }
 };
 
+void showConstructionWarnings(QWidget* parent,
+    const std::vector<designrc::domain::StructuredWing>& panels) {
+  QStringList details;
+  for (std::size_t i = 0; i < panels.size(); ++i)
+    for (const auto& warning : panels[i].warnings)
+      details << QString{"Panel %1: %2"}.arg(i + 1).arg(QString::fromStdString(warning));
+  if (details.empty()) return;
+  auto* message = new QMessageBox{QMessageBox::Warning, "Construction warnings",
+      "Build tabs overlap rib caps. Generation completed; the temporary tabs pass "
+      "through the unchanged caps. Remove tabs before finishing the wing.", QMessageBox::Ok, parent};
+  message->setDetailedText(details.join('\n'));
+  message->setAttribute(Qt::WA_DeleteOnClose);
+  message->open();
+}
+
 std::size_t maximumGeometryThreadCount() {
   const unsigned processors = std::thread::hardware_concurrency();
   return processors > 1 ? static_cast<std::size_t>(processors - 1) : 1;
@@ -242,6 +257,11 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.turbulatorHeight = d.turbulatorHeight; s.turbulatorWidth = d.turbulatorWidth;
   s.topRearSpar = useLegacySpars && d.topRearSpar; s.topRearSparHeight = d.topRearSparHeight; s.topRearSparWidth = d.topRearSparWidth;
   s.bottomRearSpar = useLegacySpars && d.bottomRearSpar; s.bottomRearSparHeight = d.bottomRearSparHeight; s.bottomRearSparWidth = d.bottomRearSparWidth;
+  s.moldedLeadingEdgeWidth = d.moldedLeadingEdgeWidth;
+  s.moldedLeadingEdgeThickness = d.moldedLeadingEdgeThickness;
+  s.notchedLeadingEdgeWidth = d.notchedLeadingEdgeWidth;
+  s.notchedLeadingEdgeHeight = d.notchedLeadingEdgeHeight;
+  s.diamondLeadingEdgeWidth = d.diamondLeadingEdgeWidth;
   s.leadingEdgeType = d.leadingEdgeType; s.leadingEdgeWidth = d.leadingEdgeWidth; s.leadingEdgeHeight = d.leadingEdgeHeight;
   s.leadingEdgeTubeOd = d.leadingEdgeTubeOd; s.leadingEdgeTubeId = d.leadingEdgeTubeId; s.leadingEdgeRodOd = d.leadingEdgeRodOd;
   s.trailingEdgeType = d.trailingEdgeType; s.trailingEdgeWidth = d.trailingEdgeWidth; s.trailingEdgeHeight = d.trailingEdgeHeight;
@@ -304,6 +324,11 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
   s.wiringHoleWidth = d.wiringHoleWidth;
   s.wiringHoleHeight = d.wiringHoleHeight;
+  s.addTopFrontBuildTab = d.addTopFrontBuildTab;
+  s.addTopRearBuildTab = d.addTopRearBuildTab;
+  s.topFrontBuildTabLocationPercent = d.topFrontBuildTabLocationPercent;
+  s.topRearBuildTabLocationPercent = d.topRearBuildTabLocationPercent;
+  s.addTabsToSheetedRibs = d.addTabsToSheetedRibs;
   s.addFrontBuildTab = d.addFrontBuildTab;
   s.addRearBuildTab = d.addRearBuildTab;
   s.buildTabWidth = d.buildTabWidth;
@@ -2506,6 +2531,23 @@ void MainWindow::markPreviewPending() {
   statusBar()->showMessage("Design changed - press Generate Wing to recompute");
 }
 
+void MainWindow::applyDiamondWidthCorrections(
+    const std::vector<domain::StructuredWing>& panels, const std::size_t firstPanel) {
+  for (std::size_t i = 0; i < panels.size() && firstPanel + i < panelEditors_.size(); ++i) {
+    const auto index = firstPanel + i;
+    auto* editor = panelEditors_[index];
+    const double width = panels[i].diamondLeadingEdgeWidth;
+    if (width <= 0.0 || std::abs(editor->data().diamondLeadingEdgeWidth - width) < 1.0e-8) continue;
+    // The completed preview already uses this size. Do not invalidate it when
+    // synchronizing the field, but do persist the correction with the project.
+    const QSignalBlocker blocker{editor};
+    editor->setDiamondLeadingEdgeWidthMm(width);
+    if (index < currentPlanParameters_.size()) currentPlanParameters_[index].diamondLeadingEdgeWidth = width;
+    projectModified_ = true;
+    setWindowModified(true);
+  }
+}
+
 void MainWindow::invalidatePlan() {
   if (generatePlanButton_) generatePlanButton_->setEnabled(false);
   if (exportPlanButton_) exportPlanButton_->setEnabled(false);
@@ -2721,6 +2763,7 @@ void MainWindow::regeneratePreview() {
       window->currentStructuredPanels_ = result->structuredPanels;
       window->currentRibThicknesses_ = result->thicknesses;
       window->currentPlanParameters_ = panels;
+      window->applyDiamondWidthCorrections(result->structuredPanels);
       window->currentDihedralAngles_ = result->dihedrals;
       window->currentMaterialShapes_ = std::move(result->materialShapes);
       const double lengthFactor = window->globalUnit_ == DisplayUnit::Inches ? 1.0 / 25.4 : 1.0;
@@ -2778,6 +2821,7 @@ void MainWindow::regeneratePreview() {
       window->exportStepButton_->setEnabled(true);
       finishUi();
       window->statusBar()->showMessage(timing, 15000);
+      showConstructionWarnings(window, result->structuredPanels);
     }, Qt::QueuedConnection);
   });
   connect(updateThread_, &QThread::finished, updateThread_, &QObject::deleteLater);
@@ -2930,6 +2974,7 @@ void MainWindow::regeneratePreviewSynchronous() {
     currentStructuredPanels_ = structuredPanels;
     currentRibThicknesses_ = thicknesses;
     currentPlanParameters_ = panels;
+    applyDiamondWidthCorrections(structuredPanels);
     currentDihedralAngles_ = dihedrals;
     const double fullSpan = structuredPanels.back().ribs.back().rib.spanPosition * 2.0;
     const double fullArea = halfArea * 2.0;
@@ -2951,6 +2996,7 @@ void MainWindow::regeneratePreviewSynchronous() {
         currentMaterialShapes_.carbonFiber, currentMaterialShapes_.aluminum,
         currentMaterialShapes_.steel, currentMaterialShapes_.fiberglass);
     statusBar()->showMessage("Complete mirrored wing preview updated", 3000);
+    showConstructionWarnings(this, structuredPanels);
   } catch (const Standard_Failure& exception) {
     QMessageBox::critical(this, "Preview update failed",
         QString{"OpenCascade: %1"}.arg(occtExceptionMessage(exception)));
@@ -3025,6 +3071,11 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.turbulatorHeight = d.turbulatorHeight; structure.turbulatorWidth = d.turbulatorWidth;
     structure.topRearSpar = useLegacySpars && d.topRearSpar; structure.topRearSparHeight = d.topRearSparHeight; structure.topRearSparWidth = d.topRearSparWidth;
     structure.bottomRearSpar = useLegacySpars && d.bottomRearSpar; structure.bottomRearSparHeight = d.bottomRearSparHeight; structure.bottomRearSparWidth = d.bottomRearSparWidth;
+    structure.moldedLeadingEdgeWidth = d.moldedLeadingEdgeWidth;
+    structure.moldedLeadingEdgeThickness = d.moldedLeadingEdgeThickness;
+    structure.notchedLeadingEdgeWidth = d.notchedLeadingEdgeWidth;
+    structure.notchedLeadingEdgeHeight = d.notchedLeadingEdgeHeight;
+    structure.diamondLeadingEdgeWidth = d.diamondLeadingEdgeWidth;
     structure.leadingEdgeType = d.leadingEdgeType; structure.leadingEdgeWidth = d.leadingEdgeWidth; structure.leadingEdgeHeight = d.leadingEdgeHeight;
     structure.leadingEdgeTubeOd = d.leadingEdgeTubeOd; structure.leadingEdgeTubeId = d.leadingEdgeTubeId; structure.leadingEdgeRodOd = d.leadingEdgeRodOd;
     structure.trailingEdgeType = d.trailingEdgeType; structure.trailingEdgeWidth = d.trailingEdgeWidth; structure.trailingEdgeHeight = d.trailingEdgeHeight;
@@ -3095,6 +3146,11 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.wiringHoleChordLocationPercent = d.wiringHoleChordLocationPercent;
     structure.wiringHoleWidth = d.wiringHoleWidth;
     structure.wiringHoleHeight = d.wiringHoleHeight;
+    structure.addTopFrontBuildTab = d.addTopFrontBuildTab;
+    structure.addTopRearBuildTab = d.addTopRearBuildTab;
+    structure.topFrontBuildTabLocationPercent = d.topFrontBuildTabLocationPercent;
+    structure.topRearBuildTabLocationPercent = d.topRearBuildTabLocationPercent;
+    structure.addTabsToSheetedRibs = d.addTabsToSheetedRibs;
     structure.addFrontBuildTab = d.addFrontBuildTab;
     structure.addRearBuildTab = d.addRearBuildTab;
     structure.buildTabWidth = d.buildTabWidth;
@@ -3119,6 +3175,8 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.fiftyPercentJoinerOd = d.fiftyPercentJoinerOd;
     structure.fiftyPercentJoinerId = d.fiftyPercentJoinerId;
     currentStructuredWing_ = domain::applyWingStructure(currentRibs_, structure);
+    applyDiamondWidthCorrections({currentStructuredWing_},
+        static_cast<std::size_t>(std::max(0, panelTabs_->currentIndex())));
     for (std::size_t ribIndex = 0;
          ribIndex < currentStructuredWing_.ribs.size(); ++ribIndex)
       currentStructuredWing_.ribs[ribIndex].name =
@@ -3142,6 +3200,7 @@ void MainWindow::regeneratePreviewLegacy() {
         currentMaterialShapes_.carbonFiber, currentMaterialShapes_.aluminum,
         currentMaterialShapes_.steel, currentMaterialShapes_.fiberglass);
     statusBar()->showMessage(QString{"Panel %1 preview updated"}.arg(panelTabs_->currentIndex() + 1), 3000);
+    showConstructionWarnings(this, {currentStructuredWing_});
   } catch (const std::exception& exception) {
     QMessageBox::critical(this, "Preview update failed", exception.what());
   }
