@@ -278,6 +278,16 @@ if(DESIGNRC_BUILD_TESTS)
     designrc_domain TKernel TKMath TKG2d TKG3d TKGeomBase TKGeomAlgo
     TKBRep TKTopAlgo TKPrim TKBO TKOffset TKMesh TKShHealing TKDESTEP TKXCAF)
   add_test(NAME designrc_step_export_tests COMMAND designrc_step_export_tests)
+  # The regression programs use assert for checks and test setup. Keep those
+  # expressions active in optimized builds as well as Debug builds.
+  foreach(_test_target designrc_domain_tests designrc_gui_tests
+      designrc_geometry_tests designrc_step_export_tests)
+    if(MSVC)
+      target_compile_options(${_test_target} PRIVATE /UNDEBUG)
+    else()
+      target_compile_options(${_test_target} PRIVATE -UNDEBUG)
+    endif()
+  endforeach()
   add_test(NAME designrc_joiner_backend_tests
     COMMAND designrc --joiner-backend-regression)
   add_test(NAME designrc_cancellation_backend_tests
