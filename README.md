@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.4.0**.
+source version is **1.5.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -29,7 +29,7 @@ source version is **1.4.0**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## Unreleased changes
+## What's new in 1.5.0 (October 3, 2026)
 
 - **Molded LE Sheet** wraps the airfoil nose with recessed curved sheeting. Width is the
   total wrap distance, split equally above and below the nose (default 5/8 inch), with
@@ -136,16 +136,16 @@ press **F1**.
 
 ## Download
 
-The 1.4.0 installers are available on the
-[DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases/tag/1.4.0):
+Version 1.5.0 builds produce the installers listed below in `dist/`. Published releases are on
+the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases):
 
-- `DesignRC-1.4.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.5.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.4.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.5.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.4.0_amd64.deb
+  sudo apt install ./designrc_1.5.0_amd64.deb
   designrc
   ```
 
@@ -158,15 +158,15 @@ The 1.4.0 installers are available on the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.4.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.5.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.4.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.5.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.4.0-SHA256SUMS.txt`. Use the checksum file
+The release also includes source archives and `DesignRC-1.5.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -307,7 +307,7 @@ Then build the Release application and installer with:
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
 installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.4 is packaged as 1.4.0. The resulting installer does not require administrator
+version such as 1.5 is packaged as 1.5.0. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
@@ -409,15 +409,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.4.0_amd64.deb
-dist/DesignRC-1.4.0-source.tar.gz
-dist/DesignRC-1.4.0-Linux-x64.sha256
+dist/designrc_1.5.0_amd64.deb
+dist/DesignRC-1.5.0-source.tar.gz
+dist/DesignRC-1.5.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.4.0_amd64.deb
+sudo apt install ./dist/designrc_1.5.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -466,15 +466,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.4.0-1.x86_64.rpm
-dist/DesignRC-1.4.0-source.tar.gz
-dist/DesignRC-1.4.0-Linux-RPM-x64.sha256
+dist/designrc-1.5.0-1.x86_64.rpm
+dist/DesignRC-1.5.0-source.tar.gz
+dist/DesignRC-1.5.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.4.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.5.0-1.x86_64.rpm
 designrc
 ```
 
