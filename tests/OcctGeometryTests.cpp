@@ -13,6 +13,9 @@
 #include <Standard_Failure.hxx>
 #include <BRepBndLib.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRep_Builder.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <Bnd_Box.hxx>
 #include <gp_Ax1.hxx>
@@ -26,12 +29,99 @@
 #include <filesystem>
 #include <iostream>
 #include <numbers>
+#include <QFile>
+#include <QTemporaryDir>
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
   const auto stage = [](const char* name) {
     std::cerr << "Geometry regression stage: " << name << '\n';
   };
+  const bool sweepAssemblyOnly = argc > 1 && std::string{argv[1]} == "--sweep-assembly";
+  const bool sweepTwistOnly = argc > 1 && std::string{argv[1]} == "--sweep-twist";
+  const bool sweepFixtureOnly = sweepAssemblyOnly || sweepTwistOnly || (argc > 1 && std::string{argv[1]} == "--sweep-fixture");
+  if (sweepFixtureOnly) {
+    using namespace designrc::domain;
+    QTemporaryDir directory;
+    const auto path = directory.filePath("Curved_LE_TE.svg");
+    QFile file{path};
+    assert(file.open(QIODevice::WriteOnly));
+    file.write("<svg width='500mm' height='200mm' viewBox='0 0 500 200'>"
+               "<path d='m 0.36802972,0 c 0,0 202.02663028,0 212.94699028,1.1776952 "
+               "10.92035,1.177695 270.27888,4.121933 287.20541,13.5434948'/>"
+               "<path d='M 0.73605947,154.57249 498.68028,127.70632 v 0'/></svg>");
+    file.close();
+    WingParameters p;
+    p.halfSpan = 500;
+    p.ribCount = 11;
+    p.dihedralDegrees = 4;
+    p.planform = importPlanformCurves(std::filesystem::path{path.toStdWString()}, p.halfSpan);
+    p.rootChord = p.planform.chord(0);
+    p.tipChord = p.planform.chord(1);
+    StructureParameters settings;
+    settings.leadingEdgeType = 2;
+    settings.leadingEdgeWidth = 4.7625;
+    settings.leadingEdgeHeight = 15.875;
+    settings.trailingEdgeType = 2;
+    settings.trailingEdgeWidth = 25.4;
+    settings.trailingEdgeHeight = 9.525;
+    for (const double twist : {0.0, 6.0, -6.0}) {
+      if (sweepTwistOnly && twist == 0) continue;
+      p.tipTwistDegrees = twist;
+      auto ribs = generateRibs(p, AirfoilProfile::nacaSymmetric(.15), AirfoilProfile::nacaSymmetric(.10));
+      if (sweepAssemblyOnly) {
+        const double angle = p.dihedralDegrees * std::numbers::pi / 180;
+        for (std::size_t i = 0; i < ribs.size(); ++i) {
+          const double span = p.halfSpan * i / (ribs.size() - 1);
+          ribs[i].spanPosition = std::cos(angle) * span;
+          ribs[i].dihedralHeight = std::sin(angle) * span;
+          ribs[i].ribPlaneAngleDegrees = i == 0 ? 0 : p.dihedralDegrees;
+          ribs[i].ribThicknessStartFactor = i == 0 ? 0 : i + 1 == ribs.size() ? -1 : -.5;
+        }
+      }
+      auto wing = applyWingStructure(ribs, settings);
+      designrc::geometry::PanelBuildTimings timing;
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, &timing, &materials);
+      assert(!shape.IsNull());
+      for (const auto& part : materials.parts) assert((BRepCheck_Analyzer{part.shape, false}.IsValid()));
+      assert(timing.guideSweeps == 2 && timing.reducedLoftFallbacks == 0);
+      assert(timing.maximumSweepProfiles < (sweepAssemblyOnly ? 64 : 32));
+      for (const auto& stock : wing.profiledMembers) {
+        const auto part = std::find_if(materials.parts.begin(), materials.parts.end(),
+                                      [&](const auto& candidate) { return candidate.name == stock.name; });
+        assert(part != materials.parts.end());
+        BRep_Builder builder;
+        TopoDS_Compound faces;
+        builder.MakeCompound(faces);
+        for (TopExp_Explorer face{part->shape, TopAbs_FACE}; face.More(); face.Next())
+          builder.Add(faces, face.Current());
+        for (const std::size_t i : {std::size_t{1}, std::size_t{5}, std::size_t{9}}) {
+          const auto& rib = wing.ribs[i].rib;
+          const auto translation = ribTwistTranslation(rib);
+          const double angle = rib.twistDegrees * std::numbers::pi / 180;
+          const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180;
+          for (std::size_t j = 0; j < stock.profiles[i].size(); j += 12) {
+            const auto point = stock.profiles[i][j];
+            const double x = std::cos(angle) * point.x - std::sin(angle) * point.y + translation.x;
+            const double z = std::sin(angle) * point.x + std::cos(angle) * point.y + translation.y;
+            const gp_Pnt expected{rib.leadingEdgeOffset + x, rib.spanPosition - std::sin(plane) * z,
+                                  rib.dihedralHeight + std::cos(plane) * z};
+            BRepExtrema_DistShapeShape distance{BRepBuilderAPI_MakeVertex{expected}.Vertex(), faces};
+            if (!distance.IsDone() || distance.Value() > 0.05)
+              throw std::runtime_error("Swept " + stock.name + " misses rib " + std::to_string(i) +
+                                       " point " + std::to_string(j) + " at twist " + std::to_string(twist) +
+                                       " by " + std::to_string(distance.Value()) + " mm");
+          }
+        }
+      }
+      std::cerr << "Dense curve fixture: " << p.planform.leading.size() << " imported points, "
+                << twist << " degree twist, " << timing.guideSweeps << " sweeps, "
+                << timing.maximumSweepProfiles << " maximum profiles, "
+                << timing.profiledStockMs << " ms building LE/TE\n";
+    }
+    return 0;
+  }
   const bool teSheetingSolidOnly = argc > 1 &&
       std::string{argv[1]} == "--te-sheeting-solid";
   const bool multiSparSheetingSolidOnly = argc > 1 &&
@@ -44,9 +134,165 @@ int runTest(int argc, char* argv[]) {
       std::string{argv[1]} == "--build-tab-clearance";
   const bool cancelLighteningOnly = argc > 1 &&
       std::string{argv[1]} == "--cancel-lightening";
+  const bool planformOnly = argc > 1 && std::string{argv[1]} == "--planform";
   const bool focusedGeometryOnly =
-      teSheetingSolidOnly || multiSparSheetingSolidOnly ||
+      planformOnly || teSheetingSolidOnly || multiSparSheetingSolidOnly ||
       woodJoinerCollisionOnly || sparEndFacesOnly || buildTabClearanceOnly || cancelLighteningOnly;
+  if (!focusedGeometryOnly || planformOnly) {
+    stage("imported planform LE stocks and auxiliary surface stations");
+    using namespace designrc::domain;
+    WingParameters p;
+    p.halfSpan = 140;
+    p.ribCount = 3;
+    p.dihedralDegrees = 0;
+    p.rootChord = p.tipChord = 200;
+    p.planform = {{{0, 0}, {-8, .3}, {0, 1}}, {{200, 0}, {220, .3}, {200, 1}}, 140, 140};
+    const auto foil = AirfoilProfile::nacaSymmetric(.12);
+    const auto ribs = generateRibs(p, foil, foil);
+    for (int type : {2, 3, 4, 5, 6, 7}) {
+      std::cerr << "  curved LE type " << type << '\n';
+      StructureParameters settings;
+      settings.leadingEdgeType = type;
+      settings.leadingEdgeWidth = 6;
+      settings.leadingEdgeHeight = 20;
+      settings.leadingEdgeTubeOd = 3;
+      settings.leadingEdgeTubeId = 2;
+      settings.leadingEdgeRodOd = 3;
+      settings.notchedLeadingEdgeWidth = 8;
+      settings.notchedLeadingEdgeHeight = 4;
+      auto wing = applyWingStructure(ribs, settings);
+      assert(wing.ribs.size() == 3 && wing.surfaceWing);
+      designrc::geometry::MaterialShapeSet materials;
+      designrc::geometry::PanelBuildTimings timing;
+      const auto shape =
+          designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, &timing, &materials);
+      assert(!shape.IsNull());
+      assert(timing.guideSweeps > 0 && timing.reducedLoftFallbacks == 0);
+      bool found = false;
+      for (const auto& part : materials.parts)
+        if (part.name.find("leading edge") != std::string::npos) {
+          assert((BRepCheck_Analyzer{part.shape, false}.IsValid()));
+          std::size_t faces = 0;
+          for (TopExp_Explorer face{part.shape, TopAbs_FACE}; face.More(); face.Next()) ++faces;
+          assert(faces <= 12); // No separate ruled faces at every sampled station.
+          Bnd_Box box;
+          BRepBndLib::Add(part.shape, box);
+          double xmin, ymin, zmin, xmax, ymax, zmax;
+          box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+          assert(xmin < -7.0);
+          found = true;
+        }
+      assert(found);
+    }
+    stage("smooth mixed straight/curved edges and endpoint lofts");
+    for (int mode : {0, 1, 2}) {
+      auto mixed = p;
+      mixed.planform.leading.clear();
+      mixed.planform.trailing.clear();
+      for (int i = 0; i <= 32; ++i) {
+        const double t = i / 32.0;
+        const double bend = 20 * t * (1 - t);
+        mixed.planform.leading.push_back({mode == 1 ? -bend : 0, t});
+        mixed.planform.trailing.push_back({200 + (mode == 0 ? bend : 0), t});
+      }
+      StructureParameters settings;
+      settings.leadingEdgeType = 2;
+      settings.leadingEdgeWidth = 6;
+      settings.leadingEdgeHeight = 20;
+      settings.trailingEdgeType = 2;
+      settings.trailingEdgeWidth = 20;
+      settings.trailingEdgeHeight = 6;
+      auto wing = applyWingStructure(generateRibs(mixed, foil, foil), settings);
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(wing, mixed.ribThickness, nullptr, &materials);
+      assert(!shape.IsNull());
+      std::size_t edges = 0;
+      for (const auto& part : materials.parts) {
+        if (part.name.find("edge") == std::string::npos) continue;
+        ++edges;
+        assert((BRepCheck_Analyzer{part.shape, false}.IsValid()));
+        std::size_t faces = 0;
+        for (TopExp_Explorer face{part.shape, TopAbs_FACE}; face.More(); face.Next()) ++faces;
+        assert(faces <= 8);
+      }
+      assert(edges >= 2);
+    }
+    stage("curved TE, straight hinges, sheeting and spar");
+    p.ribCount = 5;
+    for (bool parallel : {false, true}) {
+      StructureParameters settings;
+      settings.ailerons = true;
+      settings.aileronStartRib = 2;
+      settings.aileronStopRib = 5;
+      settings.aileronWidth = 50;
+      settings.aileronHingeParallelY = parallel;
+      settings.topTeSheeting = true;
+      settings.topTeSheetingWidth = 10;
+      settings.topTeSheetingThickness = 1;
+      settings.leadingEdgeType = 4;
+      settings.leadingEdgeRodOd = 3;
+      SparParameters spar;
+      spar.type = 1;
+      spar.rodOd = 3;
+      settings.spars = {spar};
+      auto wing = applyWingStructure(generateRibs(p, foil, foil), settings);
+      designrc::geometry::MaterialShapeSet materials;
+      const auto shape =
+          designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, nullptr, &materials);
+      assert(!shape.IsNull());
+      for (const auto& part : materials.parts)
+        if (!BRepCheck_Analyzer{part.shape, false}.IsValid())
+          throw std::runtime_error("Invalid curved control component: " + part.name);
+    }
+    stage("curved panel with twist, dihedral, riblets, tabs and caps");
+    p.tipTwistDegrees = 2;
+    p.dihedralDegrees = 4;
+    StructureParameters detail;
+    detail.leadingEdgeType = 4;
+    detail.leadingEdgeRodOd = 3;
+    SparParameters spar;
+    spar.type = 1;
+    spar.rodOd = 3;
+    detail.spars = {spar};
+    detail.topRibCaps = true;
+    detail.topRibCapWidth = 5;
+    detail.topRibCapThickness = 1;
+    detail.addFrontBuildTab = true;
+    detail.addRearBuildTab = true;
+    detail.riblets = true;
+    detail.ribletStartRib = 1;
+    detail.ribletEndRib = 5;
+    detail.ribletsPerBay = 1;
+    auto detailed = applyWingStructure(generateRibs(p, foil, foil), detail);
+    addRiblets(detailed, detail);
+    assert(detailed.riblets.size() == 4 && !detailed.ribCaps.empty());
+    const auto detailShape =
+        designrc::geometry::buildStructuredWingPreview(detailed, p.ribThickness);
+    assert(!detailShape.IsNull());
+    stage("curved panel front sheeting and spoiler");
+    p.tipTwistDegrees = 0;
+    p.dihedralDegrees = 0;
+    StructureParameters sheet;
+    SparParameters top;
+    top.material = 0;
+    top.verticalLocation = 0;
+    top.woodWidth = 6;
+    top.woodHeight = 3;
+    sheet.spars = {top};
+    sheet.leTopSheet = true;
+    sheet.leTopSheetThickness = 1;
+    sheet.leTopSheetStopRib = 5;
+    sheet.spoilers = true;
+    sheet.spoilerStartRib = 2;
+    sheet.spoilerEndRib = 5;
+    sheet.spoilerImmediatelyBehindSpar = true;
+    sheet.spoilerWidth = 15;
+    sheet.spoilerThickness = 1;
+    auto sheeted = applyWingStructure(generateRibs(p, foil, foil), sheet);
+    const auto sheetShape = designrc::geometry::buildStructuredWingPreview(sheeted, p.ribThickness);
+    assert(!sheetShape.IsNull());
+    if (planformOnly) return 0;
+  }
   if (!focusedGeometryOnly || cancelLighteningOnly) {
     stage("cancel inside lightening-hole Boolean cuts");
     using namespace designrc::domain;

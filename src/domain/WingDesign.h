@@ -1,6 +1,8 @@
 #pragma once
 
 #include "domain/AirfoilProfile.h"
+#include "domain/PlanformCurves.h"
+#include <memory>
 
 #include <cstddef>
 #include <vector>
@@ -16,6 +18,9 @@ struct RibDefinition {
   double ribPlaneAngleDegrees{}; // span-plane normal angle above horizontal
   double ribThicknessStartFactor{-0.5}; // start face in material-thickness units
   AirfoilProfile profile;
+  std::shared_ptr<const PlanformCurves> planform;
+  double planformStation{};
+  bool virtualStation{false};
 };
 
 struct WingParameters {
@@ -28,6 +33,7 @@ struct WingParameters {
   double tipTwistDegrees{0.0};
   double ribThickness{3.0};
   std::size_t ribCount{9};
+  PlanformCurves planform;
 };
 
 // Translation accompanying twist: positive twist raises the trailing edge,
@@ -64,6 +70,12 @@ struct PanelTwistRange {
     const WingParameters& parameters,
     const AirfoilProfile& root,
     const AirfoilProfile& tip);
+
+[[nodiscard]] RibDefinition ribAtStation(const WingParameters& parameters,
+                                         const AirfoilProfile& root, const AirfoilProfile& tip,
+                                         double station);
+[[nodiscard]] RibDefinition interpolateRib(const RibDefinition& root, const RibDefinition& tip,
+                                           double fraction);
 
 [[nodiscard]] WingMetrics calculateWingMetrics(const WingParameters& parameters);
 

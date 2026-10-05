@@ -5,12 +5,14 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFontMetrics>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRadioButton>
@@ -183,11 +185,18 @@ public:
     fractionalInches_ = enabled;
     setDecimals(enabled ? 5 : 2);
     setSingleStep(enabled ? 1.0 / 32.0 : 1.0);
-    setSuffix(enabled ? " in" : " mm");
+    setSuffix(dashed_ ? "" : enabled ? " in" : " mm");
+  }
+
+  void setDashDisplay(const bool dashed) {
+    dashed_ = dashed;
+    setFractionalInches(fractionalInches_);
+    lineEdit()->setText(textFromValue(value()) + suffix());
   }
 
 protected:
   QString textFromValue(const double value) const override {
+    if (dashed_) return "--";
     if (!fractionalInches_) return QDoubleSpinBox::textFromValue(value);
     return isThirtySecondMultiple(value)
         ? fractionalInchText(value) : decimalInchText(value);
@@ -256,6 +265,7 @@ protected:
 
 private:
   bool fractionalInches_{false};
+  bool dashed_{false};
   mutable int explicitDisplayUnit_{-1};
 };
 
@@ -346,6 +356,7 @@ UnitOverride LengthInput::unitOverride() const {
   return static_cast<UnitOverride>(unit_->currentIndex());
 }
 void LengthInput::setOverrideSelectorVisible(const bool visible) { unit_->setVisible(visible); }
+void LengthInput::setDashDisplay(const bool dashed) { spin_->setDashDisplay(dashed); }
 int LengthInput::measurementFieldWidth() const { return spin_->width(); }
 void LengthInput::refreshDisplay() {
   refreshing_ = true;
@@ -363,6 +374,21 @@ void LengthInput::refreshDisplay() {
 QJsonObject panelDataToJson(const WingPanelData& d) {
   QJsonObject o;
 #define PUT(name) o.insert(#name, d.name)
+  PUT(curveFileName);
+  PUT(aileronHingeParallelY);
+  PUT(flapHingeParallelY);
+  if (!d.planform.empty()) {
+    const auto points = [](const std::vector<domain::Point2>& curve) {
+      QJsonArray array;
+      for (const auto p : curve)
+        array.append(QJsonArray{p.x, p.y});
+      return array;
+    };
+    o.insert("planform", QJsonObject{{"leading", points(d.planform.leading)},
+                                     {"trailing", points(d.planform.trailing)},
+                                     {"leadingSourceSpan", d.planform.leadingSourceSpan},
+                                     {"trailingSourceSpan", d.planform.trailingSourceSpan}});
+  }
   PUT(panelSpan); PUT(rootChord); PUT(tipChord); PUT(sweep); PUT(dihedral); PUT(twist);
   PUT(ribThickness); PUT(ribCount); PUT(rootAirfoilPath); PUT(tipAirfoilPath);
   PUT(ribLighteningHoles); PUT(ribLighteningStartRib);
@@ -488,6 +514,33 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
 #define READ_I(name) if (o.contains(#name)) d.name = o.value(#name).toInt(d.name)
 #define READ_B(name) if (o.contains(#name)) d.name = o.value(#name).toBool(d.name)
   READ_D(panelSpan); READ_D(rootChord); READ_D(tipChord); READ_D(sweep); READ_D(dihedral); READ_D(twist);
+  READ_B(aileronHingeParallelY);
+  READ_B(flapHingeParallelY);
+  d.curveFileName = o.value("curveFileName").toString();
+  if (o.contains("planform")) {
+    const auto curve = o.value("planform").toObject();
+    const auto points = [](const QJsonValue& value) {
+      std::vector<domain::Point2> result;
+      if (!value.isArray()) throw std::invalid_argument("Invalid saved LE/TE curve");
+      for (const auto entry : value.toArray()) {
+        const auto pair = entry.toArray();
+        if (pair.size() != 2 || !pair[0].isDouble() || !pair[1].isDouble())
+          throw std::invalid_argument("Invalid saved LE/TE curve point");
+        result.push_back({pair[0].toDouble(), pair[1].toDouble()});
+      }
+      return result;
+    };
+    d.planform.leading = points(curve.value("leading"));
+    d.planform.trailing = points(curve.value("trailing"));
+    d.planform.leadingSourceSpan = curve.value("leadingSourceSpan").toDouble();
+    d.planform.trailingSourceSpan = curve.value("trailingSourceSpan").toDouble();
+    if (d.planform.empty()) throw std::invalid_argument("Empty saved LE/TE curves");
+    // A pending Specs edit may be invalid for generation but must remain editable after reopening.
+    d.planform.validateGeometry();
+    d.rootChord = d.planform.chord(0);
+    d.tipChord = d.planform.chord(1);
+    d.sweep = d.planform.leadingX(1);
+  }
   READ_D(ribThickness); READ_I(ribCount);
   READ_B(ribLighteningHoles); READ_I(ribLighteningStartRib);
   READ_I(ribLighteningStopRib); READ_D(ribLighteningMinimumWoodMargin);
@@ -1059,6 +1112,38 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
            "sparTubeOd"})
     defaults.unitOverrides.insert(key, UnitOverride::Millimeters);
   return defaults;
+}
+
+QString matchPanelRootChords(std::vector<WingPanelData>& panels) {
+  auto matched = panels;
+  for (auto& panel : matched) {
+    if (!panel.planform.empty()) {
+      panel.rootChord = panel.planform.chord(0);
+      panel.tipChord = panel.planform.chord(1);
+    }
+  }
+  for (std::size_t i = 1; i < matched.size(); ++i) {
+    auto& outer = matched[i];
+    const double target = matched[i - 1].tipChord;
+    const double correction = target - outer.rootChord;
+    if (!outer.planform.empty()) {
+      if (!std::isfinite(correction) || std::abs(correction) > 6.35 + 1e-9)
+        return QString{"Panel %1 tip chord (%2 mm) and Panel %3 root chord (%4 mm) differ "
+                       "by more than 1/4 in (6.35 mm). Adjust the outer panel's imported curves "
+                       "to match this joint."}
+            .arg(i).arg(target, 0, 'f', 3).arg(i + 1).arg(outer.rootChord, 0, 'f', 3);
+      for (auto& point : outer.planform.trailing)
+        point.x += correction * (1 - point.y);
+      try {
+        outer.planform.validateGeometry();
+      } catch (const std::exception& error) {
+        return QString{"Panel %1: cannot match the root chord: %2"}.arg(i + 1).arg(error.what());
+      }
+    }
+    outer.rootChord = target;
+  }
+  panels = std::move(matched);
+  return {};
 }
 
 QString woodJoinerSparAlignmentError(const std::vector<WingPanelData>& panels) {
@@ -1787,6 +1872,35 @@ bool WingPanelEditor::ribletsAvailable() const {
 
 QWidget* WingPanelEditor::makeLeadingTrailingPage() {
   auto* content = new QWidget; auto* layout = new QVBoxLayout{content};
+  auto* description = new QLabel{
+      "Optionally import an SVG or DXF file with exactly two open curves/lines for the LE and TE.  "
+      "X is chord and positive Y is span.  If the drawing's overall extent is longer along X "
+      "than Y, the axes are automatically swapped.  After any swap, the LE root must be within "
+      "1/4 in (6.35 mm) of the origin, both roots within that tolerance of the X axis (Y = 0), "
+      "and each curve's span within that tolerance of Panel Span from the Specs Tab.  "
+      "Span is then scaled to Panel Span while preserving chord.  The root and tip distance "
+      "between the curves will be used for the chord at that point.  "
+      "Files must include physical units (mm/in), and DXF geometry must have Z = 0."};
+  description->setWordWrap(true);
+  layout->addWidget(description);
+  auto* import = new QPushButton{"Import LE/TE Curves"};
+  import->setObjectName("importLeTeCurves");
+  layout->addWidget(import);
+  curveFileLabel_ = new QLabel;
+  curveFileLabel_->setObjectName("curveFileName");
+  curveFileLabel_->setWordWrap(true);
+  layout->addWidget(curveFileLabel_);
+  deleteCurves_ = new QPushButton{"Delete LE/TE Curves"};
+  deleteCurves_->setObjectName("deleteLeTeCurves");
+  layout->addWidget(deleteCurves_);
+  connect(import, &QPushButton::clicked, this, &WingPanelEditor::importCurves);
+  connect(deleteCurves_, &QPushButton::clicked, this, [this] {
+    airfoilData_.planform = {};
+    airfoilData_.curveFileName.clear();
+    updateCurveControls();
+    emitChanged();
+  });
+
   auto makeLength = [this](const QString& key, double value) {
     auto* input = new LengthInput{key, value}; input->setGlobalUnit(globalUnit_);
     input->setOverrideSelectorVisible(showUnitOverrides_); lengths_.insert(key, input);
@@ -1899,6 +2013,7 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
       }
       updateConditionalControls(); emitChanged();
     });
+  connect(tubeLe_, &QRadioButton::clicked, this, [this] { warnCurvedTube(); });
   connect(slottedForRibs_, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
   layout->addStretch(); return scrollPage(content);
 }
@@ -1925,6 +2040,14 @@ QWidget* WingPanelEditor::makeControlsPage() {
     detailsLayout->setContentsMargins(0, 0, 0, 0);
     detailsLayout->setSpacing(0);
     detailsLayout->addWidget(detailRow({{"Width", widthInput}, {"Height", heightInput}}));
+    auto* hingeParallel = new QCheckBox{"Hinge Parallel with Y Axis"};
+    hingeParallel->setObjectName(prefix + "HingeParallelY");
+    if (prefix == "aileron")
+      aileronHingeParallelY_ = hingeParallel;
+    else
+      flapHingeParallelY_ = hingeParallel;
+    detailsLayout->addWidget(hingeParallel);
+    connect(hingeParallel, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
     detailsLayout->addWidget(detailRow({{"Start Rib", start}, {"Stop Rib", stop}}));
     detailsLayout->addWidget(detailRow({{"Hinge Post Width", hingeWidth}}));
     detailsLayout->addWidget(detailRow({{"Hinge Post Height", hingeHeight}}));
@@ -2581,6 +2704,53 @@ void WingPanelEditor::updateJoinerEditorControls() {
   }
 }
 
+void WingPanelEditor::warnCurvedTube() {
+  if (!airfoilData_.planform.empty() && tubeLe_->isChecked())
+    QMessageBox::warning(this, "Curved CF Tube LE",
+                         "The CF tube will follow the imported LE curve. Determine whether the "
+                         "selected tube can bend to this shape and be built as modeled.");
+}
+
+void WingPanelEditor::updateCurveControls() {
+  const bool imported = !airfoilData_.planform.empty();
+  if (curveFileLabel_) curveFileLabel_->setText(airfoilData_.curveFileName);
+  if (deleteCurves_) deleteCurves_->setEnabled(imported);
+  for (auto* input : {rootChord_, tipChord_, sweep_})
+    if (input) input->setEnabled(!imported);
+  if (sweep_) {
+    sweep_->setDashDisplay(imported);
+    sweep_->setToolTip(imported ? "The imported LE/TE curves define sweep." : QString{});
+  }
+  if (rootChord_ && rootChordLabel_) {
+    rootChord_->setVisible(showRootChord_ || imported);
+    rootChordLabel_->setVisible(showRootChord_ || imported);
+  }
+  if (aileronHingeParallelY_) aileronHingeParallelY_->setVisible(imported);
+  if (flapHingeParallelY_) flapHingeParallelY_->setVisible(imported);
+}
+
+void WingPanelEditor::importCurves() {
+  const auto path =
+      QFileDialog::getOpenFileName(this, "Import LE/TE Curves", {}, "LE/TE curves (*.svg *.dxf)");
+  if (path.isEmpty()) return;
+  try {
+    auto curves =
+        domain::importPlanformCurves(std::filesystem::path{path.toStdWString()}, span_->valueMm());
+    const QSignalBlocker blocker{this};
+    airfoilData_.planform = std::move(curves);
+    airfoilData_.curveFileName = QFileInfo{path}.fileName();
+    rootChord_->setValueMm(airfoilData_.planform.chord(0));
+    tipChord_->setValueMm(airfoilData_.planform.chord(1));
+    sweep_->setValueMm(airfoilData_.planform.leadingX(1));
+    updateCurveControls();
+  } catch (const std::exception& error) {
+    QMessageBox::critical(this, "LE/TE import failed", error.what());
+    return;
+  }
+  emitChanged();
+  warnCurvedTube();
+}
+
 void WingPanelEditor::importAirfoil(const bool root) {
   const auto path = QFileDialog::getOpenFileName(this, root ? "Import root airfoil" : "Import tip airfoil", {},
                                                   "Airfoil data (*.dat);;All files (*)");
@@ -2597,6 +2767,8 @@ void WingPanelEditor::importAirfoil(const bool root) {
 
 WingPanelData WingPanelEditor::data() const {
   WingPanelData d = airfoilData_;
+  d.aileronHingeParallelY = aileronHingeParallelY_->isChecked();
+  d.flapHingeParallelY = flapHingeParallelY_->isChecked();
   d.panelSpan = span_->valueMm(); d.rootChord = rootChord_->valueMm(); d.tipChord = tipChord_->valueMm();
   d.sweep = sweep_->valueMm(); d.dihedral = dihedral_->value(); d.twist = twist_->value();
   d.ribThickness = ribThickness_->valueMm(); d.ribCount = ribCount_->value();
@@ -2787,8 +2959,16 @@ WingPanelData WingPanelEditor::data() const {
   return d;
 }
 
+void WingPanelEditor::setMatchedRootChord(const WingPanelData& data) {
+  const QSignalBlocker blocker{this};
+  airfoilData_.planform = data.planform;
+  rootChord_->setValueMm(data.rootChord);
+}
+
 void WingPanelEditor::setData(const WingPanelData& d) {
   airfoilData_ = d;
+  aileronHingeParallelY_->setChecked(d.aileronHingeParallelY);
+  flapHingeParallelY_->setChecked(d.flapHingeParallelY);
   while (sparEditors_.size() > d.spars.size()) {
     delete sparEditors_.back().container;
     sparEditors_.pop_back();
@@ -2811,6 +2991,12 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   };
   setLength(span_, d.panelSpan, "panelSpan"); setLength(rootChord_, d.rootChord, "rootChord");
   setLength(tipChord_, d.tipChord, "tipChord"); setLength(sweep_, d.sweep, "sweep");
+  if (!d.planform.empty()) {
+    rootChord_->setValueMm(d.planform.chord(0));
+    tipChord_->setValueMm(d.planform.chord(1));
+    sweep_->setValueMm(d.planform.leadingX(1));
+  }
+  updateCurveControls();
   dihedral_->setValue(d.dihedral); twist_->setValue(d.twist); setLength(ribThickness_, d.ribThickness, "ribThickness"); ribCount_->setValue(d.ribCount);
   ribLighteningHoles_->setChecked(d.ribLighteningHoles);
   ribLighteningStartRib_->setValue(d.ribLighteningStartRib);
@@ -3001,6 +3187,12 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
+  try {
+    airfoilData_.planform.validate(span_->valueMm());
+  } catch (const std::exception& exception) {
+    error = exception.what();
+    return false;
+  }
   for (const auto& [enabled, input] : {
            std::pair{moldedLe_->isChecked(), moldedLeWidth_},
            std::pair{moldedLe_->isChecked(), moldedLeThickness_},
@@ -3122,7 +3314,7 @@ bool WingPanelEditor::validate(QString& error) {
                  : QString{});
     return false;
   }
-  if (flaps_->isChecked() && ailerons_->isChecked() &&
+  if (airfoilData_.planform.empty() && flaps_->isChecked() && ailerons_->isChecked() &&
       aileronStart_->value() == flapStop_->value() &&
       std::abs(aileronWidth_->valueMm() - flapWidth_->valueMm()) > 1.0e-8) {
     LengthInput* corrected = lastControlWidthEdited_ == aileronWidth_
@@ -3147,6 +3339,7 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  updateCurveControls();
   topFrontBuildTabDetails_->setVisible(addTopFrontBuildTab_->isChecked());
   topRearBuildTabDetails_->setVisible(addTopRearBuildTab_->isChecked());
   addTabsToSheetedRibs_->setVisible(addFrontBuildTab_->isChecked() || addRearBuildTab_->isChecked() ||

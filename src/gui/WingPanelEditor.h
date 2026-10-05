@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/AirfoilProfile.h"
+#include "domain/PlanformCurves.h"
 
 #include <QJsonObject>
 #include <QHash>
@@ -41,6 +42,7 @@ public:
   void setUnitOverride(UnitOverride unit);
   [[nodiscard]] UnitOverride unitOverride() const;
   void setOverrideSelectorVisible(bool visible);
+  void setDashDisplay(bool dashed);
   [[nodiscard]] int measurementFieldWidth() const;
 signals:
   void valueChanged();
@@ -113,6 +115,10 @@ struct RemovableJoinerData {
 };
 
 struct WingPanelData {
+  domain::PlanformCurves planform;
+  QString curveFileName;
+  bool aileronHingeParallelY{false};
+  bool flapHingeParallelY{false};
   double panelSpan{700.0};
   double rootChord{240.0};
   double tipChord{150.0};
@@ -229,6 +235,8 @@ QJsonObject panelDataToJson(const WingPanelData& data);
 WingPanelData panelDataFromJson(const QJsonObject& object);
 [[nodiscard]] WingPanelData roundedInchPanelData(const WingPanelData& metricData);
 [[nodiscard]] WingPanelData installedDefaultPanelData(DisplayUnit unit);
+// Adjust joint roots transactionally; imported TE corrections fade to zero at the tip.
+[[nodiscard]] QString matchPanelRootChords(std::vector<WingPanelData>& panels);
 [[nodiscard]] QString woodJoinerSparAlignmentError(
     const std::vector<WingPanelData>& panels);
 
@@ -242,6 +250,7 @@ public:
 
   [[nodiscard]] WingPanelData data() const;
   void setData(const WingPanelData& data);
+  void setMatchedRootChord(const WingPanelData& data);
   void setJoinerAddDefaults(const WingPanelData& defaults);
   void setGlobalUnit(DisplayUnit unit);
   void setDiamondLeadingEdgeWidthMm(double width);
@@ -267,6 +276,9 @@ private:
   QWidget* makeWiringHolesSection(const QString& suffix);
   QWidget* makeJoinerPage();
   void importAirfoil(bool root);
+  void importCurves();
+  void updateCurveControls();
+  void warnCurvedTube();
   void updateAngleInputWidths();
   void updateRibSpacing();
   void updateConditionalControls();
@@ -325,6 +337,9 @@ private:
         *adjoiningRodOd{}, *pinOd{};
   };
 
+  QLabel* curveFileLabel_{};
+  QPushButton* deleteCurves_{};
+  QCheckBox *aileronHingeParallelY_{}, *flapHingeParallelY_{};
   WingPanelData airfoilData_;
   DisplayUnit globalUnit_{DisplayUnit::Millimeters};
   bool showUnitOverrides_{false};

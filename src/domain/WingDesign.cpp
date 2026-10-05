@@ -43,27 +43,63 @@ std::vector<RibDefinition> generateRibs(
   validate(p);
   std::vector<RibDefinition> ribs;
   ribs.reserve(p.ribCount);
-  const double dihedral = p.dihedralDegrees * std::numbers::pi / 180.0;
-  for (std::size_t i = 0; i < p.ribCount; ++i) {
-    const double t = static_cast<double>(i) / static_cast<double>(p.ribCount - 1);
-    const double span = p.halfSpan * t;
-    ribs.push_back({span,
-      p.rootChord + t * (p.tipChord - p.rootChord),
-      p.sweep * t,
-      std::tan(dihedral) * span,
-      p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
-      p.dihedralDegrees,
-      -0.5,
-      AirfoilProfile::interpolate(root, tip, t)});
-  }
+  p.planform.validate(p.halfSpan);
+  for (std::size_t i = 0; i < p.ribCount; ++i)
+    ribs.push_back(
+        ribAtStation(p, root, tip, static_cast<double>(i) / static_cast<double>(p.ribCount - 1)));
   return ribs;
+}
+
+RibDefinition ribAtStation(const WingParameters& p, const AirfoilProfile& root,
+                           const AirfoilProfile& tip, double t) {
+  const double span = p.halfSpan * t;
+  RibDefinition rib{span,
+                    p.planform.empty() ? p.rootChord + t * (p.tipChord - p.rootChord)
+                                       : p.planform.chord(t),
+                    p.planform.empty() ? p.sweep * t : p.planform.leadingX(t),
+                    std::tan(p.dihedralDegrees * std::numbers::pi / 180.0) * span,
+                    p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
+                    p.dihedralDegrees,
+                    -0.5,
+                    AirfoilProfile::interpolate(root, tip, t)};
+  if (!p.planform.empty()) rib.planform = std::make_shared<PlanformCurves>(p.planform);
+  rib.planformStation = t;
+  return rib;
+}
+
+RibDefinition interpolateRib(const RibDefinition& a, const RibDefinition& b, double t) {
+  const auto mix = [t](double x, double y) { return x + (y - x) * t; };
+  RibDefinition rib{mix(a.spanPosition, b.spanPosition),
+                    mix(a.chord, b.chord),
+                    mix(a.leadingEdgeOffset, b.leadingEdgeOffset),
+                    mix(a.dihedralHeight, b.dihedralHeight),
+                    mix(a.twistDegrees, b.twistDegrees),
+                    mix(a.ribPlaneAngleDegrees, b.ribPlaneAngleDegrees),
+                    -0.5,
+                    AirfoilProfile::interpolate(a.profile, b.profile, t)};
+  if (a.planform && b.planform) {
+    rib.planform = a.planform;
+    rib.ribPlaneAngleDegrees =
+        std::atan2(b.dihedralHeight - a.dihedralHeight, b.spanPosition - a.spanPosition) * 180.0 /
+        std::numbers::pi;
+    rib.planformStation = mix(a.planformStation, b.planformStation);
+    const auto& curve = *rib.planform;
+    rib.leadingEdgeOffset +=
+        curve.leadingX(rib.planformStation) -
+        mix(curve.leadingX(a.planformStation), curve.leadingX(b.planformStation));
+    rib.chord = curve.chord(rib.planformStation);
+  }
+  return rib;
 }
 
 WingMetrics calculateWingMetrics(const WingParameters& p) {
   validate(p);
   const double fullSpan = p.halfSpan * 2.0;
-  const double area = p.halfSpan * (p.rootChord + p.tipChord);
-  return {fullSpan, area, fullSpan * fullSpan / area, p.tipChord / p.rootChord};
+  const double area = p.planform.empty() ? p.halfSpan * (p.rootChord + p.tipChord)
+                                         : 2 * p.planform.area(p.halfSpan);
+  return {fullSpan, area, fullSpan * fullSpan / area,
+          p.planform.empty() ? p.tipChord / p.rootChord
+                             : p.planform.chord(1) / p.planform.chord(0)};
 }
 
 std::vector<PanelAssemblyAngles> calculatePanelAssemblyAngles(

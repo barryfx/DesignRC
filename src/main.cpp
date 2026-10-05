@@ -48,6 +48,13 @@ int main(int argc, char* argv[]) {
   if (application.arguments().contains("--cancellation-backend-regression"))
     return designrc::gui::runCancellationBackendRegression();
 
+  if (application.arguments().contains("--panel-chord-backend-regression"))
+    return designrc::gui::runPanelChordBackendRegression();
+  const int projectRegression = application.arguments().indexOf("--project-backend-regression");
+  if (projectRegression >= 0)
+    return projectRegression + 1 < application.arguments().size()
+        ? designrc::gui::runProjectBackendRegression(application.arguments().at(projectRegression + 1)) : 1;
+
   QScreen* splashScreen = QGuiApplication::screenAt(QCursor::pos());
   if (splashScreen == nullptr)
     splashScreen = QGuiApplication::primaryScreen();

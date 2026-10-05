@@ -59,6 +59,9 @@ struct RibOutlineSegment {
 };
 
 struct StructureParameters {
+  bool aileronHingeParallelY{false};
+  bool flapHingeParallelY{false};
+  bool surfaceSampling{false};
   double ribThickness{3.0};
   std::vector<SparParameters> spars;
   bool sparShearWebs{false};
@@ -288,6 +291,9 @@ struct ControlSurfacePart {
   bool cutStartRib{};
   bool cutStopRib{};
   bool extendThroughStopRib{};
+  bool hingeParallelY{};
+  double hingeRootX{};
+  double hingeTipX{};
 };
 
 struct SheetStockPart {
@@ -365,6 +371,8 @@ struct RibCapPart {
 };
 
 struct StructuredWing {
+  // Additional sections for curved spanwise solids, not physical ribs.
+  std::shared_ptr<StructuredWing> surfaceWing;
   double diamondLeadingEdgeWidth{}; // Effective stock size, including automatic correction.
   std::vector<std::string> warnings;
   std::vector<StructuredRib> ribs;

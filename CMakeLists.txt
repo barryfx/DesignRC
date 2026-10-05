@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.5.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.6.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -74,6 +74,8 @@ add_library(designrc_domain
   src/domain/AirfoilProfile.h
   src/domain/DxfExporter.cpp
   src/domain/DxfExporter.h
+  src/domain/PlanformCurves.cpp
+  src/domain/PlanformCurves.h
   src/domain/Point2.h
   src/domain/WingDesign.cpp
   src/domain/WingDesign.h
@@ -85,6 +87,7 @@ target_include_directories(designrc_domain
   PRIVATE "${DESIGNRC_GENERATED_INCLUDE_DIR}"
 )
 target_compile_features(designrc_domain PUBLIC cxx_std_20)
+target_link_libraries(designrc_domain PUBLIC Qt6::Core)
 
 add_executable(designrc WIN32
   resources/designrc.qrc
@@ -229,6 +232,9 @@ endif()
 
 if(DESIGNRC_BUILD_TESTS)
   enable_testing()
+  add_executable(designrc_planform_tests tests/PlanformCurveTests.cpp)
+  target_link_libraries(designrc_planform_tests PRIVATE designrc_domain)
+  add_test(NAME designrc_planform_tests COMMAND designrc_planform_tests)
   add_executable(designrc_domain_tests tests/AirfoilProfileTests.cpp)
   target_link_libraries(designrc_domain_tests PRIVATE designrc_domain)
   add_test(NAME designrc_domain_tests COMMAND designrc_domain_tests)
@@ -266,6 +272,11 @@ if(DESIGNRC_BUILD_TESTS)
       "LINKER:--disable-new-dtags")
   endif()
   add_test(NAME designrc_geometry_tests COMMAND designrc_geometry_tests)
+  add_test(NAME designrc_sweep_tests COMMAND designrc_geometry_tests --sweep-fixture)
+  add_test(NAME designrc_sweep_assembly_tests COMMAND designrc_geometry_tests --sweep-assembly)
+  set_tests_properties(designrc_sweep_tests designrc_sweep_assembly_tests PROPERTIES TIMEOUT 180)
+  add_test(NAME designrc_curved_project_tests COMMAND designrc --project-backend-regression
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/Curved_LE_TE.designrc")
   add_executable(designrc_step_export_tests
     tests/StepExporterTests.cpp
     src/geometry/OcctRibBuilder.cpp
@@ -280,7 +291,7 @@ if(DESIGNRC_BUILD_TESTS)
   add_test(NAME designrc_step_export_tests COMMAND designrc_step_export_tests)
   # The regression programs use assert for checks and test setup. Keep those
   # expressions active in optimized builds as well as Debug builds.
-  foreach(_test_target designrc_domain_tests designrc_gui_tests
+  foreach(_test_target designrc_planform_tests designrc_domain_tests designrc_gui_tests
       designrc_geometry_tests designrc_step_export_tests)
     if(MSVC)
       target_compile_options(${_test_target} PRIVATE /UNDEBUG)
@@ -288,12 +299,13 @@ if(DESIGNRC_BUILD_TESTS)
       target_compile_options(${_test_target} PRIVATE -UNDEBUG)
     endif()
   endforeach()
+  add_test(NAME designrc_panel_chord_tests COMMAND designrc --panel-chord-backend-regression)
   add_test(NAME designrc_joiner_backend_tests
     COMMAND designrc --joiner-backend-regression)
   add_test(NAME designrc_cancellation_backend_tests
     COMMAND designrc --cancellation-backend-regression)
   if(NOT WIN32)
-    set_tests_properties(designrc_joiner_backend_tests designrc_cancellation_backend_tests PROPERTIES
+    set_tests_properties(designrc_joiner_backend_tests designrc_cancellation_backend_tests designrc_curved_project_tests designrc_panel_chord_tests PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
   endif()
 endif()

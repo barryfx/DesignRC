@@ -4,6 +4,10 @@
 #include "gui/WingPanelEditor.h"
 
 #include <QApplication>
+#include <QFileDialog>
+#include <QTemporaryDir>
+#include <QTimer>
+#include <QMessageBox>
 #include <QCheckBox>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -33,6 +37,162 @@ int main(int argc, char* argv[]) {
 #endif
   QApplication application{argc, argv};
   using namespace designrc::gui;
+  {
+    WingPanelData inner, outer;
+    outer.planform = {{{0, 0}, {-10, .5}, {0, 1}},
+                      {{200, 0}, {210, .5}, {160, 1}}, 300, 300};
+    outer.rootChord = 200;
+    outer.tipChord = 160;
+    outer.curveFileName = "joint.svg";
+    for (const bool importedInner : {false, true}) {
+      for (const double difference : {-6.35, -2., 0., 2., 6.35}) {
+        inner.tipChord = 200 + difference;
+        inner.planform = importedInner
+            ? designrc::domain::PlanformCurves{{{0, 0}, {0, 1}},
+                {{250, 0}, {inner.tipChord, 1}}, 300, 300}
+            : designrc::domain::PlanformCurves{};
+        std::vector<WingPanelData> panels{inner, outer};
+        assert(matchPanelRootChords(panels).isEmpty());
+        assert(std::abs(panels[1].rootChord - panels[0].tipChord) < 1e-9);
+        assert(std::abs(panels[1].planform.chord(0) - panels[0].tipChord) < 1e-9);
+        assert(panels[1].tipChord == 160 && panels[1].planform.chord(1) == 160);
+        assert(panels[1].planform.leadingX(.5) == -10);
+        assert(std::abs(panels[1].planform.trailingX(.5) - (210 + difference / 2)) < 1e-9);
+        const auto once = panels[1].planform.trailing;
+        assert(matchPanelRootChords(panels).isEmpty());
+        assert(panels[1].planform.trailing[1].x == once[1].x);
+        WingPanelEditor editor{outer};
+        editor.setMatchedRootChord(panels[1]);
+        const auto saved = panelDataFromJson(panelDataToJson(editor.data()));
+        assert(std::abs(saved.rootChord - panels[0].tipChord) < 1e-9);
+        assert(saved.curveFileName == outer.curveFileName);
+      }
+    }
+    inner.planform = {};
+    inner.tipChord = 206.351;
+    std::vector<WingPanelData> invalid{inner, outer};
+    const auto error = matchPanelRootChords(invalid);
+    assert(error.contains("Panel 1") && error.contains("Panel 2") && error.contains("6.35"));
+    assert(invalid[1].planform.chord(0) == 200); // No partial edits on failure.
+    inner.tipChord = 193.65;
+    auto narrow = outer;
+    narrow.planform.trailing[1].x = -8; // Matching would cross LE inboard.
+    invalid = {inner, narrow};
+    assert(!matchPanelRootChords(invalid).isEmpty());
+    assert(invalid[1].planform.chord(0) == 200);
+    WingPanelData conventional;
+    auto firstCurve = outer;
+    auto lastCurve = outer;
+    lastCurve.planform.trailing.front().x = conventional.tipChord + 2;
+    std::vector<WingPanelData> chain{firstCurve, conventional, lastCurve};
+    assert(matchPanelRootChords(chain).isEmpty());
+    assert(chain[1].rootChord == firstCurve.tipChord);
+    assert(chain[2].planform.chord(0) == chain[1].tipChord);
+  }
+  {
+    WingPanelData data;
+    data.panelSpan = 100;
+    data.curveFileName = "elliptical.svg";
+    data.planform = {{{0, 0}, {-10, .5}, {0, 1}}, {{200, 0}, {220, .5}, {160, 1}}, 100, 100};
+    data.ailerons = true;
+    data.aileronHingeParallelY = true;
+    auto pending = panelDataToJson(data);
+    pending.insert("panelSpan", 200);
+    assert(panelDataFromJson(pending).panelSpan == 200);
+    const auto restored = panelDataFromJson(panelDataToJson(data));
+    assert(restored.curveFileName == data.curveFileName && restored.aileronHingeParallelY);
+    assert(restored.planform.chord(.5) == 230 && restored.rootChord == 200 &&
+           restored.tipChord == 160);
+    WingPanelEditor editor{restored};
+    assert(editor.findChild<QPushButton*>("importLeTeCurves"));
+    assert(editor.findChild<QLabel*>("curveFileName")->text() == "elliptical.svg");
+    assert(!editor.findChild<LengthInput*>("rootChord")->isEnabled());
+    assert(!editor.findChild<LengthInput*>("tipChord")->isEnabled());
+    assert(!editor.findChild<LengthInput*>("sweep")->isEnabled());
+    assert(editor.findChild<LengthInput*>("sweep")->findChild<QLineEdit*>()->text() == "--");
+    editor.setGlobalUnit(DisplayUnit::Inches);
+    assert(editor.findChild<LengthInput*>("sweep")->findChild<QLineEdit*>()->text() == "--");
+    assert(editor.findChild<QCheckBox*>("aileronHingeParallelY")->isChecked());
+    QString error;
+    editor.findChild<LengthInput*>("panelSpan")->setValueMm(107);
+    assert(!editor.validate(error) && error.contains("6.35"));
+    editor.findChild<LengthInput*>("panelSpan")->setValueMm(100);
+    editor.findChild<QPushButton*>("deleteLeTeCurves")->click();
+    assert(editor.data().planform.empty() && editor.data().curveFileName.isEmpty());
+    assert(editor.findChild<LengthInput*>("rootChord")->isEnabled());
+    assert(editor.findChild<LengthInput*>("sweep")->isEnabled());
+    assert(editor.findChild<LengthInput*>("sweep")->findChild<QLineEdit*>()->text() != "--");
+    assert(editor.data().rootChord == 200 && editor.data().tipChord == 160);
+    assert(editor.findChild<QCheckBox*>("aileronHingeParallelY")->isHidden());
+    auto invalid = panelDataToJson(data);
+    auto curve = invalid.value("planform").toObject();
+    curve.insert("leading", QJsonArray{});
+    invalid.insert("planform", curve);
+    bool rejected = false;
+    try {
+      (void)panelDataFromJson(invalid);
+    } catch (const std::invalid_argument&) {
+      rejected = true;
+    }
+    assert(rejected);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    QTemporaryDir sourceDirectory;
+    const auto sourcePath = sourceDirectory.filePath("wing.svg");
+    const auto writeSource = [&](const QByteArray& contents) {
+      QFile file{sourcePath};
+      assert(file.open(QIODevice::WriteOnly));
+      assert(file.write(contents) == contents.size());
+    };
+    editor.findChild<LengthInput*>("panelSpan")->setValueMm(300);
+    writeSource("<svg width='250mm' height='300mm' viewBox='0 0 250 300'><path d='M0 0 Q-20 150 0 "
+                "300'/><path d='M200 0 Q240 150 160 300'/></svg>");
+    int changes = 0, dialogs = 0;
+    QObject::connect(&editor, &WingPanelEditor::changed, [&] { ++changes; });
+    QTimer dialogDriver;
+    QObject::connect(&dialogDriver, &QTimer::timeout, [&] {
+      if (auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+        file->selectFile(sourcePath);
+        QMetaObject::invokeMethod(file, "accept");
+      } else if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+        ++dialogs;
+        message->accept();
+      }
+    });
+    dialogDriver.start(10);
+    editor.findChild<QPushButton*>("importLeTeCurves")->click();
+    assert(changes == 1 && dialogs == 0 && editor.data().curveFileName == "wing.svg");
+    assert(std::abs(editor.data().planform.leadingX(.5) + 10) < .02);
+    changes = 0;
+    writeSource("<svg width='250px' height='100px'><path d='M0 0 L0 100'/><path d='M200 0 L160 "
+                "100'/></svg>");
+    editor.findChild<QPushButton*>("importLeTeCurves")->click();
+    assert(changes == 0 && dialogs == 1 && editor.data().curveFileName == "wing.svg");
+    assert(std::abs(editor.data().planform.leadingX(.5) + 10) < .02);
+    for (auto* button : editor.findChildren<QRadioButton*>())
+      if (button->text() == "CF Tube LE") button->click();
+    assert(dialogs == 2 && editor.data().leadingEdgeType == 3);
+    dialogDriver.stop();
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+
+    designrc::domain::WingParameters parameters;
+    parameters.halfSpan = 100;
+    parameters.planform = restored.planform;
+    parameters.ribCount = 5;
+    parameters.dihedralDegrees = 0;
+    const auto foil = designrc::domain::AirfoilProfile::nacaSymmetric(.12);
+    const auto wing = designrc::domain::applyWingStructure(
+        designrc::domain::generateRibs(parameters, foil, foil), {});
+    const auto plan = buildFlattenedWingPlan({wing}, {3}, {restored}, false, {});
+    int curvedLeadingOutlines = 0;
+    for (const auto& path : plan.paths)
+      if (path.path.elementCount() == 3) {
+        const auto a = path.path.elementAt(0), b = path.path.elementAt(1),
+                   c = path.path.elementAt(2);
+        if (std::abs(b.y - a.y + 10) < 1e-6 && std::abs(c.y - a.y) < 1e-6) ++curvedLeadingOutlines;
+      }
+    assert(curvedLeadingOutlines == 2);
+  }
+
   for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
     const auto defaults = installedDefaultPanelData(unit);
     assert(!defaults.topRibCaps && !defaults.bottomRibCaps);

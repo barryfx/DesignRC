@@ -805,6 +805,12 @@ std::vector<Point2> angledMemberCenters(const std::vector<RibDefinition>& ribs,
 std::vector<Point2> straightExposedLeadingEdgeCenters(
     const std::vector<RibDefinition>& ribs, const double diameter) {
   const double radius = diameter * 0.5;
+  if (!ribs.empty() && ribs.front().planform) {
+    std::vector<Point2> result;
+    for (const auto& rib : ribs)
+      result.push_back(camberCenter(rib, std::max(0.001, radius - 0.1)));
+    return result;
+  }
   constexpr double exposure = 0.1;
   const double centerX = std::max(0.001, radius - exposure);
   const auto centersAt = [&](const double x) {
@@ -1313,7 +1319,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   if (p.flaps && p.ailerons && p.aileronStartRib < p.flapStopRib)
     throw std::invalid_argument(
         "Aileron Start Rib cannot be less than Flap Stop Rib");
-  if (p.flaps && p.ailerons && p.aileronStartRib == p.flapStopRib &&
+  if (!ribs.front().planform && p.flaps && p.ailerons && p.aileronStartRib == p.flapStopRib &&
       std::abs(p.aileronWidth - p.flapWidth) > 1.0e-8)
     throw std::invalid_argument(
         "Flap Width and Aileron Width must match when their rib ranges meet");
@@ -1327,6 +1333,50 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     controlParts[0].cutStopRib = true;
     controlParts[0].extendThroughStopRib = true;
     controlParts[1].cutStartRib = true;
+  }
+  if (ribs.front().planform) {
+    for (auto& control : controlParts) {
+      control.hingeParallelY =
+          control.name == "Flap" ? p.flapHingeParallelY : p.aileronHingeParallelY;
+      const auto& first = ribs[control.startRibIndex];
+      const auto& last = ribs[control.stopRibIndex];
+      control.hingeRootX = first.leadingEdgeOffset + first.chord - control.width;
+      control.hingeTipX = last.leadingEdgeOffset + last.chord - control.width;
+      if (control.hingeParallelY) {
+        const auto& curve = *first.planform;
+        double maximum =
+            std::max(curve.trailingX(first.planformStation), curve.trailingX(last.planformStation));
+        for (const auto v : curve.trailing)
+          if (v.y >= first.planformStation && v.y <= last.planformStation)
+            maximum = std::max(maximum, v.x);
+        control.hingeRootX = control.hingeTipX = first.leadingEdgeOffset -
+                                                 curve.leadingX(first.planformStation) + maximum -
+                                                 control.width;
+      }
+      const auto& curve = *first.planform;
+      const auto validateStation = [&](double station) {
+        if (station < first.planformStation || station > last.planformStation) return;
+        const double f =
+            (station - first.planformStation) / (last.planformStation - first.planformStation);
+        const double hinge = control.hingeRootX + f * (control.hingeTipX - control.hingeRootX);
+        const double origin = first.leadingEdgeOffset - curve.leadingX(first.planformStation);
+        if (hinge >= origin + curve.trailingX(station) - 1e-6)
+          throw std::invalid_argument(
+              control.name + " hinge line crosses the curved TE or leaves zero control width.");
+        if (hinge - control.gap - control.hingePostWidth <= origin + curve.leadingX(station))
+          throw std::invalid_argument(control.name + " hinge post crosses the curved LE.");
+      };
+      validateStation(first.planformStation);
+      validateStation(last.planformStation);
+      for (auto v : curve.leading)
+        validateStation(v.y);
+      for (auto v : curve.trailing)
+        validateStation(v.y);
+    }
+    if (controlParts.size() == 2 && controlParts[0].stopRibIndex == controlParts[1].startRibIndex &&
+        std::abs(controlParts[0].hingeTipX - controlParts[1].hingeRootX) > 0.01)
+      throw std::invalid_argument("Flap and aileron hinge endpoints must meet at their shared rib. "
+                                  "Adjust widths or hinge direction.");
   }
   std::vector<Point2> carbonSparCenters;
   if (p.carbonSpar != 0) {
@@ -1509,6 +1559,21 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                    const bool upToSpar,
                                    const double stopPercent) {
     const auto& rib = ribs[ribIndex];
+    if (rib.planform) {
+      for (std::size_t si = 0; si < p.spars.size(); ++si) {
+        const auto& spar = p.spars[si];
+        const double width = spar.material == 0 ? spar.woodWidth
+                             : spar.type == 2   ? spar.stripWidth
+                             : spar.type == 0   ? spar.tubeOd
+                                                : spar.rodOd;
+        const double x = sparCenters[si][ribIndex].x;
+        if (x - width * 0.5 <= 0 || x + width * 0.5 >= rib.chord)
+          throw std::invalid_argument("Spar " + std::to_string(si + 1) +
+                                      " leaves the curved wing outline near span " +
+                                      std::to_string(rib.spanPosition) + " mm.");
+      }
+    }
+
     double frontEnd = 0.25 * rib.chord;
     std::size_t selected = p.spars.size();
     double closestToLegacyLocation = 101.0;
@@ -1640,6 +1705,27 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         spoilerLeft = minimumSpoilerLeft;
       else
         spoilerLeft = std::max(spoilerLeft, minimumSpoilerLeft);
+      if (rib.planform) {
+        // Keep the spoiler's hinge straight in plan view. Test its clearance
+        // at all auxiliary sections rather than bending around a spar.
+        const auto nominal = [&](std::size_t index) {
+          const auto& end = ribs[index];
+          const double aft = topSparAftFace(index);
+          const double requested = p.spoilerChordLocationPercent * end.chord / 100.0;
+          return end.leadingEdgeOffset +
+                 (p.spoilerImmediatelyBehindSpar && aft > 0
+                      ? aft + sparClearance
+                      : std::max(requested, aft > 0 ? aft + sparClearance : 0));
+        };
+        const auto& first = ribs[spoiler.startRibIndex];
+        const auto& last = ribs[spoiler.endRibIndex];
+        const double t = (rib.planformStation - first.planformStation) /
+                         (last.planformStation - first.planformStation);
+        spoilerLeft = nominal(spoiler.startRibIndex) * (1 - t) + nominal(spoiler.endRibIndex) * t -
+                      rib.leadingEdgeOffset;
+        if (spoilerLeft < minimumSpoilerLeft - 1e-6 || spoilerLeft <= 0)
+          throw std::invalid_argument("Straight spoiler frame crosses a spar or the curved LE.");
+      }
       spoilerRight = spoilerLeft + 2.0 * p.spoilerFrameRailWidth +
           2.0 * spoiler.gap + p.spoilerWidth;
       if (spoilerRight >= rib.chord - 0.001)
@@ -1844,7 +1930,15 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           trailingEdgeProfile(upper, lower, maximumX, retainedMaximumX)));
     for (auto& control : controlParts) {
       if (ribIndex < control.startRibIndex || ribIndex > control.stopRibIndex) continue;
-      const double controlLeadingX = std::max(0.001, rib.chord - control.width);
+      double controlLeadingX = std::max(0.001, rib.chord - control.width);
+      if (rib.planform) {
+        const auto& first = ribs[control.startRibIndex];
+        const auto& last = ribs[control.stopRibIndex];
+        const double t = (rib.planformStation - first.planformStation) /
+                         (last.planformStation - first.planformStation);
+        controlLeadingX = control.hingeRootX + (control.hingeTipX - control.hingeRootX) * t -
+                          rib.leadingEdgeOffset;
+      }
       control.profiles.push_back(resampleOpenProfile(
           trailingEdgeProfile(upper, lower, controlLeadingX, rib.chord)));
       const double hingeCenterX = std::max(0.001,
@@ -1862,6 +1956,44 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           cutBoundary) {
         retainedMaximumX = std::min(retainedMaximumX,
             std::max(0.001, controlLeadingX - control.gap - control.hingePostWidth));
+      }
+    }
+    if (rib.planform) {
+      for (std::size_t si = 0; si < p.spars.size(); ++si) {
+        const auto& spar = p.spars[si];
+        const double width = spar.material == 0 ? spar.woodWidth
+                             : spar.type == 2   ? spar.stripWidth
+                             : spar.type == 0   ? spar.tubeOd
+                                                : spar.rodOd;
+        const auto center = sparCenters[si][ribIndex];
+        if (center.x - width * 0.5 < minimumX - 1e-6 ||
+            center.x + width * 0.5 > controlSheetingMaximumX + 1e-6)
+          throw std::invalid_argument("Spar " + std::to_string(si + 1) +
+                                      " intersects LE/TE stock or a control hinge post near span " +
+                                      std::to_string(rib.spanPosition) + " mm.");
+        const bool rectangular = spar.material == 0 || spar.type == 2;
+        const double height = spar.material == 0 ? spar.woodHeight
+                              : spar.type == 2   ? spar.stripThickness
+                                                 : width;
+        const auto checkHeight = [&](double x, double halfHeight) {
+          if (center.y - halfHeight < interpolateY(lower, x) - 0.01 ||
+              center.y + halfHeight > interpolateY(upper, x) + 0.01)
+            throw std::invalid_argument("Spar " + std::to_string(si + 1) +
+                                        " leaves the airfoil surface in the curved panel.");
+        };
+        if (spar.verticalLocation == 2) {
+          for (int sample = 0; sample <= 16; ++sample) {
+            const double fraction = (sample - 8) / 8.0;
+            const double halfHeight =
+                rectangular ? height * 0.5
+                            : height * 0.5 * std::sqrt(std::max(0.0, 1 - fraction * fraction));
+            checkHeight(center.x + fraction * width * 0.5, halfHeight);
+          }
+        } else {
+          // Surface-mounted stock is tangent at its center; it must not float
+          // above a narrower intermediate airfoil along its straight axis.
+          checkHeight(center.x, height * 0.5);
+        }
       }
     }
     auto retainedUpper = clippedSurface(upper, minimumX, retainedMaximumX);
@@ -2753,8 +2885,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       if (p.trailingEdgeSlotted) {
         for (std::size_t i = firstRib; i <= lastRib; ++i) {
           const auto& rib = ribs[i];
-        const double leading = rib.leadingEdgeOffset + rib.chord - p.trailingEdgeWidth;
-        const double halfThickness = 0.5 * p.ribThickness;
+          if (rib.virtualStation) continue;
+          const double leading = rib.leadingEdgeOffset + rib.chord - p.trailingEdgeWidth;
+          const double halfThickness = 0.5 * p.ribThickness;
           const double slotBottom = std::max(root.spanPosition - halfRibThickness,
                                            rib.spanPosition - halfThickness);
           const double slotTop = std::min(tip.spanPosition + halfRibThickness,
@@ -2796,6 +2929,56 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           stock.outline = std::move(notchedOutline);
           stock.slots.clear();
         }
+      }
+      if (root.planform && firstRib != lastRib) {
+        // Follow the imported TE in the cutting blank, retaining only real rib slots.
+        const auto& curve = *root.planform;
+        const auto& panelRoot = ribs.front();
+        const auto& panelTip = ribs.back();
+        const double span = panelTip.spanPosition - panelRoot.spanPosition;
+        const double origin = panelRoot.leadingEdgeOffset - curve.leadingX(0);
+        const auto te = [&](double y) {
+          return origin + curve.trailingX((y - panelRoot.spanPosition) / span);
+        };
+        const double low = root.spanPosition + root.ribThicknessStartFactor * p.ribThickness;
+        const double high = tip.spanPosition + (tip.ribThicknessStartFactor + 1) * p.ribThickness;
+        std::vector<Point2> outline;
+        const auto boundary = [&](double a, double b, double inset) {
+          outline.push_back({te(a) - inset, a});
+          for (auto point : curve.trailing) {
+            const double y = panelRoot.spanPosition + point.y * span;
+            if (y > a && y < b) outline.push_back({origin + point.x - inset, y});
+          }
+          outline.push_back({te(b) - inset, b});
+        };
+        double cursor = low;
+        if (p.trailingEdgeSlotted)
+          for (std::size_t i = firstRib; i <= lastRib; ++i) {
+            const auto& rib = ribs[i];
+            if (rib.virtualStation) continue;
+            const double a =
+                std::max(low, rib.spanPosition + rib.ribThicknessStartFactor * p.ribThickness);
+            const double b = std::min(high, rib.spanPosition +
+                                                (rib.ribThicknessStartFactor + 1) * p.ribThickness);
+            const double cut =
+                rib.leadingEdgeOffset + rib.chord - p.trailingEdgeWidth + trailingEdgeSlotDepth;
+            if (a > cursor) boundary(cursor, a, p.trailingEdgeWidth);
+            outline.push_back({cut, a});
+            outline.push_back({cut, b});
+            cursor = b;
+          }
+        if (cursor < high) boundary(cursor, high, p.trailingEdgeWidth);
+        std::vector<Point2> leading = std::move(outline);
+        outline.clear();
+        boundary(low, high, 0);
+        std::reverse(outline.begin(), outline.end());
+        leading.insert(leading.end(), outline.begin(), outline.end());
+        leading.erase(
+            std::unique(leading.begin(), leading.end(),
+                        [](Point2 a, Point2 b) { return std::hypot(a.x - b.x, a.y - b.y) < 1e-8; }),
+            leading.end());
+        stock.outline = std::move(leading);
+        stock.slots.clear();
       }
       wing.sheetStockParts.push_back(std::move(stock));
     }
@@ -2948,6 +3131,92 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       }
     }
   }
+  if (ribs.front().planform && !p.surfaceSampling) {
+    std::vector<RibDefinition> samples;
+    std::vector<std::size_t> physical;
+    const auto& curve = *ribs.front().planform;
+    for (std::size_t i = 0; i + 1 < ribs.size(); ++i) {
+      physical.push_back(samples.size());
+      samples.push_back(ribs[i]);
+      const double a = ribs[i].planformStation, b = ribs[i + 1].planformStation;
+      std::vector<double> stations;
+      for (const auto* path : {&curve.leading, &curve.trailing})
+        for (auto v : *path)
+          if (v.y > a + 1e-10 && v.y < b - 1e-10) stations.push_back(v.y);
+      const int divisions =
+          std::max(1, static_cast<int>(std::ceil(
+                          std::hypot(ribs[i + 1].spanPosition - ribs[i].spanPosition,
+                                     ribs[i + 1].dihedralHeight - ribs[i].dihedralHeight) /
+                          10.0)));
+      for (int j = 1; j < divisions; ++j)
+        stations.push_back(a + (b - a) * j / divisions);
+      std::sort(stations.begin(), stations.end());
+      stations.erase(std::unique(stations.begin(), stations.end(),
+                                 [](double x, double y) { return std::abs(x - y) < 1e-10; }),
+                     stations.end());
+      for (double station : stations) {
+        const double length = std::hypot(ribs[i + 1].spanPosition - ribs[i].spanPosition,
+                                         ribs[i + 1].dihedralHeight - ribs[i].dihedralHeight);
+        const double fraction = (station - a) / (b - a);
+        const double rootFace = (ribs[i].ribThicknessStartFactor + 1) * p.ribThickness;
+        const double tipFace = -ribs[i + 1].ribThicknessStartFactor * p.ribThickness;
+        if (fraction * length <= rootFace + 0.02 || (1 - fraction) * length <= tipFace + 0.02)
+          continue;
+        auto rib = interpolateRib(ribs[i], ribs[i + 1], (station - a) / (b - a));
+        rib.virtualStation = true;
+        samples.push_back(std::move(rib));
+      }
+    }
+    physical.push_back(samples.size());
+    samples.push_back(ribs.back());
+    auto parameters = p;
+    parameters.surfaceSampling = true;
+    const auto remap = [&](int index) {
+      return static_cast<int>(physical[std::clamp(index, 1, static_cast<int>(ribs.size())) - 1] +
+                              1);
+    };
+    parameters.ailerons = parameters.flaps = false;
+    for (const auto& control : wing.controlSurfaces) {
+      const int first = remap(static_cast<int>(control.startRibIndex) + 1);
+      const int last = remap(static_cast<int>(control.stopRibIndex) + 1);
+      if (control.name == "Aileron") {
+        parameters.ailerons = true;
+        parameters.aileronStartRib = first;
+        parameters.aileronStopRib = last;
+      } else {
+        parameters.flaps = true;
+        parameters.flapStartRib = first;
+        parameters.flapStopRib = last;
+      }
+    }
+    parameters.spoilerStartRib = remap(p.spoilerStartRib);
+    parameters.spoilerEndRib = remap(p.spoilerEndRib);
+    parameters.leTopSheetStopRib = remap(p.leTopSheetStopRib);
+    parameters.leBottomSheetStopRib = remap(p.leBottomSheetStopRib);
+    parameters.teTopSheetStopRib = remap(p.teTopSheetStopRib);
+    parameters.teBottomSheetStopRib = remap(p.teBottomSheetStopRib);
+    parameters.topRibCaps = parameters.bottomRibCaps = false;
+    parameters.addFrontBuildTab = parameters.addRearBuildTab = false;
+    parameters.addTopFrontBuildTab = parameters.addTopRearBuildTab = false;
+    parameters.wiringHoles = parameters.riblets = parameters.ribLighteningHoles = false;
+    parameters.centerSparWoodJoiner = parameters.behindSparJoiner = parameters.fiftyPercentJoiner =
+        false;
+    parameters.shearWebs = parameters.sparShearWebs = false;
+    try {
+      wing.surfaceWing = std::make_shared<StructuredWing>(applyWingStructure(samples, parameters));
+    } catch (const EdgeHeightError& error) {
+      const auto index = std::min(error.ribIndex() - 1, samples.size() - 1);
+      throw std::invalid_argument(
+          "Curved " + error.edgeName() + " stock requires Height greater than " +
+          std::to_string(error.cutHeightMm()) + " mm near span " +
+          std::to_string(samples[index].spanPosition) + " mm (including between-rib sections).");
+    }
+    if (wing.surfaceWing->diamondLeadingEdgeWidth > wing.diamondLeadingEdgeWidth + 1e-8) {
+      auto corrected = p;
+      corrected.diamondLeadingEdgeWidth = wing.surfaceWing->diamondLeadingEdgeWidth;
+      return applyWingStructure(ribs, corrected);
+    }
+  }
   return wing;
 }
 
@@ -3047,17 +3316,7 @@ void addRiblets(StructuredWing& wing,
     for (int ordinal = 1; ordinal <= parameters.ribletsPerBay; ++ordinal) {
       const double t = static_cast<double>(ordinal) /
           static_cast<double>(parameters.ribletsPerBay + 1);
-      RibDefinition rib{
-          mix(inner.rib.spanPosition, outer.rib.spanPosition, t),
-          mix(inner.rib.chord, outer.rib.chord, t),
-          mix(inner.rib.leadingEdgeOffset, outer.rib.leadingEdgeOffset, t),
-          mix(inner.rib.dihedralHeight, outer.rib.dihedralHeight, t),
-          mix(inner.rib.twistDegrees, outer.rib.twistDegrees, t),
-          mix(inner.rib.ribPlaneAngleDegrees,
-              outer.rib.ribPlaneAngleDegrees, t),
-          -0.5,
-          AirfoilProfile::interpolate(
-              inner.rib.profile, outer.rib.profile, t)};
+      RibDefinition rib = interpolateRib(inner.rib, outer.rib, t);
       // Riblets retain the original airfoil surfaces: full-rib cap settings
       // must not add cap parts or recess the riblet outline.
       const auto [upper, lower] = localSurfaces(rib);
@@ -3119,7 +3378,10 @@ void addRiblets(StructuredWing& wing,
               modelPlanePoint(outer.rib, leadingCenters[bay + 1]).x, t),
           mix(modelPlanePoint(inner.rib, leadingCenters[bay]).y,
               modelPlanePoint(outer.rib, leadingCenters[bay + 1]).y, t)};
-      const auto leadingCenter = localPlanePoint(riblet.rib, leadingModel);
+      const auto leadingCenter =
+          riblet.rib.planform
+              ? camberCenter(riblet.rib, std::max(0.001, leadingDiameter * 0.5 - 0.1))
+              : localPlanePoint(riblet.rib, leadingModel);
       auto finishedOutline = exposedLeadingEdgeOutline(
           riblet.outerOutline, leadingCenter, leadingDiameter * 0.5);
       riblet.outerOutline = finishedOutline.points;

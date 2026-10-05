@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.5.0**.
+source version is **1.6.0**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -12,6 +12,7 @@ source version is **1.5.0**.
 
 - Designs one or more connected half-wing panels and mirrors them into a complete wing.
 - Imports root and tip airfoils from Selig-style `.dat` coordinate files.
+- Imports dimensioned SVG/DXF leading- and trailing-edge curves per panel, preserving chords and normalizing span.
 - Interpolates airfoil profiles, chord, sweep, twist, and rib positions across each panel.
 - Adds rib build tabs for assembling wing panels on a flat surface, with or without twist.
 - Adds independent top and bottom rib caps, recessed into clear rib sections and trimmed around existing structure.
@@ -28,6 +29,36 @@ source version is **1.5.0**.
 
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
+
+## What's new in 1.6.0 (October 5, 2026)
+
+- **Imported LE/TE curves:** each panel's LE/TE tab can import exactly two open paths
+  from a dimensioned SVG or ASCII DXF. The filename appears below **Import LE/TE Curves**;
+  **Delete LE/TE Curves** restores the straight planform controls.
+- Files must declare millimeters or inches. X is chord and positive Y is span; axes are
+  swapped automatically when the drawing is longer along X. Exactly one root must be
+  within 1/4 inch (6.35 mm) of the origin to identify the LE. Both roots must be within
+  that tolerance of Y=0, and each path's span must be within it of the Specs tab's Panel
+  Span. DXF curves must have Z=0. Standalone DXF POINT markers are ignored.
+- Import aligns the roots and scales only the span, preserving the imported chords.
+  Root and tip chords become read-only; Tip Sweep is disabled and displays `--` because
+  the curves define sweep. Invalid units, path counts, crossings, and backward span
+  segments produce an explanatory error.
+- Curved stock uses smooth 3D guide sweeps with changing airfoil shape and panel twist,
+  including the upright center-root transition. Straight geometry uses one root-to-tip
+  loft when it reproduces the profiles. A bounded smooth-loft fallback handles cases
+  where a valid sweep cannot be formed. CF Tube LE selection warns about bending the
+  chosen stock, and curved assemblies receive additional clearance checks.
+- **Multi-panel chord matching:** conventional outer panels inherit the inner tip chord.
+  Imported outer roots within 1/4 inch (6.35 mm) are matched by a TE correction that fades
+  to zero at the tip, preserving the LE and tip chord. Larger mismatches or corrections
+  that cross the curves stop generation. Either or both panels may use imported curves.
+- Ailerons and flaps retain straight hinges with curved TEs. **Hinge Parallel with Y Axis**
+  uses Width as the maximum chordwise width; otherwise Width sets the TE-to-hinge distance
+  at both ends, so the interior may be wider.
+- Projects embed the curve geometry and filename, including joint corrections. Reopening
+  restores the curves and filename without needing or rereading the original SVG/DXF.
+  Imports, deletions, and edits retain the existing Generate Wing workflow.
 
 ## What's new in 1.5.0 (October 3, 2026)
 
@@ -136,16 +167,16 @@ press **F1**.
 
 ## Download
 
-Version 1.5.0 builds produce the installers listed below in `dist/`. Published releases are on
+Version 1.6.0 builds produce the installers listed below in `dist/`. Published releases are on
 the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases):
 
-- `DesignRC-1.5.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.6.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.5.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.6.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.5.0_amd64.deb
+  sudo apt install ./designrc_1.6.0_amd64.deb
   designrc
   ```
 
@@ -158,15 +189,15 @@ the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.5.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.6.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.5.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.6.0-1.x86_64.rpm
   designrc
   ```
 
-The release also includes source archives and `DesignRC-1.5.0-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.6.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -307,7 +338,7 @@ Then build the Release application and installer with:
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
 installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.5 is packaged as 1.5.0. The resulting installer does not require administrator
+version such as 1.6 is packaged as 1.6.0. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
@@ -409,15 +440,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.5.0_amd64.deb
-dist/DesignRC-1.5.0-source.tar.gz
-dist/DesignRC-1.5.0-Linux-x64.sha256
+dist/designrc_1.6.0_amd64.deb
+dist/DesignRC-1.6.0-source.tar.gz
+dist/DesignRC-1.6.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.5.0_amd64.deb
+sudo apt install ./dist/designrc_1.6.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -466,15 +497,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.5.0-1.x86_64.rpm
-dist/DesignRC-1.5.0-source.tar.gz
-dist/DesignRC-1.5.0-Linux-RPM-x64.sha256
+dist/designrc-1.6.0-1.x86_64.rpm
+dist/DesignRC-1.6.0-source.tar.gz
+dist/DesignRC-1.6.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.5.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.6.0-1.x86_64.rpm
 designrc
 ```
 

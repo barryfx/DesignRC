@@ -22,6 +22,10 @@ struct PanelBuildTimings {
   double joinersMs{};
   double ribCapsMs{};
   double displayMeshMs{};
+  // Imported span members: successful sweeps, peak profile count, and fallbacks.
+  std::size_t guideSweeps{};
+  std::size_t maximumSweepProfiles{};
+  std::size_t reducedLoftFallbacks{};
 };
 
 enum class PartMaterial { Wood, CarbonFiber, Aluminum, Steel, Fiberglass };

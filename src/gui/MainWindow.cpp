@@ -282,6 +282,8 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   const auto station = [&d](const int number) { return d.addRib1a && number >= 2 ? number + 1 : number; };
   s.leTopSheetStopRib = station(d.leTopSheetStopRib); s.leBottomSheetStopRib = station(d.leBottomSheetStopRib);
   s.teTopSheetStopRib = station(d.teTopSheetStopRib); s.teBottomSheetStopRib = station(d.teBottomSheetStopRib);
+  s.aileronHingeParallelY = d.aileronHingeParallelY;
+  s.flapHingeParallelY = d.flapHingeParallelY;
   s.ailerons = d.ailerons; s.aileronWidth = d.aileronWidth; s.aileronHeight = d.aileronHeight;
   s.aileronHingePostWidth = d.aileronHingePostWidth; s.aileronHingePostHeight = d.aileronHingePostHeight;
   s.aileronStartRib = station(d.aileronStartRib); s.aileronStopRib = station(d.aileronStopRib);
@@ -1296,11 +1298,13 @@ struct PreviewComputation {
 
 struct UpdateCancelled final {};
 
-PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
+PreviewComputation computePreview(std::vector<WingPanelData> panels,
                                   const DisplayUnit unit,
                                   const std::shared_ptr<std::atomic_bool>& cancellation,
                                   const std::function<void(int, const QString&)>& progress,
                                   const std::size_t requestedWorkerThreads = 0) {
+  const auto chordError = matchPanelRootChords(panels);
+  if (!chordError.isEmpty()) throw std::invalid_argument(chordError.toStdString());
   const auto alignmentError = woodJoinerSparAlignmentError(panels);
   if (!alignmentError.isEmpty())
     throw std::invalid_argument(alignmentError.toStdString());
@@ -1330,7 +1334,8 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
     const auto& angles = assemblyAngles[panelIndex];
     origins[panelIndex] = {originX, originY, originZ};
     const double radians = angles.panelInclinationDegrees * std::numbers::pi / 180.0;
-    halfArea += d.panelSpan * (d.rootChord + d.tipChord) * 0.5;
+    halfArea += (d.planform.empty() ? d.panelSpan * (d.rootChord + d.tipChord) * 0.5
+                                    : d.planform.area(d.panelSpan));
     originX += d.sweep;
     originY += std::cos(radians) * d.panelSpan;
     originZ += std::sin(radians) * d.panelSpan;
@@ -1350,7 +1355,10 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
       const auto& angles = assemblyAngles[panelIndex];
       const auto origin = origins[panelIndex];
       domain::WingParameters p;
-      p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
+      p.planform = d.planform;
+      p.halfSpan = d.panelSpan;
+      p.rootChord = d.rootChord;
+      p.tipChord = d.tipChord;
       p.sweep = d.sweep; p.dihedralDegrees = 0.0;
       p.rootTwistDegrees = twistRanges[panelIndex].rootTwistDegrees;
       p.tipTwistDegrees = twistRanges[panelIndex].tipTwistDegrees;
@@ -1358,11 +1366,7 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
       auto ribs = domain::generateRibs(p, d.rootAirfoil, d.tipAirfoil);
       if (d.addRib1a) {
         const double t = 0.5 / static_cast<double>(d.ribCount - 1);
-        ribs.insert(ribs.begin() + 1, {p.halfSpan * t,
-            p.rootChord + t * (p.tipChord - p.rootChord), p.sweep * t, 0.0,
-            p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
-            0.0, -0.5,
-            domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)});
+        ribs.insert(ribs.begin() + 1, domain::ribAtStation(p, d.rootAirfoil, d.tipAirfoil, t));
       }
       const double radians = angles.panelInclinationDegrees * std::numbers::pi / 180.0;
       for (std::size_t i = 0; i < ribs.size(); ++i) {
@@ -1443,6 +1447,12 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
     for (auto& member : structured.members)
       if (member.name.find("leading edge") != std::string::npos)
         member.name = "LE" + panelPartNumber;
+    if (structured.surfaceWing) {
+      for (std::size_t i = 0; i < structured.profiledMembers.size(); ++i)
+        structured.surfaceWing->profiledMembers[i].name = structured.profiledMembers[i].name;
+      for (std::size_t i = 0; i < structured.members.size(); ++i)
+        structured.surfaceWing->members[i].name = structured.members[i].name;
+    }
     for (std::size_t stockIndex = 0; stockIndex < structured.sheetStockParts.size(); ++stockIndex) {
       auto& stock = structured.sheetStockParts[stockIndex];
       stock.name = "TE" + panelPartNumber;
@@ -1572,6 +1582,74 @@ PreviewComputation computePreview(const std::vector<WingPanelData>& panels,
 }
 
 } // namespace
+
+int runProjectBackendRegression(const QString& path) {
+  try {
+    QFile file{path};
+    if (!file.open(QIODevice::ReadOnly)) return 1;
+    const auto project = QJsonDocument::fromJson(file.readAll()).object();
+    if (project.value("format").toString() != "DesignRC") return 1;
+    std::vector<WingPanelData> panels;
+    for (const auto& panel : project.value("panels").toArray())
+      panels.push_back(panelDataFromJson(panel.toObject()));
+    if (panels.empty()) return 1;
+    const auto result = computePreview(panels,
+        static_cast<DisplayUnit>(project.value("globalUnit").toInt()),
+        std::make_shared<std::atomic_bool>(false), [](int, const QString&) {});
+    if (result.materialShapes.parts.empty()) return 2;
+    std::fprintf(stderr, "Saved project built successfully: %zu parts\n", result.materialShapes.parts.size());
+    return 0;
+  } catch (const Standard_Failure& error) {
+    std::fprintf(stderr, "Project regression OCCT error: %s\n", error.GetMessageString());
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "Project regression error: %s\n", error.what());
+  }
+  return 3;
+}
+
+int runPanelChordBackendRegression() {
+  try {
+    for (const bool importedInner : {false, true}) {
+      for (const bool importedOuter : {false, true}) {
+        WingPanelData inner, outer;
+        inner.panelSpan = outer.panelSpan = 300;
+        inner.ribCount = outer.ribCount = 3;
+        inner.rootChord = 200; inner.tipChord = 160;
+        outer.rootChord = 162; outer.tipChord = 120;
+        outer.rootAirfoil = inner.tipAirfoil;
+        if (importedInner)
+          inner.planform = {{{0, 0}, {0, 1}}, {{200, 0}, {160, 1}}, 300, 300};
+        if (importedOuter)
+          outer.planform = {{{0, 0}, {0, 1}}, {{162, 0}, {120, 1}}, 300, 300};
+        const auto built = computePreview({inner, outer}, DisplayUnit::Millimeters,
+            std::make_shared<std::atomic_bool>(false), [](int, const QString&) {});
+        if (built.ribSets.size() != 2 ||
+            std::abs(built.ribSets[0].back().chord - built.ribSets[1].front().chord) > 1e-9 ||
+            std::abs(built.ribSets[1].back().chord - 120) > 1e-9) return 1;
+        if (importedOuter) {
+          outer.planform.trailing.front().x = 167;
+          bool rejected = false;
+          try {
+            static_cast<void>(computePreview({inner, outer}, DisplayUnit::Millimeters,
+                std::make_shared<std::atomic_bool>(false), [](int, const QString&) {}));
+          } catch (const std::invalid_argument& error) {
+            const std::string message = error.what();
+            rejected = message.find("Panel 1") != std::string::npos &&
+                       message.find("Panel 2") != std::string::npos;
+          }
+          if (!rejected) return 2;
+        }
+      }
+    }
+  } catch (const Standard_Failure& error) {
+    std::fprintf(stderr, "Panel chord regression OCCT: %s\n", occtExceptionMessage(error));
+    return 4;
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "Panel chord regression: %s\n", error.what());
+    return 3;
+  }
+  return 0;
+}
 
 int runCancellationBackendRegression() {
   for (const auto& stage : {QString{"Laying out rib lightening holes"},
@@ -2354,7 +2432,12 @@ std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) 
     std::vector<WingPanelData> result;
     for (const auto& value : document.array()) {
       const auto object = value.toObject();
-      auto panel = panelDataFromJson(object);
+      WingPanelData panel;
+      try {
+        panel = panelDataFromJson(object);
+      } catch (const std::exception&) {
+        return {installedDefaultPanelData(unit)};
+      }
       // Earlier installed defaults incorrectly forced this wood-stock width
       // to inches. Migrate only the two legacy installed values so an
       // intentional user-selected inch override remains intact.
@@ -2404,12 +2487,15 @@ std::vector<WingPanelData> MainWindow::panelData() const {
   for (const auto* editor : panelEditors_) {
     auto panel = editor->data();
     if (!result.empty()) {
-      panel.rootChord = result.back().tipChord;
+      if (panel.planform.empty()) panel.rootChord = result.back().tipChord;
       panel.rootAirfoil = result.back().tipAirfoil;
       panel.rootAirfoilPath = result.back().tipAirfoilPath;
     }
     result.push_back(std::move(panel));
   }
+  // Invalid joints remain editable; regeneration reports the error. Valid
+  // corrections are shared by metrics, saving, preview, and plan generation.
+  static_cast<void>(matchPanelRootChords(result));
   return result;
 }
 
@@ -2430,7 +2516,7 @@ void MainWindow::rebuildPanelTabs(const std::vector<WingPanelData>& panels) {
     if (panel.ribletEndRib <= 0)
       panel.ribletEndRib = panel.ribCount;
     if (i > 0) {
-      panel.rootChord = panels[i - 1].tipChord;
+      if (panel.planform.empty()) panel.rootChord = panels[i - 1].tipChord;
       panel.rootAirfoil = panels[i - 1].tipAirfoil;
       panel.rootAirfoilPath = panels[i - 1].tipAirfoilPath;
     }
@@ -2450,6 +2536,10 @@ void MainWindow::rebuildPanelTabs(const std::vector<WingPanelData>& panels) {
 void MainWindow::updateMetrics() {
   if (!metrics_) return;
   const auto panels = panelData();
+  for (std::size_t i = 1; i < panels.size(); ++i)
+    if (std::abs(panelEditors_[i]->data().rootChord - panels[i].rootChord) > 1e-9)
+      panelEditors_[i]->setMatchedRootChord(panels[i]);
+
   if (panels.empty()) {
     metrics_->setText(
         "Wingspan: --  |  Wing area: --\nAspect ratio: --  |  Taper ratio: --");
@@ -2467,8 +2557,10 @@ void MainWindow::updateMetrics() {
     const double angleRadians =
         assemblyAngles[index].panelInclinationDegrees * std::numbers::pi / 180.0;
     halfProjectedSpan += panels[index].panelSpan * std::cos(angleRadians);
-    halfArea += panels[index].panelSpan *
-        (panels[index].rootChord + panels[index].tipChord) * 0.5;
+    halfArea +=
+        panels[index].planform.empty()
+            ? panels[index].panelSpan * (panels[index].rootChord + panels[index].tipChord) * 0.5
+            : panels[index].planform.area(panels[index].panelSpan);
   }
 
   const double fullSpan = halfProjectedSpan * 2.0;
@@ -2636,7 +2728,12 @@ void MainWindow::regeneratePreview() {
       return;
     }
   }
-  const auto panels = panelData();
+  auto panels = panelData();
+  const auto chordError = matchPanelRootChords(panels);
+  if (!chordError.isEmpty()) {
+    QMessageBox::warning(this, "Panel chord mismatch", chordError);
+    return;
+  }
   const auto alignmentError = woodJoinerSparAlignmentError(panels);
   if (!alignmentError.isEmpty()) {
     QMessageBox::warning(this, "Invalid wood joiner", alignmentError);
@@ -2840,7 +2937,12 @@ void MainWindow::regeneratePreviewSynchronous() {
     }
   }
   try {
-    const auto panels = panelData();
+    auto panels = panelData();
+    const auto chordError = matchPanelRootChords(panels);
+    if (!chordError.isEmpty()) {
+      QMessageBox::warning(this, "Panel chord mismatch", chordError);
+      return;
+    }
     const auto alignmentError = woodJoinerSparAlignmentError(panels);
     if (!alignmentError.isEmpty()) {
       QMessageBox::warning(this, "Invalid wood joiner", alignmentError);
@@ -2863,7 +2965,10 @@ void MainWindow::regeneratePreviewSynchronous() {
     for (std::size_t panelIndex = 0; panelIndex < panels.size(); ++panelIndex) {
       const auto& d = panels[panelIndex];
       domain::WingParameters p;
-      p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
+      p.planform = d.planform;
+      p.halfSpan = d.panelSpan;
+      p.rootChord = d.rootChord;
+      p.tipChord = d.tipChord;
       p.sweep = d.sweep; p.dihedralDegrees = 0.0;
       p.rootTwistDegrees = twistRanges[panelIndex].rootTwistDegrees;
       p.tipTwistDegrees = twistRanges[panelIndex].tipTwistDegrees;
@@ -2871,11 +2976,7 @@ void MainWindow::regeneratePreviewSynchronous() {
       auto ribs = domain::generateRibs(p, d.rootAirfoil, d.tipAirfoil);
       if (d.addRib1a) {
         const double t = 0.5 / static_cast<double>(d.ribCount - 1);
-        ribs.insert(ribs.begin() + 1, {p.halfSpan * t,
-            p.rootChord + t * (p.tipChord - p.rootChord), p.sweep * t, 0.0,
-            p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
-            0.0, -0.5,
-            domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)});
+        ribs.insert(ribs.begin() + 1, domain::ribAtStation(p, d.rootAirfoil, d.tipAirfoil, t));
       }
       const auto& angles = assemblyAngles[panelIndex];
       const double orientation = angles.panelInclinationDegrees;
@@ -2917,7 +3018,8 @@ void MainWindow::regeneratePreviewSynchronous() {
       }
       ribSets.push_back(ribs);
       thicknesses.push_back(d.ribThickness);
-      halfArea += d.panelSpan * (d.rootChord + d.tipChord) * 0.5;
+      halfArea += (d.planform.empty() ? d.panelSpan * (d.rootChord + d.tipChord) * 0.5
+                                      : d.planform.area(d.panelSpan));
       originX = ribs.back().leadingEdgeOffset;
       originY = ribs.back().spanPosition;
       originZ = ribs.back().dihedralHeight;
@@ -2958,7 +3060,14 @@ void MainWindow::regeneratePreviewSynchronous() {
       for (auto& member : structured.members)
         if (member.name.find("leading edge") != std::string::npos)
           member.name = "LE" + panelPartNumber;
-      for (std::size_t stockIndex = 0; stockIndex < structured.sheetStockParts.size(); ++stockIndex) {
+      if (structured.surfaceWing) {
+        for (std::size_t i = 0; i < structured.profiledMembers.size(); ++i)
+          structured.surfaceWing->profiledMembers[i].name = structured.profiledMembers[i].name;
+        for (std::size_t i = 0; i < structured.members.size(); ++i)
+          structured.surfaceWing->members[i].name = structured.members[i].name;
+      }
+      for (std::size_t stockIndex = 0; stockIndex < structured.sheetStockParts.size();
+           ++stockIndex) {
         auto& stock = structured.sheetStockParts[stockIndex];
         stock.name = "TE" + panelPartNumber;
         if (structured.sheetStockParts.size() > 1)
@@ -3017,7 +3126,10 @@ void MainWindow::regeneratePreviewLegacy() {
   try {
     const auto d = editor->data();
     domain::WingParameters p;
-    p.halfSpan = d.panelSpan; p.rootChord = d.rootChord; p.tipChord = d.tipChord;
+    p.planform = d.planform;
+    p.halfSpan = d.panelSpan;
+    p.rootChord = d.rootChord;
+    p.tipChord = d.tipChord;
     p.sweep = d.sweep; p.dihedralDegrees = d.dihedral;
     const int panelIndex = std::max(0, panelTabs_->currentIndex());
     std::vector<double> panelTwists;
@@ -3032,15 +3144,7 @@ void MainWindow::regeneratePreviewLegacy() {
     const bool panelOne = panelTabs_->currentIndex() == 0;
     if (panelOne && d.addRib1a) {
       const double t = 0.5 / static_cast<double>(d.ribCount - 1);
-      domain::RibDefinition rib1a{
-          p.halfSpan * t,
-          p.rootChord + t * (p.tipChord - p.rootChord),
-          p.sweep * t,
-          std::tan(p.dihedralDegrees * std::numbers::pi / 180.0) * p.halfSpan * t,
-          p.rootTwistDegrees + t * (p.tipTwistDegrees - p.rootTwistDegrees),
-          p.dihedralDegrees,
-          -0.5,
-          domain::AirfoilProfile::interpolate(d.rootAirfoil, d.tipAirfoil, t)};
+      auto rib1a = domain::ribAtStation(p, d.rootAirfoil, d.tipAirfoil, t);
       currentRibs_.insert(currentRibs_.begin() + 1, std::move(rib1a));
     }
     domain::StructureParameters structure;
@@ -3093,6 +3197,8 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.bottomTeSheetingTaper = d.bottomTeSheetingTaper;
     structure.bottomTeSheetingTaperStartLocationPercent =
         d.bottomTeSheetingTaperStartLocationPercent;
+    structure.aileronHingeParallelY = d.aileronHingeParallelY;
+    structure.flapHingeParallelY = d.flapHingeParallelY;
     structure.ailerons = d.ailerons; structure.aileronWidth = d.aileronWidth; structure.aileronHeight = d.aileronHeight;
     structure.aileronHingePostWidth = d.aileronHingePostWidth; structure.aileronHingePostHeight = d.aileronHingePostHeight;
     const auto stationNumber = [panelOne, &d](const int ribNumber) {
@@ -3463,18 +3569,21 @@ QJsonObject MainWindow::projectJson(const std::vector<WingPanelData>& panels, co
 
 bool MainWindow::loadProjectJson(const QJsonObject& object) {
   if (object.value("format").toString() != "DesignRC") return false;
-  globalUnit_ = static_cast<DisplayUnit>(object.value("globalUnit").toInt(0));
+  const auto importedUnit = static_cast<DisplayUnit>(object.value("globalUnit").toInt(0));
   std::vector<WingPanelData> panels;
   for (const auto& value : object.value("panels").toArray()) {
     const auto panelObject = value.toObject();
-    auto panel = panelDataFromJson(panelObject);
+    WingPanelData panel;
+    try {
+      panel = panelDataFromJson(panelObject);
+    } catch (const std::exception&) {
+      return false;
+    }
     const std::size_t panelIndex = panels.size();
     if (!panelObject.contains("spoilerMinimumWoodMargin"))
-      panel.spoilerMinimumWoodMargin =
-          globalUnit_ == DisplayUnit::Inches ? 7.9375 : 6.0;
+      panel.spoilerMinimumWoodMargin = importedUnit == DisplayUnit::Inches ? 7.9375 : 6.0;
     if (!panelObject.contains("spoilerMinimumCircleDistance"))
-      panel.spoilerMinimumCircleDistance =
-          globalUnit_ == DisplayUnit::Inches ? 12.7 : 12.0;
+      panel.spoilerMinimumCircleDistance = importedUnit == DisplayUnit::Inches ? 12.7 : 12.0;
     if (!panelObject.contains("ribletStartRib"))
       panel.ribletStartRib = panelIndex == 0 ? 2 : 1;
     if (!panelObject.contains("ribletEndRib"))
@@ -3482,6 +3591,7 @@ bool MainWindow::loadProjectJson(const QJsonObject& object) {
     panels.push_back(std::move(panel));
   }
   if (panels.empty()) return false;
+  globalUnit_ = importedUnit;
   rebuildPanelTabs(panels);
   markPreviewPending();
   return true;
@@ -3583,7 +3693,7 @@ void MainWindow::openDefaults() {
     auto panel = panelDefaults;
     if (!editors.empty()) {
       const auto previous = editors.back()->data();
-      panel.rootChord = previous.tipChord;
+      if (panel.planform.empty()) panel.rootChord = previous.tipChord;
       panel.rootAirfoil = previous.tipAirfoil;
       panel.rootAirfoilPath = previous.tipAirfoilPath;
     }
@@ -3604,7 +3714,7 @@ void MainWindow::openDefaults() {
     for (const auto* editor : editors) {
       auto panel = editor->data();
       if (!defaults.empty()) {
-        panel.rootChord = defaults.back().tipChord;
+        if (panel.planform.empty()) panel.rootChord = defaults.back().tipChord;
         panel.rootAirfoil = defaults.back().tipAirfoil;
         panel.rootAirfoilPath = defaults.back().tipAirfoilPath;
       }
@@ -3620,7 +3730,7 @@ void MainWindow::openDefaults() {
     while (editors.size() > defaults.size()) removeLastEditor();
     for (std::size_t i = 0; i < editors.size(); ++i) {
       if (i > 0) {
-        defaults[i].rootChord = defaults[i - 1].tipChord;
+        if (defaults[i].planform.empty()) defaults[i].rootChord = defaults[i - 1].tipChord;
         defaults[i].rootAirfoil = defaults[i - 1].tipAirfoil;
         defaults[i].rootAirfoilPath = defaults[i - 1].tipAirfoilPath;
       }

@@ -12,6 +12,20 @@
 #include <BRep_Tool.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepBuilderAPI_Sewing.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepLib.hxx>
+#include <GeomFill_Sweep.hxx>
+#include <GeomFill_NSections.hxx>
+#include <GeomFill_Profiler.hxx>
+#include <GeomFill_Fixed.hxx>
+#include <GeomFill_CurveAndTrihedron.hxx>
+#include <GeomAdaptor_Curve.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <GeomConvert.hxx>
+#include <BSplCLib.hxx>
+#include <Geom_BSplineSurface.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeHalfSpace.hxx>
@@ -28,6 +42,9 @@
 #include <GCE2d_MakeSegment.hxx>
 #include <Geom_Plane.hxx>
 #include <GeomAPI_Interpolate.hxx>
+#include <GeomAPI_PointsToBSpline.hxx>
+#include <GeomAPI_ProjectPointOnCurve.hxx>
+#include <Geom_BSplineCurve.hxx>
 #include <Precision.hxx>
 #include <Message_ProgressIndicator.hxx>
 #include <Poly_Triangle.hxx>
@@ -38,12 +55,14 @@
 #include <NCollection_HArray1.hxx>
 #else
 #include <TColgp_HArray1OfPnt.hxx>
+#include <TColStd_HArray1OfReal.hxx>
 #endif
 #include <ShapeFix_Shape.hxx>
 #include <ShapeFix_Face.hxx>
 #include <ShapeFix_Wire.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopExp.hxx>
 #include <TopLoc_Location.hxx>
 #include <TopTools_ListOfShape.hxx>
 #include <TopoDS.hxx>
@@ -51,6 +70,7 @@
 #include <TopoDS_Compound.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Pnt.hxx>
+#include <gp_Circ.hxx>
 #include <gp_Pnt2d.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Dir.hxx>
@@ -70,14 +90,18 @@
 #include <limits>
 #include <cmath>
 #include <chrono>
+#include <cstdlib>
+#include <cstdio>
 #include <thread>
 
 namespace designrc::geometry {
 
 #if OCC_VERSION_HEX >= 0x080000
 using OcctPointArray = NCollection_HArray1<gp_Pnt>;
+using OcctParameterArray = NCollection_HArray1<double>;
 #else
 using OcctPointArray = TColgp_HArray1OfPnt;
+using OcctParameterArray = TColStd_HArray1OfReal;
 #endif
 
 TopoDS_Shape buildWingPreview(
@@ -196,6 +220,435 @@ TopoDS_Shape buildWingPreview(
 
 namespace {
 
+Handle(Geom_BSplineCurve) sectionCurve(const Handle(OcctPointArray)& points, bool imported) {
+  // Common transverse parameters keep knot vectors compatible across swept
+  // profiles. Chord-length knots differ slightly at every station and their
+  // union makes the section law needlessly huge.
+  const auto parameters = Handle(OcctParameterArray){new OcctParameterArray{points->Lower(), points->Upper()}};
+  double distance = 0;
+  for (int i = points->Lower(); i <= points->Upper(); ++i) {
+    if (i > points->Lower()) distance += points->Value(i).Distance(points->Value(i - 1));
+    parameters->SetValue(i, imported ? static_cast<double>(i - points->Lower()) : distance);
+  }
+  GeomAPI_Interpolate interpolation{points, parameters, false, Precision::Confusion()};
+  interpolation.Perform();
+  if (!interpolation.IsDone()) throw std::runtime_error("Unable to interpolate stock section");
+  return interpolation.Curve();
+}
+
+// Interpolate profile control points with a common C1 cubic law. Keeping
+// non-rational profiles non-rational permits an exact guide-translation sweep.
+Handle(Geom_BSplineSurface) sectionSurface(
+    const NCollection_Sequence<Handle(Geom_Curve)>& curves,
+    const NCollection_Sequence<double>& parameters) {
+  GeomFill_Profiler profiles;
+  bool rational = false;
+  for (int i = 1; i <= curves.Length(); ++i) {
+    const auto curve = Handle(Geom_BSplineCurve)::DownCast(curves(i));
+    rational |= curve.IsNull() || curve->IsRational();
+    profiles.AddCurve(curves(i));
+  }
+  if (rational) {
+    GeomFill_NSections law{curves, parameters, 0, 1, parameters.First(), parameters.Last()};
+    return law.BSplineSurface();
+  }
+  profiles.Perform(Precision::PConfusion());
+  const int count = curves.Length(), poles = profiles.NbPoles();
+  NCollection_Array2<gp_Pnt> grid{1, poles, 1, 3 * (count - 1) + 1};
+  NCollection_Array1<double> uKnots{1, profiles.NbKnots()}, vKnots{1, count};
+  NCollection_Array1<int> uMults{1, profiles.NbKnots()}, vMults{1, count};
+  profiles.KnotsAndMults(uKnots, uMults);
+  for (int i = 1; i <= count; ++i) {
+    vKnots(i) = parameters(i);
+    vMults(i) = i == 1 || i == count ? 4 : 3;
+  }
+  for (int u = 1; u <= poles; ++u) {
+    std::vector<gp_Pnt> points;
+    for (int i = 1; i <= count; ++i)
+      points.push_back(Handle(Geom_BSplineCurve)::DownCast(profiles.Curve(i))->Pole(u));
+    std::vector<gp_Vec> tangents;
+    for (int i = 0; i < count; ++i) {
+      const int a = std::max(0, i - 1), b = std::min(count - 1, i + 1);
+      tangents.push_back(gp_Vec{points[a], points[b]} / (parameters(b + 1) - parameters(a + 1)));
+    }
+    grid(u, 1) = points.front();
+    for (int i = 0; i + 1 < count; ++i) {
+      const double step = (parameters(i + 2) - parameters(i + 1)) / 3;
+      grid(u, 3 * i + 2) = points[i].Translated(tangents[i] * step);
+      grid(u, 3 * i + 3) = points[i + 1].Translated(tangents[i + 1] * -step);
+      grid(u, 3 * i + 4) = points[i + 1];
+    }
+  }
+  return new Geom_BSplineSurface{grid, uKnots, vKnots, uMults, vMults, profiles.Degree(), 3};
+}
+
+// Separate the path from the section's shape/orientation. Dense stations define
+// a smooth guide, but only sections needed to describe shape or twist changes
+// are supplied to OCCT's pipe builder. Never fit a surface through every path
+// sample: that made ordinary imported wood stock take minutes to generate.
+class SpanwiseSurface {
+public:
+  explicit SpanwiseSurface(bool imported, std::function<bool()> cancelled = {},
+                           PanelBuildTimings* timings = nullptr)
+      : imported_(imported), cancelled_(std::move(cancelled)),
+        loft_(true, true, Precision::Confusion()), timings_(timings) {
+    loft_.CheckCompatibility(false);
+  }
+  void CheckCompatibility(bool value) { loft_.CheckCompatibility(value); }
+  void AddWire(const TopoDS_Wire& wire, const domain::RibDefinition* = nullptr) {
+    wires_.push_back(wire);
+  }
+  void Build() {
+    checkpoint();
+    bool endpointsOnly = imported_ && wires_.size() > 2;
+    const auto samples = [](const TopoDS_Wire& wire) {
+      std::vector<gp_Pnt> points;
+      for (BRepTools_WireExplorer edges{wire}; edges.More(); edges.Next()) {
+        BRepAdaptor_Curve curve{edges.Current()};
+        for (int i = 0; i <= 8; ++i) {
+          const double t = edges.Current().Orientation() == TopAbs_REVERSED ? 1 - i / 8.0 : i / 8.0;
+          points.push_back(curve.Value(curve.FirstParameter() +
+                                       t * (curve.LastParameter() - curve.FirstParameter())));
+        }
+      }
+      return points;
+    };
+    if (endpointsOnly) {
+      const auto first = samples(wires_.front()), last = samples(wires_.back());
+      endpointsOnly = !first.empty() && first.size() == last.size();
+      for (std::size_t i = 1; endpointsOnly && i + 1 < wires_.size(); ++i) {
+        const auto middle = samples(wires_[i]);
+        if (middle.size() != first.size()) {
+          endpointsOnly = false;
+          break;
+        }
+        const gp_Vec axis{first.front(), last.front()};
+        if (axis.SquareMagnitude() < 1e-12) {
+          endpointsOnly = false;
+          break;
+        }
+        const double t = gp_Vec{first.front(), middle.front()}.Dot(axis) / axis.SquareMagnitude();
+        if (t <= 0 || t >= 1) {
+          endpointsOnly = false;
+          break;
+        }
+        for (std::size_t j = 0; j < first.size(); ++j)
+          if (first[j].Translated(gp_Vec{first[j], last[j]} * t).Distance(middle[j]) > 1e-5) {
+            endpointsOnly = false;
+            break;
+          }
+      }
+    }
+    Handle(Message_ProgressIndicator) indicator = new SweepProgress{cancelled_};
+    if (!imported_ || endpointsOnly || wires_.size() == 2) {
+      for (std::size_t i = 0; i < wires_.size(); ++i)
+        if (!endpointsOnly || i == 0 || i + 1 == wires_.size()) loft_.AddWire(wires_[i]);
+      loft_.Build(indicator->Start());
+      checkpoint();
+      if (!loft_.IsDone()) return;
+      shape_ = loft_.Shape();
+    } else {
+      std::vector<std::vector<gp_Pnt>> sections;
+      std::vector<gp_Pnt> centers;
+      std::vector<double> station{0};
+      for (const auto& wire : wires_) {
+        checkpoint();
+        auto points = samples(wire);
+        if (points.empty() || (!sections.empty() && points.size() != sections.front().size()))
+          throw std::runtime_error("Curved stock sweep has incompatible section contours");
+        gp_XYZ sum{0, 0, 0};
+        for (const auto& point : points) sum += point.XYZ();
+        gp_Pnt center{sum / static_cast<double>(points.size())};
+        if (points.size() == 9) {
+          BRepTools_WireExplorer edge{wire};
+          BRepAdaptor_Curve curve{edge.Current()};
+          if (curve.GetType() == GeomAbs_Circle && curve.IsClosed())
+            center = curve.Circle().Location(); // Same guide for both walls of a CF tube.
+        }
+        if (!centers.empty()) station.push_back(station.back() + center.Distance(centers.back()));
+        centers.push_back(center);
+        sections.push_back(std::move(points));
+      }
+      // Adapt section density to changes relative to the guide, not to the
+      // guide's curvature. Rotated profiles encode the same twist as the ribs.
+      std::vector<std::size_t> selected{0};
+      const auto select = [&](auto&& self, std::size_t first, std::size_t last) -> void {
+        checkpoint();
+        double error = 0.001; // mm, below the importer's path tolerance
+        std::size_t split = first;
+        for (std::size_t i = first + 1; i < last; ++i) {
+          const double t = (station[i] - station[first]) / (station[last] - station[first]);
+          for (std::size_t j = 0; j < sections[i].size(); ++j) {
+            const gp_XYZ expected = (sections[first][j].XYZ() - centers[first].XYZ()) * (1 - t) +
+                                    (sections[last][j].XYZ() - centers[last].XYZ()) * t;
+            const double deviation =
+                (sections[i][j].XYZ() - centers[i].XYZ() - expected).Modulus();
+            if (deviation > error) { error = deviation; split = i; }
+          }
+        }
+        if (split != first) { self(self, first, split); self(self, split, last); }
+        else selected.push_back(last);
+      };
+      select(select, 0, wires_.size() - 1);
+      if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+        std::fprintf(stderr, "Sweep: %zu guide stations, %zu selected profiles, %zu contour samples\n",
+                     wires_.size(), selected.size(), sections.front().size());
+      if (selected.size() > 64)
+        throw std::runtime_error("Curved stock section changes are too complex for a smooth sweep");
+      const auto guidePoints = Handle(OcctPointArray){new OcctPointArray{1, static_cast<int>(centers.size())}};
+      for (std::size_t i = 0; i < centers.size(); ++i)
+        guidePoints->SetValue(static_cast<int>(i + 1), centers[i]);
+      GeomAPI_PointsToBSpline guide{guidePoints->Array1(), 3, 5, GeomAbs_C2, 0.005};
+      if (!guide.IsDone()) throw std::runtime_error("Unable to build curved stock sweep guide");
+      // End profiles must stay exactly on the panel end planes.
+      guide.Curve()->SetPole(1, centers.front());
+      guide.Curve()->SetPole(guide.Curve()->NbPoles(), centers.back());
+      if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+        std::fprintf(stderr, "Guide: %d poles, %d knots\n", guide.Curve()->NbPoles(), guide.Curve()->NbKnots());
+      std::vector<double> locationsOnGuide;
+      for (std::size_t j = 0; j < wires_.size(); ++j) {
+        GeomAPI_ProjectPointOnCurve projection{centers[j], guide.Curve()};
+        if (projection.NbPoints() == 0) throw std::runtime_error("Unable to locate stock section on its guide");
+        const double parameter = j == 0 ? guide.Curve()->FirstParameter()
+                                  : j + 1 == wires_.size() ? guide.Curve()->LastParameter()
+                                                           : projection.LowerDistanceParameter();
+        if (!locationsOnGuide.empty() && parameter <= locationsOnGuide.back())
+          throw std::runtime_error("Curved stock guide doubles back at a section");
+        locationsOnGuide.push_back(parameter);
+      }
+      bool circular = sections.front().size() == 9;
+      gp_Circ rootCircle;
+      for (std::size_t i = 0; circular && i < wires_.size(); ++i) {
+        BRepTools_WireExplorer edge{wires_[i]};
+        BRepAdaptor_Curve curve{edge.Current()};
+        circular = curve.GetType() == GeomAbs_Circle && curve.IsClosed();
+        if (circular) {
+          const auto circle = curve.Circle();
+          if (i == 0) rootCircle = circle;
+          else circular = std::abs(circle.Radius() - rootCircle.Radius()) < 1e-7 &&
+              circle.Axis().Direction().IsParallel(rootCircle.Axis().Direction(), 1e-7);
+        }
+      }
+      bool swept = false;
+      try {
+        if (circular) {
+          // A circular section is invariant under panel twist. The single-
+          // profile pipe builder also constructs its periodic seam and caps.
+          const auto spine = BRepBuilderAPI_MakeWire{BRepBuilderAPI_MakeEdge{guide.Curve()}.Edge()}.Wire();
+          BRepOffsetAPI_MakePipeShell pipe{spine};
+          pipe.SetMode(rootCircle.Position());
+          pipe.SetTolerance(0.005, 0.005, 0.01);
+          pipe.SetMaxSegments(std::max(200, guide.Curve()->NbKnots() * 8));
+          pipe.Add(wires_.front(), false, false);
+          pipe.Build(indicator->Start());
+          checkpoint();
+          if (pipe.IsDone() && pipe.MakeSolid()) {
+            shape_ = pipe.Shape();
+            swept = BRepCheck_Analyzer{shape_, false}.IsValid();
+          }
+        } else {
+          // The guide supplies translation; the section law supplies shape
+          // and rotation in world axes. Avoid automatic profile rematching.
+          Handle(GeomFill_LocationLaw) location = new GeomFill_CurveAndTrihedron{
+              new GeomFill_Fixed{gp_Vec{0, 0, 1}, gp_Vec{1, 0, 0}}};
+          location->SetCurve(new GeomAdaptor_Curve{guide.Curve()});
+          std::vector<std::vector<Handle(Geom_BSplineCurve)>> contours;
+          for (std::size_t i = 0; i < wires_.size(); ++i) {
+            std::vector<Handle(Geom_BSplineCurve)> contour;
+            for (BRepTools_WireExplorer edge{wires_[i]}; edge.More(); edge.Next()) {
+              TopLoc_Location placement;
+              double first, last;
+              auto curve = BRep_Tool::Curve(edge.Current(), placement, first, last);
+              auto local = GeomConvert::CurveToBSplineCurve(new Geom_TrimmedCurve{curve, first, last});
+              local->Transform(placement.Transformation());
+              if (edge.Current().Orientation() == TopAbs_REVERSED) local->Reverse();
+              local->Translate(gp_Vec{guide.Curve()->Value(locationsOnGuide[i]), gp_Pnt{0, 0, 0}});
+              auto knots = local->Knots();
+              BSplCLib::Reparametrize(0, 1, knots);
+              local->SetKnots(knots);
+              contour.push_back(local);
+            }
+            contours.push_back(std::move(contour));
+          }
+          std::vector<Handle(Geom_BSplineSurface)> laws;
+          for (;;) {
+            laws.clear();
+            double worst = 0.005;
+            std::size_t split = wires_.size();
+            for (std::size_t edge = 0; edge < contours.front().size(); ++edge) {
+              checkpoint();
+              NCollection_Sequence<Handle(Geom_Curve)> curves;
+              NCollection_Sequence<double> parameters;
+              for (const auto i : selected) {
+                curves.Append(contours[i][edge]);
+                parameters.Append(locationsOnGuide[i]);
+              }
+              auto law = sectionSurface(curves, parameters);
+              for (std::size_t i = 0; i < contours.size(); ++i) {
+                if (std::binary_search(selected.begin(), selected.end(), i)) continue;
+                for (int j = 0; j <= 8; ++j) {
+                  const double u = j / 8.0;
+                  const double error = law->Value(u, locationsOnGuide[i]).Distance(
+                      contours[i][edge]->Value(u));
+                  if (error > worst) { worst = error; split = i; }
+                }
+              }
+              laws.push_back(law);
+            }
+            if (split == wires_.size()) break;
+            if (selected.size() >= 64)
+              throw std::runtime_error("Curved stock section changes are too complex for a smooth sweep");
+            selected.insert(std::lower_bound(selected.begin(), selected.end(), split), split);
+          }
+          if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+            std::fprintf(stderr, "Validated sweep laws: %zu profiles\n", selected.size());
+          BRepBuilderAPI_Sewing sewing{0.02};
+          for (const auto& section : laws) {
+            checkpoint();
+            Handle(Geom_Surface) sweptSurface;
+            const auto sectionSurface = section;
+            if (!sectionSurface->IsURational() && !sectionSurface->IsVRational()) {
+              // With a fixed world frame the sweep is exactly S(u,v)+G(v).
+              // Compose compatible B-spline coefficients instead of refitting
+              // this sum: the general sweep approximator can report success
+              // while missing a steep root-rib orientation transition by mm.
+              auto surface = Handle(Geom_BSplineSurface)::DownCast(sectionSurface->Copy());
+              auto path = Handle(Geom_BSplineCurve)::DownCast(guide.Curve()->Copy());
+              const int degree = std::max(surface->VDegree(), path->Degree());
+              surface->IncreaseDegree(surface->UDegree(), degree);
+              path->IncreaseDegree(degree);
+              surface->InsertVKnots(path->Knots(), path->Multiplicities(), Precision::PConfusion(), false);
+              path->InsertKnots(surface->VKnots(), surface->VMultiplicities(), Precision::PConfusion(), false);
+              if (surface->NbVPoles() != path->NbPoles())
+                throw std::runtime_error("Unable to match curved stock sweep parameters");
+              for (int v = 1; v <= surface->NbVPoles(); ++v)
+                for (int u = 1; u <= surface->NbUPoles(); ++u)
+                  surface->SetPole(u, v, gp_Pnt{surface->Pole(u, v).XYZ() + path->Pole(v).XYZ()});
+              sweptSurface = surface;
+            } else {
+              GeomFill_Sweep sweep{location, false};
+              sweep.SetTolerance(0.005, 0.005, 1e-5, 0.01);
+              NCollection_Sequence<Handle(Geom_Curve)> referenceCurves;
+              NCollection_Sequence<gp_Trsf> transforms;
+              NCollection_Sequence<double> parameters;
+              for (const double v : {locationsOnGuide.front(), locationsOnGuide.back()}) {
+                referenceCurves.Append(section->VIso(v));
+                transforms.Append(gp_Trsf{});
+                parameters.Append(v);
+              }
+              Handle(GeomFill_SectionLaw) rationalLaw = new GeomFill_NSections{
+                  referenceCurves, transforms, parameters, 0, 1,
+                  locationsOnGuide.front(), locationsOnGuide.back(), section};
+              sweep.Build(rationalLaw, GeomFill_Location, GeomAbs_C1, 10,
+                          std::max(200, guide.Curve()->NbKnots() * 8));
+              checkpoint();
+              if (!sweep.IsDone() || sweep.ErrorOnSurface() > 0.005)
+                throw std::runtime_error("Unable to sweep curved stock contour within tolerance");
+              sweptSurface = sweep.Surface();
+            }
+            sewing.Add(BRepBuilderAPI_MakeFace{sweptSurface, Precision::Confusion()}.Face());
+          }
+          sewing.Add(BRepBuilderAPI_MakeFace{wires_.front()}.Face());
+          sewing.Add(BRepBuilderAPI_MakeFace{wires_.back()}.Face());
+          sewing.Perform(indicator->Start());
+          checkpoint();
+          const auto shell = sewing.SewedShape();
+          if (shell.ShapeType() == TopAbs_SHELL && sewing.NbFreeEdges() == 0) {
+            auto solid = BRepBuilderAPI_MakeSolid{TopoDS::Shell(shell)}.Solid();
+            BRepLib::OrientClosedSolid(solid);
+            shape_ = solid;
+            swept = BRepCheck_Analyzer{shape_, false}.IsValid();
+          }
+          if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+            std::fprintf(stderr, "Sweep solid valid: %d, free edges: %d\n", swept, sewing.NbFreeEdges());
+        }
+      } catch (const Standard_Failure& failure) {
+        if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+          std::fprintf(stderr, "Sweep failure: %s\n", failure.GetMessageString());
+        checkpoint();
+      }
+      if (swept) {
+        if (timings_) {
+          ++timings_->guideSweeps;
+          timings_->maximumSweepProfiles = std::max(timings_->maximumSweepProfiles, selected.size());
+        }
+      } else {
+        // OCCT cannot sweep every section/guide combination (notably abrupt
+        // changes in a piecewise outline). Retain a bounded fallback using
+        // global contour error, including path curvature as well as twist.
+        // Never return to fitting all of the imported sampling stations.
+        std::vector<std::size_t> reduced{0};
+        const auto reduce = [&](auto&& self, std::size_t first, std::size_t last) -> void {
+          checkpoint();
+          double error = 0.005;
+          std::size_t split = first;
+          for (std::size_t i = first + 1; i < last; ++i) {
+            const double t = (station[i] - station[first]) / (station[last] - station[first]);
+            for (std::size_t j = 0; j < sections[i].size(); ++j) {
+              const double deviation = (sections[i][j].XYZ() - sections[first][j].XYZ() * (1 - t) -
+                                        sections[last][j].XYZ() * t).Modulus();
+              if (deviation > error) { error = deviation; split = i; }
+            }
+          }
+          if (split != first) { self(self, first, split); self(self, split, last); }
+          else reduced.push_back(last);
+        };
+        reduce(reduce, 0, wires_.size() - 1);
+        if (reduced.size() > 64)
+          throw std::runtime_error("Curved stock cannot be swept within the geometry tolerance; simplify the curve");
+        if (std::getenv("DESIGNRC_SWEEP_DIAGNOSTICS"))
+          std::fprintf(stderr, "Reduced loft fallback: %zu profiles\n", reduced.size());
+        BRepOffsetAPI_ThruSections fallback{true, false, 0.001};
+        fallback.CheckCompatibility(false);
+        fallback.SetMaxDegree(3);
+        fallback.SetContinuity(GeomAbs_C1);
+        for (const auto i : reduced) fallback.AddWire(wires_[i]);
+        fallback.Build(indicator->Start());
+        checkpoint();
+        if (!fallback.IsDone()) throw std::runtime_error("Unable to build reduced curved-stock surface");
+        shape_ = fallback.Shape();
+        if (timings_) ++timings_->reducedLoftFallbacks;
+      }
+    }
+    if (imported_) {
+      if (!BRepCheck_Analyzer{shape_, false}.IsValid()) {
+        ShapeFix_Shape fix{shape_};
+        fix.SetPrecision(1e-4);
+        fix.Perform();
+        shape_ = fix.Shape();
+      }
+      if (!BRepCheck_Analyzer{shape_, false}.IsValid())
+        throw std::runtime_error("Curved stock sweep produced an invalid solid");
+    }
+    done_ = true;
+  }
+  bool IsDone() const { return done_; }
+  const TopoDS_Shape& Shape() { return shape_; }
+
+private:
+  class SweepProgress final : public Message_ProgressIndicator {
+  public:
+    explicit SweepProgress(std::function<bool()> cancelled) : cancelled_(std::move(cancelled)) {}
+    bool UserBreak() override { return cancelled_ && cancelled_(); }
+    void Show(const Message_ProgressScope&, const bool) override {}
+  private:
+    std::function<bool()> cancelled_;
+  };
+  void checkpoint() const { if (cancelled_ && cancelled_()) throw GeometryCancelled{}; }
+  bool imported_;
+  bool done_{false};
+  std::function<bool()> cancelled_;
+  std::vector<TopoDS_Wire> wires_;
+  BRepOffsetAPI_ThruSections loft_;
+  TopoDS_Shape shape_;
+  PanelBuildTimings* timings_;
+};
+
+void addSpanSection(SpanwiseSurface& surface, const TopoDS_Wire& wire,
+                    const domain::RibDefinition& rib) { surface.AddWire(wire, &rib); }
+void addSpanSection(BRepOffsetAPI_ThruSections& surface, const TopoDS_Wire& wire,
+                    const domain::RibDefinition&) { surface.AddWire(wire); }
+
 gp_Pnt transformLocal(const domain::RibDefinition& rib, const domain::Point2 point,
                       const double yOffset = 0.0) {
   const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
@@ -215,18 +668,26 @@ gp_Pnt transformLocal(const domain::RibDefinition& rib, const domain::Point2 poi
 }
 
 double ribStartOffset(const domain::RibDefinition& rib, const double thickness) {
+  if (rib.virtualStation) return 0;
   return rib.ribThicknessStartFactor * thickness;
 }
 
 double ribEndOffset(const domain::RibDefinition& rib, const double thickness) {
+  if (rib.virtualStation) return 0;
   return (rib.ribThicknessStartFactor + 1.0) * thickness;
 }
 
 TopoDS_Wire makeSplineProfileWire(
     const domain::RibDefinition& rib,
     const std::vector<domain::Point2>& profile,
-    const std::size_t splitIndex, const double yOffset,
+    std::size_t splitIndex, const double yOffset,
     const char* description, const bool diamondNose = false) {
+  if (rib.planform && splitIndex < profile.size())
+    for (std::size_t i = 1; i < splitIndex; ++i)
+      if (std::abs(profile[i].x - profile[splitIndex].x) < 1e-8) {
+        splitIndex = i;
+        break;
+      }
   if (profile.size() < 3 || splitIndex == 0 ||
       splitIndex + 1 >= profile.size())
     throw std::runtime_error(
@@ -246,14 +707,7 @@ TopoDS_Wire makeSplineProfileWire(
       points->SetValue(
           static_cast<int>(point - begin + 1),
           transformLocal(rib, profile[point], yOffset));
-    GeomAPI_Interpolate interpolation{
-        points, false, Precision::Confusion()};
-    interpolation.Perform();
-    if (!interpolation.IsDone())
-      throw std::runtime_error(
-          std::string{"Unable to interpolate "} + description +
-          " contour");
-    return BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge();
+    return BRepBuilderAPI_MakeEdge{sectionCurve(points, static_cast<bool>(rib.planform))}.Edge();
   };
 
   const auto firstPoint = transformLocal(rib, profile.front(), yOffset);
@@ -301,43 +755,54 @@ TopoDS_Shape makeTubeSegment(const gp_Pnt& start, const gp_Pnt& end,
 
 TopoDS_Shape makeRectangularSpanMember(const domain::StructuredWing& wing,
                                        const domain::SpanMember& member,
-                                       const double ribThickness) {
+                                       const double ribThickness,
+                                       const std::function<bool()>& isCancelled,
+                                       PanelBuildTimings* timings) {
   if (member.centers.size() != wing.ribs.size())
     throw std::runtime_error("Rectangular member centers do not match the rib stations");
-  BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+  SpanwiseSurface loft{static_cast<bool>(wing.ribs.front().rib.planform), isCancelled, timings};
   loft.CheckCompatibility(false);
   const auto addProfile = [&](const std::size_t i, const double yOffset) {
     const auto& center = member.centers[i];
     BRepBuilderAPI_MakePolygon polygon;
     polygon.Add(transformLocal(wing.ribs[i].rib,
-        {center.x - member.width * 0.5, center.y - member.height * 0.5}, yOffset));
+                               {center.x - member.width * 0.5, center.y - member.height * 0.5},
+                               yOffset));
     polygon.Add(transformLocal(wing.ribs[i].rib,
-        {center.x + member.width * 0.5, center.y - member.height * 0.5}, yOffset));
+                               {center.x + member.width * 0.5, center.y - member.height * 0.5},
+                               yOffset));
     polygon.Add(transformLocal(wing.ribs[i].rib,
-        {center.x + member.width * 0.5, center.y + member.height * 0.5}, yOffset));
+                               {center.x + member.width * 0.5, center.y + member.height * 0.5},
+                               yOffset));
     polygon.Add(transformLocal(wing.ribs[i].rib,
-        {center.x - member.width * 0.5, center.y + member.height * 0.5}, yOffset));
+                               {center.x - member.width * 0.5, center.y + member.height * 0.5},
+                               yOffset));
     polygon.Close();
     if (!polygon.IsDone())
       throw std::runtime_error("Unable to construct rectangular member profile");
-    loft.AddWire(polygon.Wire());
+    loft.AddWire(polygon.Wire(), &wing.ribs[i].rib);
   };
   addProfile(0, ribStartOffset(wing.ribs[0].rib, ribThickness));
-  for (std::size_t i = 0; i < wing.ribs.size(); ++i) {
-    addProfile(i, ribEndOffset(wing.ribs[i].rib, ribThickness));
-    if (i + 1 < wing.ribs.size())
-      addProfile(i + 1, ribStartOffset(wing.ribs[i + 1].rib, ribThickness));
+  if (wing.ribs.front().rib.planform) {
+    for (std::size_t i = 1; i + 1 < wing.ribs.size(); ++i)
+      addProfile(i, 0);
+    addProfile(wing.ribs.size() - 1, ribEndOffset(wing.ribs.back().rib, ribThickness));
+  } else {
+    for (std::size_t i = 0; i < wing.ribs.size(); ++i) {
+      if (!wing.ribs[i].rib.virtualStation)
+        addProfile(i, ribEndOffset(wing.ribs[i].rib, ribThickness));
+      if (i + 1 < wing.ribs.size())
+        addProfile(i + 1, ribStartOffset(wing.ribs[i + 1].rib, ribThickness));
+    }
   }
   loft.Build();
-  if (!loft.IsDone())
-    throw std::runtime_error("Unable to loft rectangular span member");
+  if (!loft.IsDone()) throw std::runtime_error("Unable to loft rectangular span member");
   return loft.Shape();
 }
 
 } // namespace
 
-std::size_t ribGeometryWorkerCount(
-    const std::size_t ribCount, const std::size_t maximumWorkers) {
+std::size_t ribGeometryWorkerCount(const std::size_t ribCount, const std::size_t maximumWorkers) {
   if (ribCount == 0) return 0;
   const unsigned logicalProcessors = std::thread::hardware_concurrency();
   std::size_t available = logicalProcessors > 2
@@ -508,15 +973,17 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           (!sameJoinerDefinition &&
            ((isCheckedJoiner(name) && isJoinerCollisionTarget(other.name)) ||
             (isCheckedJoiner(other.name) && isJoinerCollisionTarget(name))));
+      const bool curveCollision = structuredWing.ribs.front().rib.planform != nullptr &&
+                                  !(isSpoilerPart(name) && isSpoilerPart(other.name));
       const bool newSparCollision = isNewSparPart(name) || isNewSparPart(other.name);
       const bool spoilerCollision =
           (isSpoilerPart(name) || isSpoilerPart(other.name)) &&
           !(isSpoilerPart(name) && isSpoilerPart(other.name));
       if (isSheetingPart(name) || isSheetingPart(other.name) ||
-          ((isWoodJoiner(name) || isWoodJoiner(other.name)) &&
-           !woodJoinerCollision && !spoilerCollision) ||
+          ((isWoodJoiner(name) || isWoodJoiner(other.name)) && !woodJoinerCollision &&
+           !spoilerCollision) ||
           intendedWebContact ||
-          (!newSparCollision && !joinerCollision && !spoilerCollision) ||
+          (!newSparCollision && !joinerCollision && !spoilerCollision && !curveCollision) ||
           other.name == name || bounds.IsOut(other.bounds))
         continue;
       BRepAlgoAPI_Common common;
@@ -1447,8 +1914,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   if (progress)
     progress(40, "Building leading and trailing edge stock");
-  for (const auto& member : structuredWing.profiledMembers) {
-    if (member.profiles.size() != structuredWing.ribs.size())
+  const auto& spanWing = structuredWing.surfaceWing ? *structuredWing.surfaceWing : structuredWing;
+  for (const auto& member : spanWing.profiledMembers) {
+    if (member.profiles.size() != spanWing.ribs.size())
       throw std::runtime_error("Edge stock profiles do not match the rib stations");
     auto ranges = member.activeRanges;
     if (ranges.empty()) ranges.emplace_back(0, member.profiles.size() - 1);
@@ -1456,7 +1924,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         member.name.starts_with("TE") ||
         member.name.find("trailing edge") != std::string::npos;
     for (const auto [first, last] : ranges) {
-      BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+      SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
       loft.CheckCompatibility(false);
       const auto addProfile = [&](const std::size_t i, const double yOffset) {
         if (!member.profileSegments.empty()) {
@@ -1465,20 +1933,20 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             if (segment.spline && segment.points.size() > 2) {
               const auto points = Handle(OcctPointArray){new OcctPointArray{1, static_cast<int>(segment.points.size())}};
               for (std::size_t j = 0; j < segment.points.size(); ++j)
-                points->SetValue(static_cast<int>(j + 1), transformLocal(structuredWing.ribs[i].rib, segment.points[j], yOffset));
-              GeomAPI_Interpolate interpolation{points, false, Precision::Confusion()};
-              interpolation.Perform();
-              if (!interpolation.IsDone()) throw std::runtime_error("Unable to interpolate leading edge");
-              wire.Add(BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge());
+                points->SetValue(static_cast<int>(j + 1),
+                                 transformLocal(spanWing.ribs[i].rib, segment.points[j], yOffset));
+              wire.Add(BRepBuilderAPI_MakeEdge{
+                  sectionCurve(points, static_cast<bool>(spanWing.ribs[i].rib.planform))}.Edge());
             } else {
               for (std::size_t j = 1; j < segment.points.size(); ++j)
                 wire.Add(BRepBuilderAPI_MakeEdge{
-                    transformLocal(structuredWing.ribs[i].rib, segment.points[j - 1], yOffset),
-                    transformLocal(structuredWing.ribs[i].rib, segment.points[j], yOffset)}.Edge());
+                    transformLocal(spanWing.ribs[i].rib, segment.points[j - 1], yOffset),
+                    transformLocal(spanWing.ribs[i].rib, segment.points[j], yOffset)}
+                             .Edge());
             }
           }
           if (!wire.IsDone()) throw std::runtime_error("Unable to construct leading-edge section");
-          loft.AddWire(wire.Wire());
+          loft.AddWire(wire.Wire(), &spanWing.ribs[i].rib);
           return;
         }
         if (splineTrailingEdge) {
@@ -1490,9 +1958,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
               });
           const std::size_t trailingIndex = static_cast<std::size_t>(
               std::distance(profile.begin(), trailing));
-          loft.AddWire(makeSplineProfileWire(
-              structuredWing.ribs[i].rib, profile, trailingIndex,
-              yOffset, "trailing-edge"));
+          loft.AddWire(makeSplineProfileWire(spanWing.ribs[i].rib, profile, trailingIndex, yOffset,
+                                             "trailing-edge"), &spanWing.ribs[i].rib);
           return;
         }
         const auto& profile = member.profiles[i];
@@ -1503,21 +1970,16 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
             });
         const std::size_t leadingIndex = static_cast<std::size_t>(
             std::distance(profile.begin(), leading));
-        loft.AddWire(makeSplineProfileWire(
-            structuredWing.ribs[i].rib, profile, leadingIndex,
-            yOffset, "leading-edge", member.diamondNose));
+        loft.AddWire(makeSplineProfileWire(spanWing.ribs[i].rib, profile, leadingIndex, yOffset,
+                                           "leading-edge", member.diamondNose), &spanWing.ribs[i].rib);
       };
-      // LE/TE stock is straight over each uninterrupted range. Using profiles
-      // at every rib split the ruled loft into thousands of small faces and
-      // made both loft construction and final triangulation expensive. The
-      // outside faces of the boundary ribs define the same continuous stock
-      // with one straight ruled span between corresponding profile vertices.
-      addProfile(first,
-          ribStartOffset(structuredWing.ribs[first].rib, ribThickness));
-      if (member.diamondNose || !member.profileSegments.empty())
+      // Imported stock retains intermediate shape constraints; SpanwiseSurface
+      // removes them only when the endpoint loft reproduces those sections.
+      addProfile(first, ribStartOffset(spanWing.ribs[first].rib, ribThickness));
+      if (spanWing.ribs.front().rib.planform || member.diamondNose ||
+          !member.profileSegments.empty())
         for (std::size_t i = first + 1; i < last; ++i) addProfile(i, 0.0);
-      addProfile(last,
-          ribEndOffset(structuredWing.ribs[last].rib, ribThickness));
+      addProfile(last, ribEndOffset(spanWing.ribs[last].rib, ribThickness));
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft the panel edge stock");
       addPartShape(member.name, loft.Shape(), PartMaterial::Wood);
@@ -1530,9 +1992,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     progress(50, "Building controls, spoilers, and rails");
   const domain::ControlSurfacePart* sharedFlap = nullptr;
   const domain::ControlSurfacePart* sharedAileron = nullptr;
-  for (const auto& flap : structuredWing.controlSurfaces) {
+  for (const auto& flap : spanWing.controlSurfaces) {
     if (flap.name != "Flap") continue;
-    for (const auto& aileron : structuredWing.controlSurfaces) {
+    for (const auto& aileron : spanWing.controlSurfaces) {
       if (aileron.name == "Aileron" &&
           flap.stopRibIndex == aileron.startRibIndex) {
         sharedFlap = &flap;
@@ -1540,8 +2002,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       }
     }
   }
-  for (const auto& control : structuredWing.controlSurfaces) {
-    BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+  for (const auto& control : spanWing.controlSurfaces) {
+    SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
     loft.CheckCompatibility(false);
     const auto addControlProfile = [&](const std::size_t localIndex, const double yOffset) {
       const std::size_t ribIndex = control.startRibIndex + localIndex;
@@ -1553,14 +2015,15 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           });
       const std::size_t trailingIndex = static_cast<std::size_t>(
           std::distance(profile.begin(), trailing));
-      loft.AddWire(makeSplineProfileWire(
-          structuredWing.ribs[ribIndex].rib, profile, trailingIndex,
-          yOffset, "control-surface"));
+      loft.AddWire(makeSplineProfileWire(spanWing.ribs[ribIndex].rib, profile, trailingIndex,
+                                         yOffset, "control-surface"), &spanWing.ribs[ribIndex].rib);
     };
-    addControlProfile(0,
-        ribEndOffset(structuredWing.ribs[control.startRibIndex].rib,
-                     ribThickness) + control.gap);
-    const auto& stopRib = structuredWing.ribs[control.stopRibIndex].rib;
+    addControlProfile(0, ribEndOffset(spanWing.ribs[control.startRibIndex].rib, ribThickness) +
+                             control.gap);
+    if (spanWing.ribs.front().rib.planform)
+      for (std::size_t i = 1; i + 1 < control.profiles.size(); ++i)
+        addControlProfile(i, 0);
+    const auto& stopRib = spanWing.ribs[control.stopRibIndex].rib;
     addControlProfile(control.profiles.size() - 1,
         control.extendThroughStopRib
             ? ribEndOffset(stopRib, ribThickness)
@@ -1569,39 +2032,30 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     if (!loft.IsDone()) throw std::runtime_error("Unable to loft the control surface");
     addPartShape(control.name, loft.Shape(), PartMaterial::Wood);
 
-    if (&control == sharedFlap || &control == sharedAileron) continue;
-    const auto hingeStart = transformLocal(
-        structuredWing.ribs[control.startRibIndex].rib,
-        control.hingePostCenters.front(),
-        ribEndOffset(structuredWing.ribs[control.startRibIndex].rib, ribThickness));
-    const auto hingeEnd = transformLocal(
-        structuredWing.ribs[control.stopRibIndex].rib,
-        control.hingePostCenters.back(),
-        control.extendThroughStopRib
-            ? ribEndOffset(structuredWing.ribs[control.stopRibIndex].rib,
-                           ribThickness)
-            : ribStartOffset(structuredWing.ribs[control.stopRibIndex].rib,
-                             ribThickness));
+    if (!spanWing.ribs.front().rib.planform &&
+        (&control == sharedFlap || &control == sharedAileron))
+      continue;
+    const auto hingeStart =
+        transformLocal(spanWing.ribs[control.startRibIndex].rib, control.hingePostCenters.front(),
+                       ribEndOffset(spanWing.ribs[control.startRibIndex].rib, ribThickness));
+    const auto hingeEnd =
+        transformLocal(spanWing.ribs[control.stopRibIndex].rib, control.hingePostCenters.back(),
+                       control.extendThroughStopRib
+                           ? ribEndOffset(spanWing.ribs[control.stopRibIndex].rib, ribThickness)
+                           : ribStartOffset(spanWing.ribs[control.stopRibIndex].rib, ribThickness));
     addPartShape(control.name + " hinge post", makeRectangularSegment(
         hingeStart, hingeEnd, control.hingePostWidth, control.hingePostHeight),
         PartMaterial::Wood);
   }
-  if (sharedFlap != nullptr && sharedAileron != nullptr) {
+  if (!spanWing.ribs.front().rib.planform && sharedFlap != nullptr && sharedAileron != nullptr) {
     const auto hingeStart = transformLocal(
-        structuredWing.ribs[sharedFlap->startRibIndex].rib,
-        sharedFlap->hingePostCenters.front(),
-        ribEndOffset(structuredWing.ribs[sharedFlap->startRibIndex].rib,
-                     ribThickness));
+        spanWing.ribs[sharedFlap->startRibIndex].rib, sharedFlap->hingePostCenters.front(),
+        ribEndOffset(spanWing.ribs[sharedFlap->startRibIndex].rib, ribThickness));
     const auto hingeEnd = transformLocal(
-        structuredWing.ribs[sharedAileron->stopRibIndex].rib,
-        sharedAileron->hingePostCenters.back(),
+        spanWing.ribs[sharedAileron->stopRibIndex].rib, sharedAileron->hingePostCenters.back(),
         sharedAileron->extendThroughStopRib
-            ? ribEndOffset(
-                  structuredWing.ribs[sharedAileron->stopRibIndex].rib,
-                  ribThickness)
-            : ribStartOffset(
-                  structuredWing.ribs[sharedAileron->stopRibIndex].rib,
-                  ribThickness));
+            ? ribEndOffset(spanWing.ribs[sharedAileron->stopRibIndex].rib, ribThickness)
+            : ribStartOffset(spanWing.ribs[sharedAileron->stopRibIndex].rib, ribThickness));
     addPartShape("Flap/Aileron hinge post", makeRectangularSegment(
         hingeStart, hingeEnd, sharedFlap->hingePostWidth,
         sharedFlap->hingePostHeight), PartMaterial::Wood);
@@ -1609,15 +2063,50 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (timings) timings->controlsMs = elapsedMs(stageStart);
 
   const auto buildMemberShape = [&](const domain::SpanMember& member) {
-    const bool circular = member.kind == domain::SpanMemberKind::Tube ||
-        member.kind == domain::SpanMemberKind::Rod;
+    const bool circular =
+        member.kind == domain::SpanMemberKind::Tube || member.kind == domain::SpanMemberKind::Rod;
     const bool endpointDefinedSpar = member.name.starts_with("Spar ");
+    if (circular && spanWing.ribs.front().rib.planform &&
+        (member.name.starts_with("LE") || member.name.find("leading edge") != std::string::npos)) {
+      const auto tubeSolid = [&](double diameter) {
+        SpanwiseSurface loft{true, isCancelled, timings};
+        loft.CheckCompatibility(false);
+        for (std::size_t i = 0; i < spanWing.ribs.size(); ++i) {
+          const auto& rib = spanWing.ribs[i].rib;
+          const double offset = i == 0                          ? ribStartOffset(rib, ribThickness)
+                                : i + 1 == spanWing.ribs.size() ? ribEndOffset(rib, ribThickness)
+                                                                : 0;
+          const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180;
+          const gp_Ax2 plane{transformLocal(rib, member.centers[i], offset),
+                             gp_Dir{0, std::cos(angle), std::sin(angle)}, gp_Dir{1, 0, 0}};
+          loft.AddWire(BRepBuilderAPI_MakeWire{
+              BRepBuilderAPI_MakeEdge{gp_Circ{plane, diameter * 0.5}}.Edge()}
+                           .Wire(), &rib);
+        }
+        loft.Build();
+        if (!loft.IsDone()) throw std::runtime_error("Unable to build curved carbon LE");
+        return loft.Shape();
+      };
+      auto shape = tubeSolid(member.width);
+      if (member.kind == domain::SpanMemberKind::Tube && member.innerDiameter > 0) {
+        BRepAlgoAPI_Cut cut{shape, tubeSolid(member.innerDiameter)};
+        if (!cut.IsDone()) throw std::runtime_error("Unable to hollow curved CF tube LE");
+        shape = cut.Shape();
+        if (!BRepCheck_Analyzer{shape, false}.IsValid()) {
+          ShapeFix_Shape fix{shape};
+          fix.SetPrecision(0.001);
+          fix.Perform();
+          shape = fix.Shape();
+        }
+        if (!BRepCheck_Analyzer{shape, false}.IsValid())
+          throw std::runtime_error("Unable to create a valid hollow curved CF tube LE");
+      }
+      return shape;
+    }
     if (!circular && !endpointDefinedSpar)
-      return makeRectangularSpanMember(structuredWing, member, ribThickness);
-    const auto start = transformLocal(
-        structuredWing.ribs.front().rib, member.centers.front());
-    const auto end = transformLocal(
-        structuredWing.ribs.back().rib, member.centers.back());
+      return makeRectangularSpanMember(spanWing, member, ribThickness, isCancelled, timings);
+    const auto start = transformLocal(spanWing.ribs.front().rib, member.centers.front());
+    const auto end = transformLocal(spanWing.ribs.back().rib, member.centers.back());
     gp_Pnt extendedStart = start;
     gp_Pnt extendedEnd = end;
     const gp_Vec axis{start, end};
@@ -1630,8 +2119,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       return gp_Pln{transformLocal(rib, {0.0, 0.0}, offset),
                     gp_Dir{0.0, std::cos(angle), std::sin(angle)}};
     };
-    const auto& rootRib = structuredWing.ribs.front().rib;
-    const auto& tipRib = structuredWing.ribs.back().rib;
+    const auto& rootRib = spanWing.ribs.front().rib;
+    const auto& tipRib = spanWing.ribs.back().rib;
     const auto rootPlane = boundaryPlane(rootRib, ribStartOffset(rootRib, ribThickness));
     const auto tipPlane = boundaryPlane(tipRib, ribEndOffset(tipRib, ribThickness));
     const gp_Vec direction = axis.Normalized();
@@ -1679,21 +2168,21 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       BRepBuilderAPI_MakePolygon polygon;
       const std::size_t ribIndex = part.startRibIndex + local;
       for (const auto& point : profiles[local])
-        polygon.Add(transformLocal(structuredWing.ribs[ribIndex].rib, point, offset));
+        polygon.Add(transformLocal(spanWing.ribs[ribIndex].rib, point, offset));
       polygon.Close();
       loft.AddWire(polygon.Wire());
     };
-    addProfile(0, part.spansCenter ? 0.0 :
-        ribEndOffset(structuredWing.ribs[part.startRibIndex].rib,
-                     ribThickness) + startExtra);
+    addProfile(0, part.spansCenter
+                      ? 0.0
+                      : ribEndOffset(spanWing.ribs[part.startRibIndex].rib, ribThickness) +
+                            startExtra);
     addProfile(profiles.size() - 1,
-        ribStartOffset(structuredWing.ribs[part.endRibIndex].rib,
-                       ribThickness) - endExtra);
+               ribStartOffset(spanWing.ribs[part.endRibIndex].rib, ribThickness) - endExtra);
     loft.Build();
     if (!loft.IsDone()) throw std::runtime_error("Unable to loft spoiler assembly part");
     return loft.Shape();
   };
-  for (const auto& spoiler : structuredWing.spoilers) {
+  for (const auto& spoiler : spanWing.spoilers) {
     const auto cutSpoilerLighteningHoles = [&](
         TopoDS_Shape shape,
         const std::vector<std::array<domain::Point2, 4>>& profiles,
@@ -1716,19 +2205,17 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
                 chordFraction * (profile[2].x - profile[3].x),
             profile[3].y +
                 chordFraction * (profile[2].y - profile[3].y)};
-        auto modelPoint = transformLocal(
-            structuredWing.ribs[spoiler.startRibIndex + local].rib,
-            localPoint, offset);
+        auto modelPoint =
+            transformLocal(spanWing.ribs[spoiler.startRibIndex + local].rib, localPoint, offset);
         if (mirrored) modelPoint.Transform(mirror);
         return modelPoint;
       };
-      const double rootOffset = spoiler.spansCenter ? 0.0 :
-          ribEndOffset(
-              structuredWing.ribs[spoiler.startRibIndex].rib,
-              ribThickness) + endGap;
-      const double endOffset = ribStartOffset(
-          structuredWing.ribs[spoiler.endRibIndex].rib,
-          ribThickness) - endGap;
+      const double rootOffset =
+          spoiler.spansCenter
+              ? 0.0
+              : ribEndOffset(spanWing.ribs[spoiler.startRibIndex].rib, ribThickness) + endGap;
+      const double endOffset =
+          ribStartOffset(spanWing.ribs[spoiler.endRibIndex].rib, ribThickness) - endGap;
       const double exportedSpan =
           spoiler.dxfOutline[1].x - spoiler.dxfOutline[0].x;
       const double halfExportedSpan = exportedSpan * 0.5;
@@ -1834,8 +2321,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         BRepBuilderAPI_MakePolygon polygon;
         const std::size_t ribIndex = spoiler.startRibIndex + local;
         for (const auto& point : profiles[local]) {
-          auto modelPoint = transformLocal(
-              structuredWing.ribs[ribIndex].rib, point, offset);
+          auto modelPoint = transformLocal(spanWing.ribs[ribIndex].rib, point, offset);
           if (mirrored) modelPoint.Transform(mirror);
           polygon.Add(modelPoint);
         }
@@ -1847,9 +2333,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       const auto profileOffset = [&](const std::size_t local) {
         if (local == 0) return 0.0;
         if (local + 1 == profiles.size())
-          return ribStartOffset(
-              structuredWing.ribs[spoiler.endRibIndex].rib, ribThickness) -
-              endGap;
+          return ribStartOffset(spanWing.ribs[spoiler.endRibIndex].rib, ribThickness) - endGap;
         return 0.0;
       };
       BRepOffsetAPI_ThruSections fullLoft{
@@ -1881,15 +2365,15 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       support[2].y -= spoiler.thickness;
       support[3].y -= spoiler.thickness;
       BRepBuilderAPI_MakePolygon polygon;
-      const double offset = end == 0
-          ? ribEndOffset(structuredWing.ribs[ribIndex].rib, ribThickness)
-          : ribStartOffset(structuredWing.ribs[ribIndex].rib, ribThickness) - spoiler.frameRailWidth;
+      const double offset = end == 0 ? ribEndOffset(spanWing.ribs[ribIndex].rib, ribThickness)
+                                     : ribStartOffset(spanWing.ribs[ribIndex].rib, ribThickness) -
+                                           spoiler.frameRailWidth;
       for (const auto& point : support)
-        polygon.Add(transformLocal(structuredWing.ribs[ribIndex].rib, point, offset));
+        polygon.Add(transformLocal(spanWing.ribs[ribIndex].rib, point, offset));
       polygon.Close();
       BRepBuilderAPI_MakeFace face{polygon.Wire()};
-      const double plane = structuredWing.ribs[ribIndex].rib.ribPlaneAngleDegrees *
-          std::numbers::pi / 180.0;
+      const double plane =
+          spanWing.ribs[ribIndex].rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
       const gp_Vec direction{0.0, std::cos(plane) * spoiler.frameRailWidth,
                             std::sin(plane) * spoiler.frameRailWidth};
       spoilerShapes.push_back({"Spoiler Support Rail " + std::to_string(end + 1),
@@ -1903,12 +2387,12 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     TopoDS_Shape shape;
   };
   std::vector<SheetingCutter> sheetingCutters;
-  for (const auto& member : structuredWing.members) {
+  for (const auto& member : spanWing.members) {
     if (member.cutsSheeting)
       sheetingCutters.push_back(
           {member.verticalLocation, member.name, buildMemberShape(member)});
   }
-  for (const auto& spoiler : structuredWing.spoilers) {
+  for (const auto& spoiler : spanWing.spoilers) {
     std::vector<std::array<domain::Point2, 4>> assemblyProfiles;
     assemblyProfiles.reserve(spoiler.forwardRailProfiles.size());
     for (std::size_t i = 0; i < spoiler.forwardRailProfiles.size(); ++i) {
@@ -1943,10 +2427,10 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   if (progress)
     progress(65, "Lofting wing sheeting");
-  for (const auto& sheet : structuredWing.sheeting) {
+  for (const auto& sheet : spanWing.sheeting) {
     if (sheet.profiles.size() != sheet.stopRibIndex + 1)
       throw std::runtime_error("Sheeting profiles do not match their rib stations");
-    const auto addProfile = [&](BRepOffsetAPI_ThruSections& loft,
+    const auto addProfile = [&](auto& loft,
                                 const std::vector<domain::Point2>& profile,
                                 const std::size_t i, const double yOffset) {
       if (profile.size() < 6 || profile.size() % 2 != 0)
@@ -1960,34 +2444,26 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
                 new OcctPointArray{
                     1, static_cast<int>(end - begin + 1)}};
         for (std::size_t point = begin; point <= end; ++point)
-          points->SetValue(
-              static_cast<int>(point - begin + 1),
-              transformLocal(
-                  structuredWing.ribs[i].rib, profile[point], yOffset));
-        GeomAPI_Interpolate interpolation{
-            points, false, Precision::Confusion()};
-        interpolation.Perform();
-        return BRepBuilderAPI_MakeEdge{interpolation.Curve()}.Edge();
+          points->SetValue(static_cast<int>(point - begin + 1),
+                           transformLocal(spanWing.ribs[i].rib, profile[point], yOffset));
+        return BRepBuilderAPI_MakeEdge{
+            sectionCurve(points, static_cast<bool>(spanWing.ribs[i].rib.planform))}.Edge();
       };
-      const auto outerEnd = transformLocal(
-          structuredWing.ribs[i].rib, profile[contourSize - 1], yOffset);
-      const auto innerStart = transformLocal(
-          structuredWing.ribs[i].rib, profile[contourSize], yOffset);
-      const auto innerEnd = transformLocal(
-          structuredWing.ribs[i].rib, profile.back(), yOffset);
-      const auto outerStart = transformLocal(
-          structuredWing.ribs[i].rib, profile.front(), yOffset);
-       BRepBuilderAPI_MakeWire wire;
-       wire.Add(splineEdge(0, contourSize - 1));
-       if (outerEnd.Distance(innerStart) > Precision::Confusion())
-         wire.Add(BRepBuilderAPI_MakeEdge{outerEnd, innerStart}.Edge());
-       wire.Add(splineEdge(contourSize, profile.size() - 1));
-       if (innerEnd.Distance(outerStart) > Precision::Confusion())
-         wire.Add(BRepBuilderAPI_MakeEdge{innerEnd, outerStart}.Edge());
+      const auto outerEnd = transformLocal(spanWing.ribs[i].rib, profile[contourSize - 1], yOffset);
+      const auto innerStart = transformLocal(spanWing.ribs[i].rib, profile[contourSize], yOffset);
+      const auto innerEnd = transformLocal(spanWing.ribs[i].rib, profile.back(), yOffset);
+      const auto outerStart = transformLocal(spanWing.ribs[i].rib, profile.front(), yOffset);
+      BRepBuilderAPI_MakeWire wire;
+      wire.Add(splineEdge(0, contourSize - 1));
+      if (outerEnd.Distance(innerStart) > Precision::Confusion())
+        wire.Add(BRepBuilderAPI_MakeEdge{outerEnd, innerStart}.Edge());
+      wire.Add(splineEdge(contourSize, profile.size() - 1));
+      if (innerEnd.Distance(outerStart) > Precision::Confusion())
+        wire.Add(BRepBuilderAPI_MakeEdge{innerEnd, outerStart}.Edge());
       if (!wire.IsDone())
         throw std::runtime_error(
             "Unable to construct a spline sheeting profile");
-      loft.AddWire(wire.Wire());
+      addSpanSection(loft, wire.Wire(), spanWing.ribs[i].rib);
     };
     const auto addSegment = [&](const std::vector<domain::Point2>& firstProfile,
                                 const std::size_t firstRib, const double firstOffset,
@@ -2007,29 +2483,53 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           sheet.controlProfiles.size() != sheet.profiles.size())
         throw std::runtime_error("Control-surface sheeting profiles do not match their bays");
       for (std::size_t i = 0; i <= sheet.stopRibIndex; ++i)
-        addSegment(sheet.profiles[i], i,
-                   ribStartOffset(structuredWing.ribs[i].rib, ribThickness),
-                   sheet.profiles[i], i,
-                   ribEndOffset(structuredWing.ribs[i].rib, ribThickness));
+        if (!spanWing.ribs[i].rib.virtualStation)
+          addSegment(sheet.profiles[i], i, ribStartOffset(spanWing.ribs[i].rib, ribThickness),
+                     sheet.profiles[i], i, ribEndOffset(spanWing.ribs[i].rib, ribThickness));
       for (std::size_t bay = 0; bay < sheet.stopRibIndex; ++bay) {
-        const auto& bayProfiles = sheet.controlBays[bay]
-            ? sheet.controlProfiles : sheet.fullProfiles;
-        addSegment(bayProfiles[bay], bay,
-                   ribEndOffset(structuredWing.ribs[bay].rib, ribThickness),
+        const auto& bayProfiles =
+            sheet.controlBays[bay] ? sheet.controlProfiles : sheet.fullProfiles;
+        if (spanWing.ribs.front().rib.planform) {
+          std::size_t end = bay + 1;
+          while (end < sheet.stopRibIndex && spanWing.ribs[end].rib.virtualStation &&
+                 sheet.controlBays[end] == sheet.controlBays[bay])
+            ++end;
+          SpanwiseSurface loft{true, isCancelled, timings};
+          addProfile(loft, bayProfiles[bay], bay,
+                     ribEndOffset(spanWing.ribs[bay].rib, ribThickness));
+          for (std::size_t i = bay + 1; i < end; ++i)
+            addProfile(loft, bayProfiles[i], i, 0);
+          addProfile(loft, bayProfiles[end], end,
+                     ribStartOffset(spanWing.ribs[end].rib, ribThickness));
+          loft.Build();
+          if (!loft.IsDone())
+            throw std::runtime_error("Unable to loft curved control-bay sheeting");
+          addPartShape(sheet.name, cutSheeting(sheet.name, loft.Shape()), PartMaterial::Wood);
+          bay = end - 1;
+          continue;
+        }
+        addSegment(bayProfiles[bay], bay, ribEndOffset(spanWing.ribs[bay].rib, ribThickness),
                    bayProfiles[bay + 1], bay + 1,
-                   ribStartOffset(structuredWing.ribs[bay + 1].rib, ribThickness));
+                   ribStartOffset(spanWing.ribs[bay + 1].rib, ribThickness));
       }
     } else {
-      BRepOffsetAPI_ThruSections loft{true, true, Precision::Confusion()};
+      SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
       loft.CheckCompatibility(false);
-      addProfile(loft, sheet.profiles[0], 0,
-          ribStartOffset(structuredWing.ribs[0].rib, ribThickness));
-      for (std::size_t i = 0; i <= sheet.stopRibIndex; ++i) {
-        addProfile(loft, sheet.profiles[i], i,
-            ribEndOffset(structuredWing.ribs[i].rib, ribThickness));
-        if (i < sheet.stopRibIndex)
-          addProfile(loft, sheet.profiles[i + 1], i + 1,
-              ribStartOffset(structuredWing.ribs[i + 1].rib, ribThickness));
+      addProfile(loft, sheet.profiles[0], 0, ribStartOffset(spanWing.ribs[0].rib, ribThickness));
+      if (spanWing.ribs.front().rib.planform) {
+        for (std::size_t i = 1; i < sheet.stopRibIndex; ++i)
+          addProfile(loft, sheet.profiles[i], i, 0);
+        addProfile(loft, sheet.profiles[sheet.stopRibIndex], sheet.stopRibIndex,
+                   ribEndOffset(spanWing.ribs[sheet.stopRibIndex].rib, ribThickness));
+      } else {
+        for (std::size_t i = 0; i <= sheet.stopRibIndex; ++i) {
+          if (!spanWing.ribs[i].rib.virtualStation)
+            addProfile(loft, sheet.profiles[i], i,
+                       ribEndOffset(spanWing.ribs[i].rib, ribThickness));
+          if (i < sheet.stopRibIndex)
+            addProfile(loft, sheet.profiles[i + 1], i + 1,
+                       ribStartOffset(spanWing.ribs[i + 1].rib, ribThickness));
+        }
       }
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft wing sheeting");
@@ -2044,7 +2544,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   if (progress)
     progress(75, "Building spars and span members");
-  for (const auto& member : structuredWing.members) {
+  for (const auto& member : spanWing.members) {
     const bool carbonFiber = member.carbonFiber ||
         member.kind == domain::SpanMemberKind::Tube ||
         member.kind == domain::SpanMemberKind::Rod;

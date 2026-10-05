@@ -252,7 +252,7 @@ double panelSpanAtRibFace(const PanelStations& panel, const std::size_t ribIndex
   const double dy = panelTip.spanPosition - panelRoot.spanPosition;
   const double dz = panelTip.dihedralHeight - panelRoot.dihedralHeight;
   const double length = std::hypot(dy, dz);
-  if (length < 1.0e-9) return panel.span[ribIndex];
+  if (length < 1.0e-9 || panel.wing->ribs[ribIndex].rib.virtualStation) return panel.span[ribIndex];
   const double plane = panel.wing->ribs[ribIndex].rib.ribPlaneAngleDegrees *
       std::numbers::pi / 180.0;
   const double projectedOffset = materialOffset *
@@ -290,6 +290,13 @@ PlanLayout calculateLayout(const std::vector<domain::StructuredWing>& wings) {
       layout.chordMaximum = std::max(layout.chordMaximum,
           rib.leadingEdgeOffset + rib.chord);
     }
+    if (root.planform) {
+      const double origin = root.leadingEdgeOffset - root.planform->leadingX(0);
+      for (auto point : root.planform->leading)
+        layout.chordMinimum = std::min(layout.chordMinimum, origin + point.x);
+      for (auto point : root.planform->trailing)
+        layout.chordMaximum = std::max(layout.chordMaximum, origin + point.x);
+    }
     flatRoot = panel.span.back();
     layout.panels.push_back(std::move(panel));
   }
@@ -310,6 +317,24 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
                         const PanelStations& panel, const bool mirrored, const double row,
                         const double ribThickness, const std::size_t panelIndex) {
   const auto& wing = *panel.wing;
+  if (wing.surfaceWing) {
+    PanelStations surfacePanel;
+    surfacePanel.wing = wing.surfaceWing.get();
+    for (const auto& rib : wing.surfaceWing->ribs)
+      surfacePanel.span.push_back(flattenedSpanForRib(panel, rib.rib));
+    addPanelComponents(document, layout, surfacePanel, mirrored, row, ribThickness, panelIndex);
+    auto remaining = wing;
+    remaining.surfaceWing.reset();
+    remaining.members.clear();
+    remaining.profiledMembers.clear();
+    remaining.controlSurfaces.clear();
+    remaining.sheeting.clear();
+    remaining.spoilers.clear();
+    auto remainingPanel = panel;
+    remainingPanel.wing = &remaining;
+    addPanelComponents(document, layout, remainingPanel, mirrored, row, ribThickness, panelIndex);
+    return;
+  }
   const auto ribCount = wing.ribs.size();
 
   for (const auto& member : wing.members) {
@@ -421,9 +446,9 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
       controlStations.push_back({span, low, high});
     }
     addStationBand(controlStations, kWoodFill);
-    if (&control == sharedFlap || &control == sharedAileron ||
-        control.hingePostWidth <= 0.0 ||
-        control.hingePostCenters.size() != control.profiles.size())
+    if ((!wing.ribs.front().rib.planform &&
+         (&control == sharedFlap || &control == sharedAileron)) ||
+        control.hingePostWidth <= 0.0 || control.hingePostCenters.size() != control.profiles.size())
       continue;
     std::vector<BandStation> hingeStations;
     hingeStations.reserve(control.hingePostCenters.size());
@@ -444,7 +469,7 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
     }
     addStationBand(hingeStations, kWoodFill);
   }
-  if (sharedFlap != nullptr && sharedAileron != nullptr) {
+  if (!wing.ribs.front().rib.planform && sharedFlap != nullptr && sharedAileron != nullptr) {
     const std::size_t first = sharedFlap->startRibIndex;
     const std::size_t last = sharedAileron->stopRibIndex;
     const double firstCenter = wing.ribs[first].rib.leadingEdgeOffset +
@@ -774,6 +799,18 @@ void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLay
                                const PanelStations& panel, const bool mirrored,
                                const double row, const double ribThickness) {
   const auto& wing = *panel.wing;
+  if (!wing.ribs.empty() && wing.ribs.front().rib.planform) {
+    const auto& root = wing.ribs.front().rib;
+    const auto& curves = *root.planform;
+    const double span = panel.span.back() - panel.span.front();
+    for (const auto* curve : {&curves.leading, &curves.trailing}) {
+      std::vector<QPointF> outline;
+      for (auto p : *curve)
+        outline.push_back(drawingPoint(layout, mirrored, row, panel.span.front() + p.y * span,
+                                       root.leadingEdgeOffset + p.x));
+      addPolyline(document, outline, kOutlineColor, 0.20, false, Qt::transparent);
+    }
+  }
   for (std::size_t i = 0; i < wing.ribs.size(); ++i) {
     const auto& structured = wing.ribs[i];
     const auto& rib = structured.rib;
@@ -1807,7 +1844,8 @@ TechnicalDrawingDocument buildFlattenedWingPlan(
 
   double fullAreaMm2 = 0.0;
   for (const auto& panel : panelParameters)
-    fullAreaMm2 += panel.panelSpan * (panel.rootChord + panel.tipChord);
+    fullAreaMm2 += panel.planform.empty() ? panel.panelSpan * (panel.rootChord + panel.tipChord)
+                                          : 2 * panel.planform.area(panel.panelSpan);
   const double projectedFullSpan = panels.back().ribs.empty()
       ? layout.halfSpan * 2.0
       : panels.back().ribs.back().rib.spanPosition * 2.0;

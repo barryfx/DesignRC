@@ -28,6 +28,8 @@ enum class CameraView;
 
 int runJoinerBackendRegression();
 int runCancellationBackendRegression();
+int runPanelChordBackendRegression();
+int runProjectBackendRegression(const QString& path);
 
 class MainWindow final : public QMainWindow {
 public:

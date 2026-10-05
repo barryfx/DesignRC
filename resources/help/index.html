@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.5.0 User Help</title>
+  <title>DesignRC 1.6.0 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,13 +44,15 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.5.0 User Help</h1>
+    <h1>DesignRC 1.6.0 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
+      <a href="#new-160">New in 1.6.0</a>
+      <a href="#imported-curves">Import LE/TE curves</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
       <a href="#units">Units and value entry</a>
@@ -87,6 +89,10 @@
         <li>Saves editable projects as <code>.designrc</code> files.</li>
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
+
+      <h2 id="new-160">New in 1.6.0 &mdash; October 5, 2026</h2>
+      <p>Panels can now use dimensioned SVG/DXF leading- and trailing-edge curves. Smooth guide sweeps follow the imported shape, airfoil changes, and twist, including the upright center-root transition. Straight hinges remain available for curved control surfaces, and adjacent panel chords are matched within the 1/4 inch (6.35 mm) tolerance.</p>
+      <p>The filename and curve geometry are saved inside the project and restored on load. See <a href="#imported-curves">Imported LE/TE curves</a> for file requirements, axis handling, tolerances, joint matching, and stock behavior.</p>
 
       <h2 id="workspace">The main window</h2>
       <dl>
@@ -164,8 +170,8 @@
       <h3>Dimensions</h3>
       <dl>
         <dt>Panel Span</dt><dd>Flattened root-to-tip length of this half-wing panel.</dd>
-        <dt>Root / Tip Chord</dt><dd>Airfoil chord at the panel ends. Root Chord is editable only on Panel 1.</dd>
-        <dt>Tip Sweep</dt><dd>Fore/aft displacement of the tip leading edge from the root leading edge.</dd>
+        <dt>Root / Tip Chord</dt><dd>Airfoil chord at the panel ends. Without imported curves, Root Chord is editable only on Panel 1; outer panels inherit the adjoining tip chord. Imported curves supply read-only root and tip chords, with the joint-matching rules described under <a href="#imported-curves">Imported LE/TE curves</a>.</dd>
+        <dt>Tip Sweep</dt><dd>Fore/aft displacement of the tip leading edge from the root leading edge. Disabled and shown as <code>--</code> when imported curves define the planform.</dd>
         <dt>Dihedral</dt><dd>Panel angle used when assembling adjoining panels in 3D.</dd>
         <dt>Tip Twist</dt><dd>Progressive wash-in or wash-out, added to the twist inherited from the preceding panel. Positive twist raises the trailing edge; negative twist raises the leading edge. Neither direction lowers the airfoil below its untwisted bottom plane.</dd>
       </dl>
@@ -235,6 +241,14 @@
       <p>Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. At the wing center, a wood joiner passes through R1 and also R1a when that optional rib is present, then stops against the inner face of R2. At an outboard panel joint, it extends one rib bay into each panel, passes through only the two ribs at the joint, and stops against the inner faces of the next ribs. Each rib the wood joiner passes through is bisected into two manufacturing pieces. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint. Joiners are also checked against other joiners, including overlapping wood joiners.</p>
 
       <h2 id="lete">LE/TE tab</h2>
+      <h3 id="imported-curves">Imported LE/TE curves</h3>
+      <p>Use <strong>Import LE/TE Curves</strong> to define this panel with exactly two open paths in an SVG or ASCII DXF file. The filename appears below the button. DesignRC uses X for chord and positive Y for span. If the combined bounds of the two paths are longer along X than Y, DesignRC automatically swaps their X and Y coordinates before checking the roots and span. Equal extents leave the axes unchanged. DXF curves must have exactly Z=0. The SVG origin is its user-coordinate origin after element transforms, independent of viewBox canvas bounds. SVG width and height must declare mm or inches; DXF must declare mm or inches in $INSUNITS. Pixel-only and unitless files are rejected.</p>
+      <p>After any axis swap, exactly one root endpoint must be within 1/4 inch (6.35 mm) of the origin to identify the LE. Both roots must be within that distance of the X axis (Y=0). Each path's Y span must be within 1/4 inch (6.35 mm) of Panel Span. DesignRC translates both paths by the same X amount and independently normalizes their Y ranges to 0 through Panel Span. Chords are preserved. Paths that cross, loop, double back in Y, or give zero chord are rejected.</p>
+      <p>Root Chord and Tip Chord become read-only values from the curves. Tip Sweep is disabled and displays <code>--</code> because the imported LE defines sweep. <strong>Delete LE/TE Curves</strong> returns to a straight planform using the derived chords and sweep, with the usual inherited root chord on outer panels. The curve geometry and filename, including any panel-joint correction, are embedded in saved projects. Reopening restores the geometry and the filename below the import button without rereading or needing the original file. To use later edits to the source file, import it again. Import and deletion use the usual pending-generation behavior.</p>
+      <p>SVG supports open paths (lines, cubic/quadratic Beziers and elliptical arcs), lines, and polylines, including group transforms. DXF supports LINE, ARC, ELLIPSE, open POLYLINE/LWPOLYLINE (including bulges), and control-point SPLINE entities. Standalone POINT markers are ignored and do not count as paths. Flatten nested SVG viewports, CSS transforms, DXF blocks, and unsupported entities before importing.</p>
+      <p>LE stock follows the imported curve for every stock type. Selecting CF Tube LE with an imported curve displays a warning: the user must determine whether the chosen tube can bend to the modeled shape. Spars remain straight between their specified endpoints. Clearance is checked between ribs as well as at ribs.</p>
+      <p>At panel joints, an ordinary outer panel inherits the inner panel's tip chord. An outer panel with imported curves must have a root chord within 1/4 in (6.35 mm) of that tip chord. DesignRC then matches the outer root by shifting its TE at the root and reducing that correction linearly to zero at the tip, preserving the LE and tip chord. Larger differences, or corrections that make the curves cross, stop generation with an error. This also applies when the inner panel uses imported curves; source files are unchanged.</p>
+      <p>Imported stock follows a smooth 3D guide sweep. Wood stock, sheeting, and control surfaces retain their changing airfoil profiles and panel twist; CF rods and tubes use circular sweeps. Straight geometry uses a single root-to-tip loft when that reproduces the intermediate profiles. Construction gaps still create separate pieces. If OCCT cannot form a valid sweep, DesignRC tries a smooth loft with a limited number of profiles; overly complex geometry is rejected instead of building hundreds of loft sections.</p>
       <h3>Leading edge</h3>
       <dl>
         <dt>Block LE Stock</dt><dd>Removes the rib noses at the selected width and lofts smooth wood stock from the airfoil profiles at the member ends. Height must accommodate every cut rib; after an undersized-height warning is acknowledged, the Height control is reset to the required cut-face height.</dd>
@@ -254,7 +268,8 @@
       </dl>
 
       <h2 id="controls">Ailerons/Flaps tab</h2>
-      <p>Ailerons and flaps are separate, closed solids. Each is one smooth spline loft between the airfoil-derived profile at its start and the profile at its end; intermediate rib outlines are not imprinted on the control surface.</p>
+      <p>Ailerons and flaps are separate, closed solids. Straight planforms use the airfoil-derived start and end profiles. Imported planforms add intermediate geometry sections to follow the curved trailing edge without adding physical ribs.</p>
+      <p>With imported curves, each enabled control has <strong>Hinge Parallel with Y Axis</strong> below Width/Height. Unchecked, Width sets the chordwise distance from the TE at each end and a straight line connects those hinge endpoints; the interior may be wider. Checked, the hinge is parallel to Y and Width is the maximum chordwise width. A hinge that crosses the TE or leaves insufficient room for its post is rejected.</p>
       <dl>
         <dt>Width</dt><dd>Chordwise depth measured forward from the trailing edge.</dd>
         <dt>Height</dt><dd>Nominal control body height setting.</dd>
@@ -264,7 +279,7 @@
       </dl>
       <ul>
         <li>A clearance gap is maintained around movable controls.</li>
-        <li>When flap and aileron meet at one rib, their widths must match and DesignRC creates a continuous hinge post.</li>
+        <li>For straight planforms, meeting flap and aileron widths must match and share a continuous hinge post. For imported curves, their hinge endpoints must meet; each straight post follows its own hinge direction.</li>
         <li>Aileron Start Rib cannot precede Flap Stop Rib.</li>
       </ul>
 
@@ -347,7 +362,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.5.0 &middot; Release date: October 3, 2026</footer>
+  <footer>DesignRC 1.6.0 &middot; Release date: October 5, 2026</footer>
 </div>
 </body>
 </html>
