@@ -46,7 +46,7 @@
             and manufacturing-ready parts—all from one parametric desktop application.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#download">Download version 1.5.0</a>
+            <a class="button button-primary" href="#download">Download version 1.6.0</a>
             <a class="button button-secondary" href="https://github.com/barryfx/DesignRC">View on GitHub</a>
           </div>
           <div class="hero-meta" aria-label="Project highlights">
@@ -154,47 +154,47 @@
     <section class="section shell" id="new">
       <div class="section-heading">
         <div>
-          <p class="eyebrow"><span></span> New in version 1.5.0</p>
-          <h2>More ways to build your wing.</h2>
+          <p class="eyebrow"><span></span> New in version 1.6.0</p>
+          <h2>Bring your own wing curves.</h2>
         </div>
         <p>
-          Build upright or upside down with independent top and bottom tabs, and choose
-          Diamond, Molded Sheet, or Notched leading edges to suit your construction method.
+          Import leading and trailing edges from SVG or DXF, generate smooth curved stock,
+          and keep adjoining panels matched across your wing.
         </p>
       </div>
 
       <div class="feature-grid">
         <article class="feature-card feature-wide">
           <p class="card-number">01</p>
-          <h3>Top and bottom build tabs</h3>
+          <h3>Import leading and trailing edges</h3>
           <p>
-            Enable Bottom Rear, Bottom Front, Top Rear, and Top Front tabs independently.
-            Each has its own location, with front tabs at 15% and rear tabs at 75% by default.
-            Shared width, table clearance, and separation-line settings make the temporary
-            supports fit your workshop. Top tabs support upside-down construction without
-            changing the wing's twist.
+            Add two open curves from an SVG or DXF file on each panel's LE/TE tab.
+            Files must include physical units. DesignRC automatically swaps X and Y when
+            the long axis is X, checks root placement and span within 1/4 in (6.35 mm),
+            and scales the span to the Specs tab's Panel Span while preserving chord.
+            Imported curves replace the panel's sweep and define its root and tip chords.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">02</p>
-          <h3>Three new leading edges</h3>
+          <h3>Smooth stock and straight hinges</h3>
           <p>
-            Diamond LE fits rotated square balsa into a V notch and automatically increases
-            undersized stock. Molded LE Sheet wraps curved sheeting around the nose.
-            Notched LE fits a centered stick into a rectangular notch. All three follow
-            the interpolated airfoil at the exposed nose and include unit-aware dimensions.
+            Curved stock follows smooth 3D guides, including twisted panels and changing
+            airfoil profiles. Ailerons and flaps retain straight hinge lines with a curved
+            trailing edge. Choose a hinge parallel to the span axis, or use the Width
+            setting to position the hinge at both ends of the control surface.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">03</p>
-          <h3>Temporary tabs through sheeting and caps</h3>
+          <h3>Connected panels and portable projects</h3>
           <p>
-            Add Tabs to Ribs With Sheeting keeps tabs where sheeting will be added after
-            construction. Rib-cap overlaps give a warning instead of stopping generation.
-            Tabs pass through intact sheeting and caps in STEP exports; remove the tabs
-            before finishing the wing. New options are saved in projects and Edit &gt; Defaults.
+            Adjoining panel chords are checked and matched, including imported curves
+            within the 1/4 in tolerance. Curve geometry and its filename are saved inside
+            the project, so designs reopen without the original file. Additional clearance
+            checks help identify interference along curved edges.
           </p>
         </article>
       </div>
@@ -248,7 +248,7 @@
 
     <section class="section shell download-section" id="download">
       <div class="download-intro">
-        <p class="eyebrow"><span></span> Version 1.5.0</p>
+        <p class="eyebrow"><span></span> Version 1.6.0</p>
         <h2>Choose your platform.</h2>
         <p>
           DesignRC is available for 64-bit Windows and Linux. Every installer is published with
@@ -262,7 +262,7 @@
           <p class="platform-label">Windows 11 · x64</p>
           <h3>Windows installer</h3>
           <p>Guided per-user installation with the application graphics and runtime dependencies included.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.5.0/DesignRC-1.5.0-Windows-x64-Setup.exe">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.6.0/DesignRC-1.6.0-Windows-x64-Setup.exe">
             Download .exe <span>↓</span>
           </a>
           <small>Windows may warn because the installer is not code-signed.</small>
@@ -273,10 +273,10 @@
           <p class="platform-label">Debian / Ubuntu · amd64</p>
           <h3>Debian package</h3>
           <p>Includes Qt 6.4.2, OCCT 8.0, and ICU 74 while APT resolves system runtime libraries.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.5.0/designrc_1.5.0_amd64.deb">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.6.0/designrc_1.6.0_amd64.deb">
             Download .deb <span>↓</span>
           </a>
-          <code>sudo apt install ./designrc_1.5.0_amd64.deb</code>
+          <code>sudo apt install ./designrc_1.6.0_amd64.deb</code>
         </article>
 
         <article class="download-card">
@@ -284,16 +284,16 @@
           <p class="platform-label">Fedora · x86_64</p>
           <h3>Fedora package</h3>
           <p>Native RPM package tested in Fedora 44 with required dependencies resolved by DNF.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.5.0/designrc-1.5.0-1.x86_64.rpm">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.6.0/designrc-1.6.0-1.x86_64.rpm">
             Download .rpm <span>↓</span>
           </a>
-          <code>sudo dnf install ./designrc-1.5.0-1.x86_64.rpm</code>
+          <code>sudo dnf install ./designrc-1.6.0-1.x86_64.rpm</code>
         </article>
       </div>
 
       <div class="release-links">
-        <a href="https://github.com/barryfx/DesignRC/releases/download/1.5.0/DesignRC-1.5.0-SHA256SUMS.txt">SHA-256 checksums</a>
-        <a href="https://github.com/barryfx/DesignRC/releases/tag/1.5.0">Release notes and source archives</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/download/1.6.0/DesignRC-1.6.0-SHA256SUMS.txt">SHA-256 checksums</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/tag/1.6.0">Release notes and source archives</a>
         <a href="https://github.com/barryfx/DesignRC/blob/main/README.md">Build from source</a>
       </div>
     </section>

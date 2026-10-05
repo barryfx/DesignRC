@@ -269,7 +269,7 @@ std::vector<Path> readSvg(const QByteArray& bytes) {
   bool root = false;
   while (!xml.atEnd()) {
     xml.readNext();
-    if (xml.isProcessingInstruction() && xml.processingInstructionTarget() == "xml-stylesheet")
+    if (xml.isProcessingInstruction() && xml.processingInstructionTarget() == QStringLiteral("xml-stylesheet"))
       fail("external SVG stylesheets are not supported.");
     if (xml.isEntityReference()) fail("SVG external entities are not supported.");
     if (xml.isEndElement()) {
