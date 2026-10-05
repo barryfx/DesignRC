@@ -121,7 +121,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="October 3, 2026"
+  DESIGNRC_RELEASE_DATE="October 5, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
