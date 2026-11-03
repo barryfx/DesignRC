@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.6.0**.
+source version is **1.7.0**, dated **November 3, 2026**.
 
 > **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
 > x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
@@ -17,10 +17,10 @@ source version is **1.6.0**.
 - Adds rib build tabs for assembling wing panels on a flat surface, with or without twist.
 - Adds independent top and bottom rib caps, recessed into clear rib sections and trimmed around existing structure.
 - Generates solid ribs, spars, shear webs, sheeting, leading and trailing edges, turbulators,
-  ailerons, flaps, hinge posts, and wing joiners.
+  solid or built-up ailerons and flaps, hinge posts or beveled hinge spars, and wing joiners.
 - Displays the assembled wing in an interactive OpenCascade 3D viewport.
 - Produces a flattened, annotated, full-scale technical plan of both wing halves.
-- Exports the plan as a custom-page vector PDF at 1:1 scale.
+- Exports full-scale plans as custom-page vector PDF, colored DXF, or colored SVG.
 - Exports selected laser-cut parts as full-scale DXF, SVG, and/or PDF files.
 - Exports the material-colored 3D assembly as STEP.
 - Saves editable projects in the `.designrc` format.
@@ -29,6 +29,48 @@ source version is **1.6.0**.
 
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
+
+## What's new in 1.7.0 (November 3, 2026)
+
+- **Built-up ailerons and flaps:** independently enable separate control ribs, top/bottom
+  sheeting, and additional wood or CF tube/rod/strip spars. Control spars use Top or Bottom
+  placement, with root/tip locations measured within the control chord. The Ailerons/Flaps
+  page has a divider between the two controls, and all new settings are available in
+  **Edit > Defaults** and saved in projects.
+- **Hinge construction:** choose **Hinge Post** for matching fixed and moving posts, or
+  **Top/Bottom Spar** for four wood hinge spars with shared Width, Height, and Hinge Angle.
+  Angle is measured aft from vertical, leaving the top of the control nearest the wing.
+  Ribs and moving spars share the bevel; spars finish at the outside moving end-rib faces.
+  Only the selected construction's parameter fields appear.
+- **Control sheeting:** selected skins recess the ribs and butt against inherited wing TE
+  sheeting or stock without changing the wing settings. In hinge-spar mode, skins reach
+  their respective hinge spars automatically and Width is hidden. Hinge-post mode keeps
+  adjustable skin widths. Manual control-skin taper fields are removed; thickness at a
+  shared thin TE is resolved automatically. Wing and control sheets stop on both sides
+  of hinge and spanwise gaps, including shared flap/aileron joints.
+- **Manufacturing geometry:** control spars fit changing airfoils, curves, and twist.
+  Exported ribs include the TE and control-skin recesses and exact bevel/notch edges,
+  without the extra backtracking line at the hinge. An LE or hinge-post height equal
+  to its rib cut is accepted; undersized posts report the required minimum.
+- **Consistent names and plans:** aileron/flap ribs use **ARn/FRn**, and their stock TE
+  parts use **ATE1, ATE2, ... / FTE1, FTE2, ...** throughout plans, rib drawings, the
+  parts dialog, exported labels/files, and STEP assemblies. Leaders identify stock,
+  spars, and sheeting dimensions/thickness. Shared rib labels are separated, false
+  full-chord boundary lines are removed, and moving posts reach their end gaps.
+- **Joiner span:** **Number of Rib Bays** controls all fixed joiner materials and removable
+  sleeves/rods. One bay crosses two ribs; optional R1a counts as a physical rib. Both
+  adjoining panels must have enough bays. Wood joiners cut every traversed rib and
+  remove intersecting shear webs. Alignment pins retain their existing lengths.
+- **Joiner clearance:** geometry checks reject joiners that leave the crossed rib envelope,
+  including the rib faces for circular sections. The error identifies the joiner and rib
+  and requests a shorter joiner or less dihedral. Deleting all spars now leaves the wing
+  without spars, including when reopening files with stale legacy spar flags.
+- **Plan formats:** **Export Plan** replaces **Export Plan PDF**. Choose PDF, DXF, or SVG,
+  click OK, then choose a destination and filename. DXF retains line/label RGB colors,
+  outlines, leaders, and borders in millimeters, using complete AutoCAD 2004 class records
+  for Autodesk import compatibility. SVG retains line/fill colors and transparency.
+  Both use outlined labels; all three formats preserve the 1:1 drawing layout. Fusion
+  uses its own sketch-status colors when importing geometry, even from a colored file.
 
 ## What's new in 1.6.0 (October 5, 2026)
 
@@ -167,16 +209,17 @@ press **F1**.
 
 ## Download
 
-Version 1.6.0 builds produce the installers listed below in `dist/`. Published releases are on
-the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases):
+The packaging commands below produce the following version 1.7.0 filenames in `dist/`.
+Installers must be built and published separately; the local Git tag does not publish downloads.
+Find available packages on the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases):
 
-- `DesignRC-1.6.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.7.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.6.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.7.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.6.0_amd64.deb
+  sudo apt install ./designrc_1.7.0_amd64.deb
   designrc
   ```
 
@@ -189,15 +232,15 @@ the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.6.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.7.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.6.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.7.0-1.x86_64.rpm
   designrc
   ```
 
-Release packaging also produces source archives and `DesignRC-1.6.0-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.7.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -209,7 +252,8 @@ to verify a download before installing it.
 4. Press **Generate Wing** to validate the design and build the 3D geometry.
 5. Inspect the wing with left-drag orbit, right-drag pan, and mouse-wheel zoom.
 6. Press **Generate Plan** to create the flattened technical drawing.
-7. Export the plan to PDF or export selected cutting parts to DXF/SVG.
+7. Select **Export Plan**, choose PDF/DXF/SVG, and save the plan; use **Export Parts**
+   for selected cutting parts in DXF/SVG/PDF.
 8. Save the editable design as a `.designrc` project.
 
 Parameter edits do not automatically rebuild geometry. This allows several values to be changed
@@ -293,13 +337,22 @@ Run the complete suite with:
 ctest --preset windows-debug
 ```
 
-The suite contains:
+The complete suite contains 14 tests:
 
 - `designrc_domain_tests` - airfoil, structure, naming, DXF, and SVG behavior;
-- `designrc_gui_tests` - defaults, parameter controls, plans, and PDF generation; and
+- `designrc_gui_tests` - defaults, parameter controls, plans, and PDF/DXF/SVG generation;
 - `designrc_geometry_tests` - OpenCascade solid construction and boolean operations;
-- `designrc_step_export_tests` - STEP assembly structure and component grouping; and
-- `designrc_joiner_backend_tests` - joiner placement and backend geometry behavior.
+- `designrc_step_export_tests` - STEP assembly structure, names, and component grouping;
+- `designrc_joiner_backend_tests` - joiner placement, bay counts, and rib clearance;
+- `designrc_stock_fit_tests` - stock height fits, sheeting recesses, hinge-sheet coverage,
+  and exported rib contours;
+- `designrc_hinge_spar_tests` - beveled hinge ribs/spars, sheeting, curves, and end-face alignment;
+- `designrc_builtup_control_tests` - built-up control solids and spar fitting;
+- `designrc_planform_tests` - curve import, normalization, hinges, and exports;
+- `designrc_sweep_tests` and `designrc_sweep_assembly_tests` - curved solid sweeps and assemblies;
+- `designrc_curved_project_tests` - the saved curved-wing fixture;
+- `designrc_panel_chord_tests` - adjoining panel chord matching; and
+- `designrc_cancellation_backend_tests` - cancellation of geometry generation.
 
 The geometry suite is substantially slower than the domain and GUI suites. To run one suite only:
 
@@ -338,7 +391,7 @@ Then build the Release application and installer with:
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
 installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.6 is packaged as 1.6.0. The resulting installer does not require administrator
+version such as 1.7 is packaged as 1.7.0. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
@@ -440,15 +493,15 @@ permissions remain correct when the source tree is hosted on a WSL `/mnt/c` moun
 Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
 
 ```text
-dist/designrc_1.6.0_amd64.deb
-dist/DesignRC-1.6.0-source.tar.gz
-dist/DesignRC-1.6.0-Linux-x64.sha256
+dist/designrc_1.7.0_amd64.deb
+dist/DesignRC-1.7.0-source.tar.gz
+dist/DesignRC-1.7.0-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.6.0_amd64.deb
+sudo apt install ./dist/designrc_1.7.0_amd64.deb
 ```
 
 ## Building on Fedora
@@ -497,15 +550,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.6.0-1.x86_64.rpm
-dist/DesignRC-1.6.0-source.tar.gz
-dist/DesignRC-1.6.0-Linux-RPM-x64.sha256
+dist/designrc-1.7.0-1.x86_64.rpm
+dist/DesignRC-1.7.0-source.tar.gz
+dist/DesignRC-1.7.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.6.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.7.0-1.x86_64.rpm
 designrc
 ```
 

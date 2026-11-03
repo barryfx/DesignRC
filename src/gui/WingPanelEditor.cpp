@@ -36,6 +36,12 @@ namespace designrc::gui {
 namespace {
 
 constexpr double kMmPerInch = 25.4;
+
+void clearLegacySparSelections(WingPanelData& data) {
+  data.topSpar = data.bottomSpar = data.topRearSpar = data.bottomRearSpar = false;
+  data.carbonSpar = 0;
+  data.shearWebs = data.sparShearWebs = false;
+}
 int nineCharacterSpinnerWidth(const QWidget* spinner) {
   const QFontMetrics metrics{spinner->font()};
   const int textWidth = metrics.horizontalAdvance(QString(9, QChar{'M'}));
@@ -371,8 +377,78 @@ void LengthInput::refreshDisplay() {
   refreshing_ = false;
 }
 
+namespace {
+QJsonObject builtUpToJson(const domain::BuiltUpControlParameters& d) {
+  QJsonObject o;
+  o.insert("enabled", d.enabled);
+  o.insert("topSheeting", d.topSheeting);
+  o.insert("bottomSheeting", d.bottomSheeting);
+  o.insert("hingeSpars", d.hingeSpars);
+  o.insert("hingeSparWidth", d.hingeSparWidth);
+  o.insert("hingeSparHeight", d.hingeSparHeight);
+  o.insert("hingeAngleDegrees", d.hingeAngleDegrees);
+  o.insert("topSheetingWidth", d.topSheetingWidth);
+  o.insert("topSheetingThickness", d.topSheetingThickness);
+  o.insert("bottomSheetingWidth", d.bottomSheetingWidth);
+  o.insert("bottomSheetingThickness", d.bottomSheetingThickness);
+  QJsonArray spars;
+  for (const auto& spar : d.spars) {
+    QJsonObject row;
+    row.insert("chordLocationPercent", spar.chordLocationPercent);
+    row.insert("tipChordLocationPercent", spar.tipChordLocationPercent);
+    row.insert("woodHeight", spar.woodHeight);
+    row.insert("woodWidth", spar.woodWidth);
+    row.insert("tubeOd", spar.tubeOd);
+    row.insert("tubeId", spar.tubeId);
+    row.insert("rodOd", spar.rodOd);
+    row.insert("stripWidth", spar.stripWidth);
+    row.insert("stripThickness", spar.stripThickness);
+    row.insert("verticalLocation", spar.verticalLocation);
+    row.insert("material", spar.material);
+    row.insert("type", spar.type);
+    spars.append(row);
+  }
+  o.insert("spars", spars);
+  return o;
+}
+domain::BuiltUpControlParameters builtUpFromJson(const QJsonObject& o) {
+  domain::BuiltUpControlParameters d;
+  d.enabled = o.value("enabled").toBool(d.enabled);
+  d.topSheeting = o.value("topSheeting").toBool(d.topSheeting);
+  d.bottomSheeting = o.value("bottomSheeting").toBool(d.bottomSheeting);
+  d.hingeSpars = o.value("hingeSpars").toBool(d.hingeSpars);
+  d.hingeSparWidth = o.value("hingeSparWidth").toDouble(d.hingeSparWidth);
+  d.hingeSparHeight = o.value("hingeSparHeight").toDouble(d.hingeSparHeight);
+  d.hingeAngleDegrees = o.value("hingeAngleDegrees").toDouble(d.hingeAngleDegrees);
+  d.topSheetingWidth = o.value("topSheetingWidth").toDouble(d.topSheetingWidth);
+  d.topSheetingThickness = o.value("topSheetingThickness").toDouble(d.topSheetingThickness);
+  d.bottomSheetingWidth = o.value("bottomSheetingWidth").toDouble(d.bottomSheetingWidth);
+  d.bottomSheetingThickness = o.value("bottomSheetingThickness").toDouble(d.bottomSheetingThickness);
+  for (const auto& value : o.value("spars").toArray()) {
+    const auto row = value.toObject();
+    domain::SparParameters spar;
+    spar.chordLocationPercent = row.value("chordLocationPercent").toDouble(spar.chordLocationPercent);
+    spar.tipChordLocationPercent = row.value("tipChordLocationPercent").toDouble(spar.tipChordLocationPercent);
+    spar.woodHeight = row.value("woodHeight").toDouble(spar.woodHeight);
+    spar.woodWidth = row.value("woodWidth").toDouble(spar.woodWidth);
+    spar.tubeOd = row.value("tubeOd").toDouble(spar.tubeOd);
+    spar.tubeId = row.value("tubeId").toDouble(spar.tubeId);
+    spar.rodOd = row.value("rodOd").toDouble(spar.rodOd);
+    spar.stripWidth = row.value("stripWidth").toDouble(spar.stripWidth);
+    spar.stripThickness = row.value("stripThickness").toDouble(spar.stripThickness);
+    spar.verticalLocation = row.value("verticalLocation").toInt(spar.verticalLocation);
+    spar.material = row.value("material").toInt(spar.material);
+    spar.type = row.value("type").toInt(spar.type);
+    d.spars.push_back(spar);
+  }
+  return d;
+}
+} // namespace
+
 QJsonObject panelDataToJson(const WingPanelData& d) {
   QJsonObject o;
+  o.insert("builtUpAileron", builtUpToJson(d.builtUpAileron));
+  o.insert("builtUpFlap", builtUpToJson(d.builtUpFlap));
 #define PUT(name) o.insert(#name, d.name)
   PUT(curveFileName);
   PUT(aileronHingeParallelY);
@@ -470,7 +546,7 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   for (const auto& joiner : d.fixedJoiners) {
     QJsonObject item;
 #define PUT_FIXED(name) item.insert(#name, joiner.name)
-    PUT_FIXED(chordLocationPercent); PUT_FIXED(material); PUT_FIXED(woodThickness);
+    PUT_FIXED(chordLocationPercent); PUT_FIXED(ribBays); PUT_FIXED(material); PUT_FIXED(woodThickness);
     PUT_FIXED(carbonType); PUT_FIXED(carbonTubeOd); PUT_FIXED(carbonTubeId);
     PUT_FIXED(carbonRodOd); PUT_FIXED(steelRodOd);
     item.insert("woodThicknessUnit", static_cast<int>(joiner.woodThicknessUnit));
@@ -487,6 +563,7 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
     QJsonObject item;
 #define PUT_REMOVABLE(name) item.insert(#name, joiner.name)
     PUT_REMOVABLE(kind); PUT_REMOVABLE(chordLocationPercent);
+    if (joiner.kind == 0) PUT_REMOVABLE(ribBays);
     PUT_REMOVABLE(thisPanelPart); PUT_REMOVABLE(adjoiningPanelPart); PUT_REMOVABLE(thisRodMaterial);
     PUT_REMOVABLE(thisRodOd); PUT_REMOVABLE(thisSleeveMaterial); PUT_REMOVABLE(thisSleeveOd);
     PUT_REMOVABLE(adjoiningRodMaterial); PUT_REMOVABLE(adjoiningRodOd);
@@ -510,6 +587,8 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
 
 WingPanelData panelDataFromJson(const QJsonObject& o) {
   WingPanelData d;
+  d.builtUpAileron = builtUpFromJson(o.value("builtUpAileron").toObject());
+  d.builtUpFlap = builtUpFromJson(o.value("builtUpFlap").toObject());
 #define READ_D(name) if (o.contains(#name)) d.name = o.value(#name).toDouble(d.name)
 #define READ_I(name) if (o.contains(#name)) d.name = o.value(#name).toInt(d.name)
 #define READ_B(name) if (o.contains(#name)) d.name = o.value(#name).toBool(d.name)
@@ -719,6 +798,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
 #define READ_FIXED_D(name) if (item.contains(#name)) joiner.name = item.value(#name).toDouble(joiner.name)
 #define READ_FIXED_I(name) if (item.contains(#name)) joiner.name = item.value(#name).toInt(joiner.name)
     READ_FIXED_D(chordLocationPercent); READ_FIXED_I(material); READ_FIXED_D(woodThickness);
+    joiner.ribBays = item.value("ribBays").toInt(d.addRib1a ? 2 : 1);
     READ_FIXED_I(carbonType); READ_FIXED_D(carbonTubeOd); READ_FIXED_D(carbonTubeId);
     READ_FIXED_D(carbonRodOd); READ_FIXED_D(steelRodOd);
     if (item.contains("woodThicknessUnit"))
@@ -746,6 +826,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
 #define READ_REMOVABLE_D(name) if (item.contains(#name)) joiner.name = item.value(#name).toDouble(joiner.name)
 #define READ_REMOVABLE_I(name) if (item.contains(#name)) joiner.name = item.value(#name).toInt(joiner.name)
     READ_REMOVABLE_I(kind); READ_REMOVABLE_D(chordLocationPercent);
+    if (joiner.kind == 0) joiner.ribBays = item.value("ribBays").toInt(d.addRib1a ? 2 : 1);
     READ_REMOVABLE_I(thisPanelPart);
     if (item.contains("adjoiningPanelPart"))
       joiner.adjoiningPanelPart = item.value("adjoiningPanelPart").toInt(joiner.adjoiningPanelPart);
@@ -841,6 +922,9 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
     d.topTeSheetingTaper = true;
     d.bottomTeSheetingTaper = true;
   }
+  // An explicit empty modern list means the user deleted every spar. Only
+  // projects without that list should migrate the old hidden spar switches.
+  if (o.contains("spars") && d.spars.empty()) clearLegacySparSelections(d);
   return d;
 }
 
@@ -1437,6 +1521,7 @@ QWidget* WingPanelEditor::makeRibsPage() {
             this, &WingPanelEditor::emitChanged);
   connect(addRib1a_, &QCheckBox::toggled, this, [this] {
     updateWiringHoleRibRanges(true);
+    updateConditionalControls();
     emitChanged();
   });
   return scrollPage(content);
@@ -1663,7 +1748,12 @@ QWidget* WingPanelEditor::makeSheetingPage() {
 }
 
 void WingPanelEditor::addSparEditor() {
-  if (!sparEditorsLayout_) return;
+  createSparEditor(sparEditors_, sparEditorsLayout_, false);
+}
+
+void WingPanelEditor::createSparEditor(std::vector<SparEditorWidgets>& rows,
+                                      QVBoxLayout* targetLayout, const bool control) {
+  if (!targetLayout) return;
   const int id = nextSparEditorId_++;
   SparEditorWidgets row;
   auto* group = new QGroupBox;
@@ -1745,6 +1835,14 @@ void WingPanelEditor::addSparEditor() {
   layout->addWidget(row.stripDetails);
 
   applySparDefaults(row);
+  if (control) {
+    row.mid->hide();
+    row.top->setChecked(true);
+    row.wood->setChecked(true);
+    row.woodHeight->setValueMm(1.5875);
+    row.woodWidth->setValueMm(3.175);
+    group->setObjectName("controlSparEditorRow");
+  }
 
   for (auto* button : {row.top, row.bottom, row.mid, row.wood, row.carbonFiber,
                        row.tube, row.rod, row.strip})
@@ -1758,9 +1856,10 @@ void WingPanelEditor::addSparEditor() {
       emitChanged();
     });
 
-  sparEditorsLayout_->addWidget(group);
-  sparEditors_.push_back(row);
-  renumberSparEditors();
+  targetLayout->addWidget(group);
+  rows.push_back(row);
+  for (std::size_t i = 0; i < rows.size(); ++i)
+    rows[i].deleteSelection->setText(QString{"Spar %1"}.arg(i + 1));
   updateSparEditorControls();
 }
 
@@ -1812,8 +1911,17 @@ void WingPanelEditor::deleteSelectedSparEditors() {
     delete it->container;
     it = sparEditors_.erase(it);
   }
+  if (sparEditors_.empty()) {
+    for (auto* check : {topSpar_, bottomSpar_, topRearSpar_, bottomRearSpar_, shearWebs_})
+      check->setChecked(false);
+    auto* carbonGroup = cfTube_->group();
+    carbonGroup->setExclusive(false);
+    cfTube_->setChecked(false); cfRod_->setChecked(false);
+    carbonGroup->setExclusive(true);
+  }
   renumberSparEditors();
   updateSparEditorControls();
+  emitChanged();
 }
 
 void WingPanelEditor::renumberSparEditors() {
@@ -1822,6 +1930,14 @@ void WingPanelEditor::renumberSparEditors() {
 }
 
 void WingPanelEditor::updateSparEditorControls() {
+  for (auto* control : {&builtUpAileron_, &builtUpFlap_})
+    for (auto& row : control->spars) {
+      row.woodDetails->setVisible(row.wood->isChecked());
+      row.typeDetails->setVisible(row.carbonFiber->isChecked());
+      row.tubeDetails->setVisible(row.carbonFiber->isChecked() && row.tube->isChecked());
+      row.rodDetails->setVisible(row.carbonFiber->isChecked() && row.rod->isChecked());
+      row.stripDetails->setVisible(row.carbonFiber->isChecked() && row.strip->isChecked());
+    }
   QHash<QString, int> woodLocations;
   for (auto& row : sparEditors_) {
     const bool wood = row.wood->isChecked();
@@ -1979,6 +2095,7 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
     detailsLayout->addWidget(detailRow(
         {{"Width", width}, {"Thickness", thickness}}));
     taper = new QCheckBox{"Taper Sheeting"};
+    taper->setObjectName(title.startsWith("Top") ? "topTeSheetingTaper" : "bottomTeSheetingTaper");
     detailsLayout->addWidget(taper);
     taperStart = makePercent(taperStartName, 50.0);
     taperDetails = detailRow({{"Taper Start Location", taperStart}});
@@ -2018,6 +2135,135 @@ QWidget* WingPanelEditor::makeLeadingTrailingPage() {
   layout->addStretch(); return scrollPage(content);
 }
 
+
+QWidget* WingPanelEditor::makeBuiltUpControl(const QString& prefix, BuiltUpControlWidgets& w) {
+  auto* container = new QWidget;
+  auto* layout = new QVBoxLayout{container};
+  layout->setContentsMargins(0, 0, 0, 0);
+  w.enabled = new QCheckBox{prefix == "aileron" ? "Built-up Aileron" : "Built-up Flap"};
+  w.enabled->setObjectName(prefix + "BuiltUp");
+  layout->addWidget(w.enabled);
+  w.details = new QWidget;
+  auto* details = new QVBoxLayout{w.details};
+  details->setContentsMargins(24, 0, 0, 0);
+  layout->addWidget(w.details);
+  const auto makeLength = [&](const QString& suffix, double value) {
+    const QString key = prefix + suffix;
+    auto* input = new LengthInput{key, value};
+    input->setObjectName(key);
+    input->setGlobalUnit(globalUnit_);
+    input->setOverrideSelectorVisible(showUnitOverrides_);
+    lengths_.insert(key, input);
+    connect(input, &LengthInput::valueChanged, this, &WingPanelEditor::emitChanged);
+    return input;
+  };
+  const auto addSheet = [&](bool top) {
+    const QString side = top ? "Top" : "Bottom";
+    auto*& check = top ? w.top : w.bottom;
+    auto*& sheetDetails = top ? w.topDetails : w.bottomDetails;
+    auto*& width = top ? w.topWidth : w.bottomWidth;
+    auto*& thickness = top ? w.topThickness : w.bottomThickness;
+    check = new QCheckBox{side + " Sheeting"};
+    check->setObjectName(prefix + side + "Sheeting");
+    details->addWidget(check);
+    sheetDetails = new QWidget;
+    auto* sheetLayout = new QVBoxLayout{sheetDetails};
+    sheetLayout->setContentsMargins(24, 0, 0, 0);
+    width = makeLength(side + "SheetingWidth", 25.4);
+    thickness = makeLength(side + "SheetingThickness", 1.5875);
+    sheetLayout->addWidget(detailRow({{"Width", width}}));
+    sheetLayout->addWidget(detailRow({{"Thickness", thickness}}));
+    details->addWidget(sheetDetails);
+    connect(check, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
+  };
+  addSheet(true); addSheet(false);
+  auto* buttons = new QHBoxLayout;
+  auto* add = new QPushButton{"Add Spar"};
+  auto* remove = new QPushButton{"Delete Spar"};
+  add->setObjectName(prefix + "AddSpar"); remove->setObjectName(prefix + "DeleteSpar");
+  buttons->addWidget(add); buttons->addWidget(remove); buttons->addStretch();
+  details->addLayout(buttons);
+  auto* rows = new QWidget;
+  w.sparsLayout = new QVBoxLayout{rows}; w.sparsLayout->setContentsMargins(0, 0, 0, 0);
+  details->addWidget(rows);
+  connect(add, &QPushButton::clicked, this, [this, &w] {
+    createSparEditor(w.spars, w.sparsLayout, true); emitChanged();
+  });
+  connect(remove, &QPushButton::clicked, this, [this, &w] {
+    for (auto it = w.spars.begin(); it != w.spars.end();) {
+      if (it->deleteSelection->isChecked()) { delete it->container; it = w.spars.erase(it); }
+      else ++it;
+    }
+    for (std::size_t i = 0; i < w.spars.size(); ++i)
+      w.spars[i].deleteSelection->setText(QString{"Spar %1"}.arg(i + 1));
+    emitChanged();
+  });
+  connect(w.enabled, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
+  return container;
+}
+
+domain::BuiltUpControlParameters WingPanelEditor::builtUpData(const BuiltUpControlWidgets& w) const {
+  domain::BuiltUpControlParameters d;
+  d.enabled = w.enabled->isChecked();
+  d.topSheeting = w.top->isChecked(); d.bottomSheeting = w.bottom->isChecked();
+  d.topSheetingWidth = w.topWidth->valueMm(); d.bottomSheetingWidth = w.bottomWidth->valueMm();
+  d.topSheetingThickness = w.topThickness->valueMm(); d.bottomSheetingThickness = w.bottomThickness->valueMm();
+  d.hingeSpars = w.hingeSpars->isChecked();
+  d.hingeSparWidth = w.hingeSparWidth->valueMm();
+  d.hingeSparHeight = w.hingeSparHeight->valueMm();
+  d.hingeAngleDegrees = w.hingeAngle->value();
+  for (const auto& row : w.spars) {
+    domain::SparParameters spar;
+    spar.chordLocationPercent = row.rootChordLocation->value();
+    spar.tipChordLocationPercent = row.tipChordLocation->value();
+    spar.verticalLocation = row.top->isChecked() ? 0 : 1;
+    spar.material = row.wood->isChecked() ? 0 : 1;
+    spar.type = row.tube->isChecked() ? 0 : row.rod->isChecked() ? 1 : 2;
+    spar.woodHeight = row.woodHeight->valueMm(); spar.woodWidth = row.woodWidth->valueMm();
+    spar.tubeOd = row.tubeOd->valueMm(); spar.tubeId = row.tubeId->valueMm();
+    spar.rodOd = row.rodOd->valueMm(); spar.stripWidth = row.stripWidth->valueMm();
+    spar.stripThickness = row.stripThickness->valueMm();
+    d.spars.push_back(spar);
+  }
+  return d;
+}
+
+void WingPanelEditor::setBuiltUpData(BuiltUpControlWidgets& w, const domain::BuiltUpControlParameters& d) {
+  w.enabled->setChecked(d.enabled);
+  w.top->setChecked(d.topSheeting); w.bottom->setChecked(d.bottomSheeting);
+  w.topWidth->setValueMm(d.topSheetingWidth); w.bottomWidth->setValueMm(d.bottomSheetingWidth);
+  w.topThickness->setValueMm(d.topSheetingThickness); w.bottomThickness->setValueMm(d.bottomSheetingThickness);
+  (d.hingeSpars ? w.hingeSpars : w.hingePost)->setChecked(true);
+  w.hingeSparWidth->setValueMm(d.hingeSparWidth);
+  w.hingeSparHeight->setValueMm(d.hingeSparHeight);
+  w.hingeAngle->setValue(d.hingeAngleDegrees);
+  for (auto* input : {w.topWidth, w.topThickness, w.bottomWidth, w.bottomThickness,
+                     w.hingeSparWidth, w.hingeSparHeight})
+    input->setUnitOverride(airfoilData_.unitOverrides.value(input->objectName(), UnitOverride::Global));
+
+  for (auto& row : w.spars) delete row.container;
+  w.spars.clear();
+  for (const auto& spar : d.spars) {
+    createSparEditor(w.spars, w.sparsLayout, true);
+    SparDefaults value;
+    value.chordLocationPercent = spar.chordLocationPercent;
+    value.tipChordLocationPercent = spar.tipChordLocationPercent;
+    value.verticalLocation = spar.verticalLocation == 1 ? 1 : 0;
+    value.material = spar.material; value.type = spar.type;
+    value.woodHeight = spar.woodHeight; value.woodWidth = spar.woodWidth;
+    value.tubeOd = spar.tubeOd; value.tubeId = spar.tubeId; value.rodOd = spar.rodOd;
+    value.stripWidth = spar.stripWidth; value.stripThickness = spar.stripThickness;
+    applySparData(w.spars.back(), value);
+    const QString prefix = (&w == &builtUpAileron_ ? "aileronSpar" : "flapSpar") + QString::number(w.spars.size() - 1);
+    auto& row = w.spars.back();
+    for (const auto& entry : {std::pair{"WoodHeight", row.woodHeight}, std::pair{"WoodWidth", row.woodWidth},
+        std::pair{"TubeOd", row.tubeOd}, std::pair{"TubeId", row.tubeId}, std::pair{"RodOd", row.rodOd},
+        std::pair{"StripWidth", row.stripWidth}, std::pair{"StripThickness", row.stripThickness}})
+      entry.second->setUnitOverride(airfoilData_.unitOverrides.value(prefix + entry.first, UnitOverride::Global));
+
+  }
+}
+
 QWidget* WingPanelEditor::makeControlsPage() {
   auto* content = new QWidget; auto* layout = new QVBoxLayout{content};
   auto makeLength = [this](const QString& key, double value) {
@@ -2049,14 +2295,59 @@ QWidget* WingPanelEditor::makeControlsPage() {
     detailsLayout->addWidget(hingeParallel);
     connect(hingeParallel, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
     detailsLayout->addWidget(detailRow({{"Start Rib", start}, {"Stop Rib", stop}}));
-    detailsLayout->addWidget(detailRow({{"Hinge Post Width", hingeWidth}}));
-    detailsLayout->addWidget(detailRow({{"Hinge Post Height", hingeHeight}}));
+    auto& construction = prefix == "aileron" ? builtUpAileron_ : builtUpFlap_;
+    construction.hingePost = new QRadioButton{"Hinge Post"};
+    construction.hingeSpars = new QRadioButton{"Top/Bottom Spar"};
+    construction.hingePost->setObjectName(prefix + "HingePost");
+    construction.hingeSpars->setObjectName(prefix + "HingeSpars");
+    auto* hingeGroup = new QButtonGroup{details};
+    hingeGroup->addButton(construction.hingePost);
+    hingeGroup->addButton(construction.hingeSpars);
+    construction.hingePost->setChecked(true);
+    detailsLayout->addWidget(construction.hingePost);
+    construction.hingePostDetails = new QWidget;
+    construction.hingePostDetails->setObjectName(prefix + "HingePostDetails");
+    auto* postLayout = new QVBoxLayout{construction.hingePostDetails};
+    postLayout->setContentsMargins(0, 0, 0, 0);
+    postLayout->addWidget(detailRow({{"Hinge Post Width", hingeWidth}}));
+    postLayout->addWidget(detailRow({{"Hinge Post Height", hingeHeight}}));
+    detailsLayout->addWidget(construction.hingePostDetails);
+    detailsLayout->addWidget(construction.hingeSpars);
+    construction.hingeSparDetails = new QWidget;
+    construction.hingeSparDetails->setObjectName(prefix + "HingeSparDetails");
+    auto* sparLayout = new QVBoxLayout{construction.hingeSparDetails};
+    sparLayout->setContentsMargins(24, 0, 0, 0);
+    construction.hingeSparHeight = makeLength(prefix + "HingeSparHeight", 1.5);
+    construction.hingeSparWidth = makeLength(prefix + "HingeSparWidth", 6.0);
+    construction.hingeSparHeight->setObjectName(prefix + "HingeSparHeight");
+    construction.hingeSparWidth->setObjectName(prefix + "HingeSparWidth");
+    construction.hingeAngle = new QDoubleSpinBox;
+    construction.hingeAngle->setObjectName(prefix + "HingeAngle");
+    construction.hingeAngle->setRange(0, 80);
+    construction.hingeAngle->setDecimals(2);
+    construction.hingeAngle->setSuffix("\u00b0");
+    construction.hingeAngle->setValue(45);
+    construction.hingeAngle->setToolTip("Aft bevel from vertical. The top edge is closest to the wing.");
+    sparLayout->addWidget(detailRow({{"Height", construction.hingeSparHeight}}));
+    sparLayout->addWidget(detailRow({{"Width", construction.hingeSparWidth}}));
+    sparLayout->addWidget(detailRow({{"Hinge Angle", construction.hingeAngle}}));
+    detailsLayout->addWidget(construction.hingeSparDetails);
+    for (auto* radio : {construction.hingePost, construction.hingeSpars})
+      connect(radio, &QRadioButton::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
+    connect(construction.hingeAngle, &QDoubleSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+    detailsLayout->addWidget(makeBuiltUpControl(prefix,
+        prefix == "aileron" ? builtUpAileron_ : builtUpFlap_));
+    detailsLayout->insertWidget(detailsLayout->indexOf(construction.hingePost), construction.enabled);
     return details;
   };
   ailerons_ = new QCheckBox{"Ailerons"}; layout->addWidget(ailerons_);
   aileronDetails_ = makeDetails("aileron", 35, 10, aileronWidth_, aileronHeight_,
       aileronHingePostWidth_, aileronHingePostHeight_, aileronStart_, aileronStop_);
   layout->addWidget(aileronDetails_);
+  auto* divider = new QFrame;
+  divider->setObjectName("aileronFlapDivider");
+  divider->setFrameShape(QFrame::HLine);
+  layout->addWidget(divider);
   flaps_ = new QCheckBox{"Flaps"}; layout->addWidget(flaps_);
   flapDetails_ = makeDetails("flap", 40, 10, flapWidth_, flapHeight_,
       flapHingePostWidth_, flapHingePostHeight_, flapStart_, flapStop_);
@@ -2440,6 +2731,12 @@ void WingPanelEditor::addFixedJoinerEditor(const FixedJoinerData& data) {
   row.chordLocation->setRange(0.0, 90.0);
   row.chordLocation->setDecimals(2); row.chordLocation->setSingleStep(1.0);
   row.chordLocation->setSuffix("%"); row.chordLocation->setValue(data.chordLocationPercent);
+  row.ribBays = new QSpinBox;
+  row.ribBays->setObjectName("fixedJoinerRibBays");
+  row.ribBays->setRange(1, std::max(1, ribCount_->value() - 1 + (showRootChord_ && addRib1a_->isChecked() ? 1 : 0)));
+  row.ribBays->setValue(data.ribBays);
+  layout->addWidget(detailRow({{"Number of Rib Bays", row.ribBays}}));
+  connect(row.ribBays, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
   layout->addWidget(detailRow({{"Chord Location", row.chordLocation}}));
   row.wood = new QRadioButton{"Wood"}; row.carbonFiber = new QRadioButton{"CF"};
   row.steelRod = new QRadioButton{"Steel Rod"};
@@ -2506,6 +2803,14 @@ void WingPanelEditor::addRemovableJoinerEditor(const int kind,
   row.chordLocation->setDecimals(2); row.chordLocation->setSingleStep(1.0);
   row.chordLocation->setSuffix("%");
   row.chordLocation->setValue(newAlignmentPin ? 70 : data.chordLocationPercent);
+  if (kind == 0) {
+    row.ribBays = new QSpinBox;
+    row.ribBays->setObjectName("removableJoinerRibBays");
+    row.ribBays->setRange(1, std::max(1, ribCount_->value() - 1 + (showRootChord_ && addRib1a_->isChecked() ? 1 : 0)));
+    row.ribBays->setValue(data.ribBays);
+    layout->addWidget(detailRow({{"Number of Rib Bays", row.ribBays}}));
+    connect(row.ribBays, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
+  }
   layout->addWidget(detailRow({{"Chord Location", row.chordLocation}}));
   connect(row.chordLocation, &QDoubleSpinBox::valueChanged,
           this, &WingPanelEditor::emitChanged);
@@ -2674,6 +2979,7 @@ void WingPanelEditor::updateJoinerEditorControls() {
     fixedWoodAvailable = fixedWoodAvailable || it.value() == 3;
   for (auto& row : fixedJoinerEditors_) {
     row.container->setVisible(joinerMode_ == 1);
+    row.ribBays->setMaximum(std::max(1, ribCount_->value() - 1 + (showRootChord_ && addRib1a_->isChecked() ? 1 : 0)));
     row.wood->setVisible(fixedWoodAvailable);
     if (!fixedWoodAvailable && row.wood->isChecked()) row.carbonFiber->setChecked(true);
     row.woodDetails->setVisible(row.wood->isChecked());
@@ -2685,6 +2991,7 @@ void WingPanelEditor::updateJoinerEditorControls() {
   for (auto& row : removableJoinerEditors_) {
     row.container->setVisible(joinerMode_ == 0);
     if (row.kind == 0) {
+      row.ribBays->setMaximum(std::max(1, ribCount_->value() - 1 + (showRootChord_ && addRib1a_->isChecked() ? 1 : 0)));
       const bool thisSleeve = row.sleeve->isChecked();
       const bool adjoiningSleeve = row.adjoiningSleeve->isChecked();
       row.thisSleeveDetails->setVisible(thisSleeve);
@@ -2767,6 +3074,8 @@ void WingPanelEditor::importAirfoil(const bool root) {
 
 WingPanelData WingPanelEditor::data() const {
   WingPanelData d = airfoilData_;
+  d.builtUpAileron = builtUpData(builtUpAileron_);
+  d.builtUpFlap = builtUpData(builtUpFlap_);
   d.aileronHingeParallelY = aileronHingeParallelY_->isChecked();
   d.flapHingeParallelY = flapHingeParallelY_->isChecked();
   d.panelSpan = span_->valueMm(); d.rootChord = rootChord_->valueMm(); d.tipChord = tipChord_->valueMm();
@@ -2912,6 +3221,7 @@ WingPanelData WingPanelEditor::data() const {
     for (const auto& row : fixedJoinerEditors_) {
       FixedJoinerData joiner;
       joiner.chordLocationPercent = row.chordLocation->value();
+      joiner.ribBays = row.ribBays->value();
       joiner.material = row.wood->isChecked() ? 0 : row.carbonFiber->isChecked() ? 1 : 2;
       joiner.woodThickness = row.woodThickness->valueMm();
       joiner.carbonType = row.tube->isChecked() ? 0 : 1;
@@ -2928,6 +3238,7 @@ WingPanelData WingPanelEditor::data() const {
     for (const auto& row : removableJoinerEditors_) {
       RemovableJoinerData joiner;
       joiner.kind = row.kind;
+      if (row.ribBays) joiner.ribBays = row.ribBays->value();
       joiner.chordLocationPercent = row.chordLocation->value();
       joiner.thisPanelPart = row.sleeve->isChecked() ? 0 : 1;
       joiner.adjoiningPanelPart = row.kind == 0
@@ -2955,7 +3266,17 @@ WingPanelData WingPanelEditor::data() const {
       d.removableJoiners.push_back(joiner);
     }
   }
+  for (const auto* w : {&builtUpAileron_, &builtUpFlap_})
+    for (std::size_t i = 0; i < w->spars.size(); ++i) {
+      const QString prefix = (w == &builtUpAileron_ ? "aileronSpar" : "flapSpar") + QString::number(i);
+      const auto& row = w->spars[i];
+      for (const auto& entry : {std::pair{"WoodHeight", row.woodHeight}, std::pair{"WoodWidth", row.woodWidth},
+          std::pair{"TubeOd", row.tubeOd}, std::pair{"TubeId", row.tubeId}, std::pair{"RodOd", row.rodOd},
+          std::pair{"StripWidth", row.stripWidth}, std::pair{"StripThickness", row.stripThickness}})
+        d.unitOverrides.insert(prefix + entry.first, entry.second->unitOverride());
+    }
   for (auto it = lengths_.constBegin(); it != lengths_.constEnd(); ++it) d.unitOverrides.insert(it.key(), it.value()->unitOverride());
+  if (d.spars.empty()) clearLegacySparSelections(d);
   return d;
 }
 
@@ -3101,6 +3422,8 @@ void WingPanelEditor::setData(const WingPanelData& d) {
           addRemovableJoinerEditor(joiner.kind, joiner);
     }
   }
+  setBuiltUpData(builtUpAileron_, d.builtUpAileron);
+  setBuiltUpData(builtUpFlap_, d.builtUpFlap);
   updateWiringHoleRibRanges();
   const int wiringEnd = d.wiringHoleEndRib > 0
       ? d.wiringHoleEndRib
@@ -3132,6 +3455,11 @@ void WingPanelEditor::setData(const WingPanelData& d) {
 
 void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
   globalUnit_ = unit;
+  for (auto* control : {&builtUpAileron_, &builtUpFlap_})
+    for (auto& row : control->spars)
+      for (auto* input : {row.woodHeight, row.woodWidth, row.tubeOd, row.tubeId,
+                          row.rodOd, row.stripWidth, row.stripThickness})
+        input->setGlobalUnit(unit);
   for (auto* input : lengths_) input->setGlobalUnit(unit);
   for (auto& row : sparEditors_)
     for (auto* input : {row.woodHeight, row.woodWidth, row.tubeOd, row.tubeId,
@@ -3169,6 +3497,15 @@ void WingPanelEditor::setTrailingEdgeHeightMm(const double height) {
   emitChanged();
 }
 
+void WingPanelEditor::setHingePostHeightMm(const bool aileron, const double height) {
+  auto* input = aileron ? aileronHingePostHeight_ : flapHingePostHeight_;
+  const bool inches = input->unitOverride() == UnitOverride::Inches ||
+      (input->unitOverride() == UnitOverride::Global && globalUnit_ == DisplayUnit::Inches);
+  const double step = inches ? 25.4 * .001 : .01;
+  input->setValueMm(std::ceil(height / step - 1e-8) * step);
+  emitChanged();
+}
+
 void WingPanelEditor::updateRibSpacing() {
   if (!ribSpacing_ || !span_ || !ribCount_) return;
   const double spacingMm = span_->valueMm() /
@@ -3187,6 +3524,46 @@ void WingPanelEditor::updateRibSpacing() {
 }
 
 bool WingPanelEditor::validate(QString& error) {
+  for (const auto& entry : {std::pair{&builtUpAileron_, ailerons_}, std::pair{&builtUpFlap_, flaps_}}) {
+    const auto& w = *entry.first;
+    if (!entry.second->isChecked() || !w.enabled->isChecked()) continue;
+    const bool aileron = entry.first == &builtUpAileron_;
+    const QString name = aileron ? "Aileron" : "Flap";
+    const double width = (aileron ? aileronWidth_ : flapWidth_)->valueMm();
+    const double postWidth = w.hingeSpars->isChecked() ? w.hingeSparWidth->valueMm() :
+        (aileron ? aileronHingePostWidth_ : flapHingePostWidth_)->valueMm();
+    if (w.hingeSpars->isChecked() &&
+        (w.hingeSparHeight->valueMm() <= 0 || postWidth <= 0 ||
+         postWidth <= w.hingeSparHeight->valueMm() * std::tan(w.hingeAngle->value() * std::numbers::pi / 180.0) + .01)) {
+      error = "Built-up " + name + ": Hinge spar Width must exceed Height times tan(Hinge Angle).";
+      return false;
+    }
+    if (width <= postWidth + 0.001 ||
+        (sheetTe_->isChecked() && width <= teWidth_->valueMm() + postWidth + 0.001)) {
+      error = "Built-up " + name + ": No gap between the hinge post and the TE stock for a rib. "
+              "Reduce TE Width or increase control Width.";
+      return false;
+    }
+    for (const bool top : {true, false}) {
+      if (!(top ? w.top : w.bottom)->isChecked()) continue;
+      if ((!w.hingeSpars->isChecked() && (top ? w.topWidth : w.bottomWidth)->valueMm() <= 0) ||
+          (top ? w.topThickness : w.bottomThickness)->valueMm() <= 0) {
+        error = "Built-up " + name + " Sheeting Width and Thickness must be greater than zero.";
+        return false;
+      }
+    }
+    for (const auto& spar : builtUpData(w).spars) {
+      const bool wood = spar.material == 0;
+      const bool tube = !wood && spar.type == 0;
+      if ((wood && (spar.woodHeight <= 0 || spar.woodWidth <= 0)) ||
+          (tube && (spar.tubeOd <= 0 || spar.tubeId < 0 || spar.tubeId >= spar.tubeOd)) ||
+          (!wood && spar.type == 1 && spar.rodOd <= 0) ||
+          (!wood && spar.type == 2 && (spar.stripWidth <= 0 || spar.stripThickness <= 0))) {
+        error = "Built-up " + name + " has invalid spar dimensions. Tube ID must be smaller than OD.";
+        return false;
+      }
+    }
+  }
   try {
     airfoilData_.planform.validate(span_->valueMm());
   } catch (const std::exception& exception) {
@@ -3339,6 +3716,22 @@ bool WingPanelEditor::validate(QString& error) {
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  for (auto* w : {&builtUpAileron_, &builtUpFlap_}) {
+    if (!w->enabled) continue;
+    w->details->setVisible(w->enabled->isChecked());
+    w->topDetails->setVisible(w->top->isChecked());
+    w->bottomDetails->setVisible(w->bottom->isChecked());
+    const bool built = w->enabled->isChecked();
+    w->hingePost->setVisible(built);
+    w->hingeSpars->setVisible(built);
+    w->hingePostDetails->setVisible(!built || w->hingePost->isChecked());
+    w->hingeSparDetails->setVisible(built && w->hingeSpars->isChecked());
+    const bool fullControlSkin = w->hingeSpars->isChecked();
+    w->topWidth->parentWidget()->setVisible(!fullControlSkin);
+    w->bottomWidth->parentWidget()->setVisible(!fullControlSkin);
+    for (auto* check : {w->top, w->bottom})
+      check->setToolTip(fullControlSkin ? "Sheeting extends to its hinge spar; wing TE sheeting keeps its own settings." : QString{});
+  }
   updateCurveControls();
   topFrontBuildTabDetails_->setVisible(addTopFrontBuildTab_->isChecked());
   topRearBuildTabDetails_->setVisible(addTopRearBuildTab_->isChecked());

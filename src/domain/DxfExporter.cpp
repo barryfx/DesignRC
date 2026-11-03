@@ -8,6 +8,7 @@
 #include <cmath>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <optional>
 #include <set>
@@ -68,8 +69,39 @@ std::string populatedR2000Template(
 }
 
 void writeDocumentStart(std::ostream& output,
-                        const std::set<std::string>& requestedLayers) {
-  const auto document = populatedR2000Template(requestedLayers);
+                        const std::set<std::string>& requestedLayers,
+                        const bool trueColor = false) {
+  auto document = populatedR2000Template(requestedLayers);
+  if (trueColor) {
+    // RGB entity colors require AutoCAD 2004 or newer. Keep legacy part
+    // exports in R2000 when no explicit RGB colors were requested.
+    const auto version = document.find("AC1015");
+    if (version == std::string::npos)
+      throw std::runtime_error("The embedded DXF version is missing");
+    document.replace(version, 6, "AC1018");
+    // R2004 CLASS records require group 91 (instance count). Merely changing
+    // ACADVER leaves R2000 class records that Autodesk's reader rejects.
+    std::vector<std::pair<int, std::string>> tags;
+    std::map<std::string, std::size_t> instanceCounts;
+    std::istringstream input{document};
+    std::string code, value;
+    while (std::getline(input, code) && std::getline(input, value)) {
+      const int group = std::stoi(code);
+      tags.emplace_back(group, value);
+      if (group == 0) ++instanceCounts[value];
+    }
+    std::ostringstream upgraded;
+    bool inClass = false;
+    std::string className;
+    for (const auto& [group, text] : tags) {
+      if (group == 0) inClass = text == "CLASS";
+      if (inClass && group == 1) className = text;
+      if (inClass && group == 280)
+        upgraded << " 91\n" << instanceCounts[className] << "\n";
+      upgraded << std::setw(3) << group << "\n" << text << "\n";
+    }
+    document = upgraded.str();
+  }
   const auto entities = document.find(entitiesSectionMarker);
   if (entities == std::string::npos)
     throw std::runtime_error("The embedded R2000 entities section is missing");
@@ -83,11 +115,13 @@ class DxfEntityWriter {
   explicit DxfEntityWriter(std::ostream& output) : output_(output) {}
 
   std::ostream& entity(const std::string& type, const std::string& layer,
-                       const std::string& subclass) {
+                       const std::string& subclass,
+                       const std::optional<std::uint32_t> rgb = std::nullopt) {
     output_ << "0\n" << type << "\n5\n"
             << hexadecimalHandle(nextHandle_++)
-            << "\n330\n17\n100\nAcDbEntity\n8\n" << layer
-            << "\n100\n" << subclass << "\n";
+            << "\n330\n17\n100\nAcDbEntity\n8\n" << layer << "\n";
+    if (rgb) output_ << "420\n" << (*rgb & 0x00ffffffU) << "\n";
+    output_ << "100\n" << subclass << "\n";
     return output_;
   }
 
@@ -101,17 +135,19 @@ class DxfEntityWriter {
 };
 
 void writePolyline(DxfEntityWriter& writer, const std::vector<Point2>& points,
-                   const std::string& layer) {
-  auto& output = writer.entity("LWPOLYLINE", layer, "AcDbPolyline");
+                   const std::string& layer,
+                   const std::optional<std::uint32_t> rgb = std::nullopt) {
+  auto& output = writer.entity("LWPOLYLINE", layer, "AcDbPolyline", rgb);
   output << "90\n" << points.size() << "\n70\n1\n";
   for (const auto& point : points)
     output << "10\n" << point.x << "\n20\n" << point.y << "\n";
 }
 
 void writeOpenLines(DxfEntityWriter& writer, const std::vector<Point2>& points,
-                    const std::string& layer) {
+                    const std::string& layer,
+                    const std::optional<std::uint32_t> rgb = std::nullopt) {
   for (std::size_t index = 0; index + 1 < points.size(); ++index) {
-    auto& output = writer.entity("LINE", layer, "AcDbLine");
+    auto& output = writer.entity("LINE", layer, "AcDbLine", rgb);
     output << "10\n" << points[index].x
            << "\n20\n" << points[index].y
            << "\n30\n0.0"
@@ -123,11 +159,11 @@ void writeOpenLines(DxfEntityWriter& writer, const std::vector<Point2>& points,
 
 void writeSpline(DxfEntityWriter& writer, const PartDrawingPath& path) {
   if (path.points.size() < 3) {
-    writeOpenLines(writer, path.points, path.layer);
+    writeOpenLines(writer, path.points, path.layer, path.rgb);
     return;
   }
   const int degree = std::min(3, static_cast<int>(path.points.size()) - 1);
-  auto& output = writer.entity("SPLINE", path.layer, "AcDbSpline");
+  auto& output = writer.entity("SPLINE", path.layer, "AcDbSpline", path.rgb);
   output << "70\n" << (path.closed ? 9 : 8)
          << "\n210\n0.0\n220\n0.0\n230\n1.0"
          << "\n71\n" << degree
@@ -141,9 +177,9 @@ void writeDrawingPath(DxfEntityWriter& writer, const PartDrawingPath& path) {
   if (path.spline) {
     writeSpline(writer, path);
   } else if (path.closed) {
-    writePolyline(writer, path.points, path.layer);
+    writePolyline(writer, path.points, path.layer, path.rgb);
   } else {
-    writeOpenLines(writer, path.points, path.layer);
+    writeOpenLines(writer, path.points, path.layer, path.rgb);
   }
 }
 
@@ -788,6 +824,22 @@ std::vector<PartDrawing> arrangePartDrawings(
   return arranged;
 }
 
+void exportDrawingDxf(const std::vector<PartDrawingPath>& paths,
+                      const std::filesystem::path& path) {
+  if (paths.empty()) throw std::invalid_argument("A DXF drawing requires at least one path");
+  std::set<std::string> layers;
+  for (const auto& drawingPath : paths) layers.insert(drawingPath.layer);
+  std::ofstream output{path};
+  if (!output) throw std::runtime_error("Unable to create DXF file: " + path.string());
+  writeDocumentStart(output, layers, std::any_of(paths.begin(), paths.end(),
+      [](const auto& drawingPath) { return drawingPath.rgb.has_value(); }));
+  DxfEntityWriter writer{output};
+  for (const auto& drawingPath : paths) writeDrawingPath(writer, drawingPath);
+  writeDocumentEnd(output);
+  output.close();
+  if (!output) throw std::runtime_error("Unable to finish DXF file: " + path.string());
+}
+
 void exportPartsDxf(const std::vector<PartDrawing>& parts,
                     const std::filesystem::path& path) {
   const auto arranged = arrangePartDrawings(parts);
@@ -799,7 +851,11 @@ void exportPartsDxf(const std::vector<PartDrawing>& parts,
       layers.insert(drawingPath.layer);
   std::ofstream output{path};
   if (!output) throw std::runtime_error("Unable to create DXF file: " + path.string());
-  writeDocumentStart(output, layers);
+  const bool trueColor = std::any_of(arranged.begin(), arranged.end(), [](const auto& part) {
+    return std::any_of(part.paths.begin(), part.paths.end(),
+        [](const auto& drawingPath) { return drawingPath.rgb.has_value(); });
+  });
+  writeDocumentStart(output, layers, trueColor);
   DxfEntityWriter writer{output};
   for (const auto& part : arranged) {
     for (const auto& drawingPath : part.paths)

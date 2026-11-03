@@ -912,7 +912,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         name.starts_with("Spoiler Support Rail");
   };
   const auto isTrailingEdgePart = [](const std::string& name) {
-    return name.starts_with("TE") ||
+    return name.starts_with("TE") || name.starts_with("ATE") || name.starts_with("FTE") ||
         name.find("trailing edge") != std::string::npos;
   };
   const auto isSparMember = [&](const std::string& name) {
@@ -947,7 +947,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   const auto isJoinerCollisionTarget = [&](const std::string& name) {
     return isCheckedJoiner(name) || isSparMember(name) ||
         name == "CF tube" || name == "CF rod" ||
-        name.starts_with("LE") || name.starts_with("TE") ||
+        name.starts_with("LE") || isTrailingEdgePart(name) ||
         name.find("leading edge") != std::string::npos ||
         name.find("trailing edge") != std::string::npos ||
         name.starts_with("Aileron") || name.starts_with("Flap");
@@ -1915,13 +1915,14 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (progress)
     progress(40, "Building leading and trailing edge stock");
   const auto& spanWing = structuredWing.surfaceWing ? *structuredWing.surfaceWing : structuredWing;
+  std::vector<std::pair<std::string, TopoDS_Shape>> hingeSparShapes;
   for (const auto& member : spanWing.profiledMembers) {
     if (member.profiles.size() != spanWing.ribs.size())
       throw std::runtime_error("Edge stock profiles do not match the rib stations");
     auto ranges = member.activeRanges;
     if (ranges.empty()) ranges.emplace_back(0, member.profiles.size() - 1);
     const bool splineTrailingEdge =
-        member.name.starts_with("TE") ||
+        member.name.starts_with("TE") || member.name.starts_with("ATE") || member.name.starts_with("FTE") ||
         member.name.find("trailing edge") != std::string::npos;
     for (const auto [first, last] : ranges) {
       SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
@@ -1983,6 +1984,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
       loft.Build();
       if (!loft.IsDone()) throw std::runtime_error("Unable to loft the panel edge stock");
       addPartShape(member.name, loft.Shape(), PartMaterial::Wood);
+      if (member.name.find("hinge spar") != std::string::npos)
+        hingeSparShapes.emplace_back(member.name, loft.Shape());
     }
   }
   if (timings) timings->profiledStockMs = elapsedMs(stageStart);
@@ -1995,14 +1998,20 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   for (const auto& flap : spanWing.controlSurfaces) {
     if (flap.name != "Flap") continue;
     for (const auto& aileron : spanWing.controlSurfaces) {
-      if (aileron.name == "Aileron" &&
-          flap.stopRibIndex == aileron.startRibIndex) {
+      if (aileron.name == "Aileron" && !aileron.hingeSpars && !flap.hingeSpars &&
+          flap.stopRibIndex == aileron.startRibIndex &&
+          std::abs(flap.hingePostWidth - aileron.hingePostWidth) < 1e-8 &&
+          std::abs(flap.hingePostHeight - aileron.hingePostHeight) < 1e-8) {
         sharedFlap = &flap;
         sharedAileron = &aileron;
       }
     }
   }
   for (const auto& control : spanWing.controlSurfaces) {
+    const auto physical = std::find_if(structuredWing.controlSurfaces.begin(), structuredWing.controlSurfaces.end(),
+        [&](const auto& c) { return c.name == control.name; });
+    const bool builtUp = physical != structuredWing.controlSurfaces.end() && physical->builtUpWing;
+    if (!builtUp) {
     SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
     loft.CheckCompatibility(false);
     const auto addControlProfile = [&](const std::size_t localIndex, const double yOffset) {
@@ -2031,7 +2040,9 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     loft.Build();
     if (!loft.IsDone()) throw std::runtime_error("Unable to loft the control surface");
     addPartShape(control.name, loft.Shape(), PartMaterial::Wood);
+    }
 
+    if (control.hingeSpars) continue;
     if (!spanWing.ribs.front().rib.planform &&
         (&control == sharedFlap || &control == sharedAileron))
       continue;
@@ -2065,7 +2076,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   const auto buildMemberShape = [&](const domain::SpanMember& member) {
     const bool circular =
         member.kind == domain::SpanMemberKind::Tube || member.kind == domain::SpanMemberKind::Rod;
-    const bool endpointDefinedSpar = member.name.starts_with("Spar ");
+    const bool endpointDefinedSpar = member.name.starts_with("Spar ") || member.name == "Movable hinge post";
     if (circular && spanWing.ribs.front().rib.planform &&
         (member.name.starts_with("LE") || member.name.find("leading edge") != std::string::npos)) {
       const auto tubeSolid = [&](double diameter) {
@@ -2387,6 +2398,8 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     TopoDS_Shape shape;
   };
   std::vector<SheetingCutter> sheetingCutters;
+  for (const auto& [name, shape] : hingeSparShapes)
+    sheetingCutters.push_back({name.find("Top") != std::string::npos ? 0 : 1, name, shape});
   for (const auto& member : spanWing.members) {
     if (member.cutsSheeting)
       sheetingCutters.push_back(
@@ -2408,12 +2421,40 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     sheetingCutters.push_back({0, "Spoiler assembly",
         loftSpoilerProfiles(spoiler, assemblyProfiles, 0.0, 0.0)});
   }
+  // The fixed wing sheet stops at the control opening, including the end gaps.
+  // Built-up controls supply their own sheet solids inside their end-rib faces.
+  if (!spanWing.sheeting.empty()) {
+    for (const auto& control : spanWing.controlSurfaces) {
+      SpanwiseSurface cutter{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
+      cutter.CheckCompatibility(false);
+      for (std::size_t i = control.startRibIndex; i <= control.stopRibIndex; ++i) {
+        const auto& rib = spanWing.ribs[i].rib;
+        const auto& profile = control.profiles[i - control.startRibIndex];
+        const double front = std::min_element(profile.begin(), profile.end(),
+            [](const auto a, const auto b) { return a.x < b.x; })->x - control.gap -
+                (control.hingeSpars ? control.hingeSparWidth : 0.0);
+        const double offset = i == control.startRibIndex ? ribEndOffset(rib, ribThickness)
+            : i == control.stopRibIndex ? (control.extendThroughStopRib
+                ? ribEndOffset(rib, ribThickness) : ribStartOffset(rib, ribThickness)) : 0.0;
+        const double margin = std::max(rib.chord, control.hingePostHeight) + 10.0;
+        BRepBuilderAPI_MakePolygon polygon;
+        for (const domain::Point2 point : {domain::Point2{front, -margin},
+             {rib.chord + margin, -margin}, {rib.chord + margin, margin}, {front, margin}})
+          polygon.Add(transformLocal(rib, point, offset));
+        polygon.Close();
+        cutter.AddWire(polygon.Wire(), &rib);
+      }
+      cutter.Build();
+      if (!cutter.IsDone()) throw std::runtime_error("Unable to trim sheeting around " + control.name);
+      sheetingCutters.push_back({2, control.name + " opening", cutter.Shape()});
+    }
+  }
   const auto cutSheeting = [&](const std::string& name, TopoDS_Shape shape) {
-    const int verticalLocation = name.find("top sheeting") != std::string::npos ? 0 :
-        name.find("bottom sheeting") != std::string::npos ? 1 : 2;
+    const int verticalLocation = name.find("top") != std::string::npos || name.find("Top") != std::string::npos ? 0 :
+        name.find("bottom") != std::string::npos || name.find("Bottom") != std::string::npos ? 1 : 2;
     if (verticalLocation == 2) return shape;
     for (const auto& cutter : sheetingCutters) {
-      if (cutter.verticalLocation != verticalLocation) continue;
+      if (cutter.verticalLocation != 2 && cutter.verticalLocation != verticalLocation) continue;
       BRepAlgoAPI_Cut cut{shape, cutter.shape};
       cut.SetRunParallel(true);
       cut.Build();
@@ -2603,15 +2644,16 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
         };
         for (const auto& profile : joiner.innerRectangularProfiles)
           addGlobalProfile(profile);
-        std::array<domain::Point3, 4> outerSecond{};
-        const auto& secondRib = structuredWing.ribs[joiner.stopRibIndex].rib;
-        const double secondOffset = ribEndOffset(secondRib, ribThickness);
-        for (std::size_t corner = 0; corner < outerSecond.size(); ++corner) {
-          const auto point = transformLocal(secondRib,
-              joiner.rectangularProfiles[joiner.stopRibIndex][corner], secondOffset);
-          outerSecond[corner] = {point.X(), point.Y(), point.Z()};
+        for (std::size_t i=1; i<=joiner.stopRibIndex; ++i) {
+          std::array<domain::Point3,4> profile{};
+          for (std::size_t corner=0; corner<profile.size(); ++corner) {
+            const auto point=transformLocal(structuredWing.ribs[i].rib,
+                joiner.rectangularProfiles[i][corner],
+                i==joiner.stopRibIndex ? ribEndOffset(structuredWing.ribs[i].rib,ribThickness) : 0.0);
+            profile[corner]={point.X(),point.Y(),point.Z()};
+          }
+          addGlobalProfile(profile);
         }
-        addGlobalProfile(outerSecond);
         fullLoft.Build();
         if (!fullLoft.IsDone())
           throw std::runtime_error("Unable to loft the full wood joiner");
@@ -2836,6 +2878,20 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (timings) timings->displayMeshMs = elapsedMs(stageStart);
   if (progress)
     progress(100, "Panel geometry complete");
+  for (const auto& control : structuredWing.controlSurfaces) {
+    if (!control.builtUpWing) continue;
+    checkpoint();
+    MaterialShapeSet parts;
+    static_cast<void>(buildStructuredWingPreview(*control.builtUpWing, ribThickness,
+        nullptr, &parts, {}, maximumRibWorkers, isCancelled));
+    for (const auto& part : parts.parts)
+      addShape(part.shape, part.material, part.mirrorInAssembly,
+          part.name.starts_with(control.name + " ") ||
+                  part.name.starts_with(control.name == "Aileron" ? "AR" : "FR")
+                  || part.name.starts_with(control.name == "Aileron" ? "ATE" : "FTE")
+              ? part.name : control.name + " " + part.name);
+  }
+
   return result;
 }
 

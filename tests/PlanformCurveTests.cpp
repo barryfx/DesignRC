@@ -185,6 +185,7 @@ int main(int argc, char* argv[]) {
   s.aileronStartRib = 2;
   s.aileronStopRib = 5;
   s.aileronWidth = 40;
+  s.aileronHingePostHeight = 30;
   auto wing = applyWingStructure(ribs, s);
   assert(wing.ribs.size() == 5 && wing.surfaceWing && wing.surfaceWing->ribs.size() > 5);
   const auto& c = wing.controlSurfaces.front();

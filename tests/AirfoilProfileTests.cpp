@@ -1,3 +1,4 @@
+#include "TestWingStructure.h"
 #include "domain/AirfoilProfile.h"
 #include "domain/WingDesign.h"
 #include "domain/DxfExporter.h"
@@ -18,7 +19,7 @@
 #include <stdexcept>
 #include <thread>
 
-int main() {
+int runTests() {
 #ifdef _WIN32
   _set_error_mode(_OUT_TO_STDERR);
 #endif
@@ -65,7 +66,7 @@ int main() {
     WingParameters p; p.ribCount = 3; p.rootChord = 180.0; p.tipChord = 150.0;
     const auto ribs = generateRibs(p, thick, thin);
     StructureParameters s; s.leadingEdgeType = type;
-    const auto wing = applyWingStructure(ribs, s);
+    const auto wing = testsupport::buildStructure(ribs, s);
     assert(wing.profiledMembers.size() == 1);
     const auto& member = wing.profiledMembers.front();
     assert(member.profiles.size() == ribs.size() && member.profileSegments.size() == ribs.size());
@@ -105,7 +106,7 @@ int main() {
     WingParameters p; p.ribCount = 3;
     const auto ribs = generateRibs(p, thin, thin);
     StructureParameters s; s.leadingEdgeType = 5; s.diamondLeadingEdgeWidth = 12.7;
-    const auto wing = applyWingStructure(ribs, s);
+    const auto wing = testsupport::buildStructure(ribs, s);
     assert(wing.profiledMembers.size() == 1 && wing.profiledMembers.front().diamondNose);
     for (const auto& profile : wing.profiledMembers.front().profiles) {
       assert(profile.size() > 4);
@@ -129,10 +130,10 @@ int main() {
     }
     s.diamondLeadingEdgeWidth = 0.1;
     auto mixedRibs = generateRibs(p, thin, thick);
-    const auto corrected = applyWingStructure(mixedRibs, s);
+    const auto corrected = testsupport::buildStructure(mixedRibs, s);
     assert(corrected.diamondLeadingEdgeWidth > 0.1);
     s.diamondLeadingEdgeWidth = corrected.diamondLeadingEdgeWidth;
-    const auto repeated = applyWingStructure(mixedRibs, s);
+    const auto repeated = testsupport::buildStructure(mixedRibs, s);
     assert(repeated.diamondLeadingEdgeWidth == s.diamondLeadingEdgeWidth);
     assert(repeated.profiledMembers.front().profiles.size() == mixedRibs.size());
     for (std::size_t i = 0; i < mixedRibs.size(); ++i) {
@@ -165,7 +166,7 @@ int main() {
       s.topRearBuildTabLocationPercent = 70.0;
       s.addTabRibSeparationLine = true;
       s.buildTabHeightAboveTable = 10.0;
-      const auto wing = applyWingStructure(ribs, s);
+      const auto wing = testsupport::buildStructure(ribs, s);
       for (const auto& rib : wing.ribs) {
         assert(rib.buildPlane.has_value() == ((mask & 3) != 0));
         assert(rib.topBuildPlane.has_value() == ((mask & 12) != 0));
@@ -191,10 +192,10 @@ int main() {
       s.leTopSheetStopRib = s.leBottomSheetStopRib = 3;
       s.addTabRibSeparationLine = true;
       s.buildTabHeightAboveTable = 5.0;
-      const auto omitted = applyWingStructure(ribs, s);
+      const auto omitted = testsupport::buildStructure(ribs, s);
       for (const auto& rib : omitted.ribs) assert(rib.tabSeparationLines.empty());
       s.addTabsToSheetedRibs = true;
-      const auto included = applyWingStructure(ribs, s);
+      const auto included = testsupport::buildStructure(ribs, s);
       for (const auto& rib : included.ribs) assert(rib.tabSeparationLines.size() == 2);
       // The override changes ribs only; sheeting remains uncut.
       assert(included.sheeting.size() == omitted.sheeting.size());
@@ -222,17 +223,17 @@ int main() {
     s.topSpar = true;
     s.addTabRibSeparationLine = true;
     s.buildTabHeightAboveTable = 5.0;
-    const auto shifted = applyWingStructure(ribs, s);
+    const auto shifted = testsupport::buildStructure(ribs, s);
     for (const auto& rib : shifted.ribs) {
       assert(rib.tabSeparationLines.size() == 1);
       assert(rib.tabSeparationLines.front().back().x <
           rib.rib.chord * 0.25 - s.topSparWidth * 0.5);
     }
     s.topRibCaps = true;
-    const auto cappedTabs = applyWingStructure(ribs, s);
+    const auto cappedTabs = testsupport::buildStructure(ribs, s);
     assert(!cappedTabs.warnings.empty());
     s.addTopFrontBuildTab = false;
-    const auto capsOnly = applyWingStructure(ribs, s);
+    const auto capsOnly = testsupport::buildStructure(ribs, s);
     assert(capsOnly.ribCaps.size() == cappedTabs.ribCaps.size());
     for (std::size_t i = 0; i < capsOnly.ribCaps.size(); ++i) {
       const auto& a = capsOnly.ribCaps[i].profile;
@@ -251,10 +252,10 @@ int main() {
     s.addFrontBuildTab = s.addRearBuildTab = true;
     s.buildTabHeightAboveTable = 5.0;
     s.buildTabWidth = 8.0;
-    const auto unmarked = applyWingStructure(ribs, s);
+    const auto unmarked = testsupport::buildStructure(ribs, s);
     assert(unmarked.ribs.front().tabSeparationLines.empty());
     s.addTabRibSeparationLine = true;
-    const auto marked = applyWingStructure(ribs, s);
+    const auto marked = testsupport::buildStructure(ribs, s);
     for (std::size_t i = 0; i < marked.ribs.size(); ++i) {
       const auto& rib = marked.ribs[i];
       assert(rib.tabSeparationLines.size() == 2);
@@ -306,28 +307,28 @@ int main() {
     s.leBottomSheetUpToSpar = false;
     s.leBottomSheetStopChordPercent = 100.0;
     s.leBottomSheetStopRib = 2;
-    const auto covered = applyWingStructure(ribs, s);
+    const auto covered = testsupport::buildStructure(ribs, s);
     assert(covered.ribs[0].tabSeparationLines.empty() && !covered.ribs[0].buildPlane);
     assert(covered.ribs[1].tabSeparationLines.empty() && !covered.ribs[1].buildPlane);
     assert(covered.ribs[2].tabSeparationLines.size() == 2 && covered.ribs[2].buildPlane);
     s.leBottomSheetStopChordPercent = 30.0;
-    const auto frontCovered = applyWingStructure(ribs, s);
+    const auto frontCovered = testsupport::buildStructure(ribs, s);
     assert(frontCovered.ribs[0].tabSeparationLines.size() == 1);
     assert(frontCovered.ribs[0].tabSeparationLines.front().front().x > 0.7 * ribs.front().chord);
     s.leBottomSheet = false;
     for (const double invalidWidth : {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
       s.buildTabWidth = invalidWidth;
       bool rejected = false;
-      try { (void)applyWingStructure(ribs, s); }
+      try { (void)testsupport::buildStructure(ribs, s); }
       catch (const std::invalid_argument&) { rejected = true; }
       assert(rejected);
     }
     s.buildTabWidth = 0.4;
-    const auto narrow = applyWingStructure(ribs, s);
+    const auto narrow = testsupport::buildStructure(ribs, s);
     for (const auto& line : narrow.ribs.front().tabSeparationLines)
       assert(std::abs(line.back().x - line.front().x - 0.2) < 1.0e-8);
     s.addFrontBuildTab = s.addRearBuildTab = false;
-    assert(applyWingStructure(ribs, s).ribs.front().tabSeparationLines.empty());
+    assert(testsupport::buildStructure(ribs, s).ribs.front().tabSeparationLines.empty());
   }
   // Independent tabs, custom locations, and a common clearance remain correct
   // across all ribs and both twist directions.
@@ -345,9 +346,9 @@ int main() {
       s.addRearBuildTab = (mask & 2) != 0;
       s.frontBuildTabLocationPercent = 22.25;
       s.rearBuildTabLocationPercent = 68.5;
-      const auto baseline = applyWingStructure(ribs, s);
+      const auto baseline = testsupport::buildStructure(ribs, s);
       s.buildTabHeightAboveTable = 12.7;
-      const auto raised = applyWingStructure(ribs, s);
+      const auto raised = testsupport::buildStructure(ribs, s);
       for (std::size_t i = 0; i < raised.ribs.size(); ++i) {
         const auto& rib = raised.ribs[i];
         assert(std::abs(baseline.ribs[i].buildPlane->offset - rib.buildPlane->offset - 12.7) < 1.0e-8);
@@ -373,7 +374,7 @@ int main() {
       }
       s.buildTabHeightAboveTable = -1.0;
       bool rejected = false;
-      try { (void)applyWingStructure(ribs, s); }
+      try { (void)testsupport::buildStructure(ribs, s); }
       catch (const std::invalid_argument&) { rejected = true; }
       assert(rejected);
     }
@@ -386,7 +387,7 @@ int main() {
       s.bottomSpar = true;
       s.bottomRearSpar = true;
       s.buildTabHeightAboveTable = 10.0;
-      const auto shifted = applyWingStructure(ribs, s);
+      const auto shifted = testsupport::buildStructure(ribs, s);
       for (const auto& rib : shifted.ribs) {
         int feet = 0;
         for (const auto& path : makeStructuredRibPartDrawing(rib, "Shifted tab").paths) {
@@ -411,13 +412,13 @@ int main() {
     parameters.tipTwistDegrees = -4.0;
     const auto ribs = generateRibs(parameters, thick, thick);
     StructureParameters structure;
-    assert(applyWingStructure(ribs, structure).ribCaps.empty());
+    assert(testsupport::buildStructure(ribs, structure).ribCaps.empty());
     structure.topRibCaps = structure.bottomRibCaps = true;
     structure.topSpar = structure.bottomSpar = true;
     structure.topRearSpar = structure.bottomRearSpar = true;
     structure.leTopSheet = true;
     structure.leTopSheetStopRib = 2;
-    const auto capped = applyWingStructure(ribs, structure);
+    const auto capped = testsupport::buildStructure(ribs, structure);
     assert(!capped.ribCaps.empty());
     for (std::size_t i = 0; i < ribs.size(); ++i) {
       int topCount = 0, bottomCount = 0;
@@ -453,7 +454,7 @@ int main() {
     structure.leTopSheetStopRib = 5;
     structure.leTopSheetUpToSpar = false;
     structure.leTopSheetStopChordPercent = 100.0;
-    const auto sheeted = applyWingStructure(ribs, structure);
+    const auto sheeted = testsupport::buildStructure(ribs, structure);
     assert(!sheeted.ribCaps.empty());
     for (const auto& cap : sheeted.ribCaps) assert(!cap.top);
     structure.leTopSheet = false;
@@ -461,7 +462,7 @@ int main() {
     structure.spoilerStartRib = 2;
     structure.spoilerEndRib = 5;
     structure.spoilerImmediatelyBehindSpar = true;
-    const auto spoilerWing = applyWingStructure(ribs, structure);
+    const auto spoilerWing = testsupport::buildStructure(ribs, structure);
     const auto& spoiler = spoilerWing.spoilers.front();
     for (const auto& cap : spoilerWing.ribCaps) {
       if (!cap.top || cap.ribIndex < spoiler.startRibIndex) continue;
@@ -472,20 +473,20 @@ int main() {
     }
     structure.spoilers = false;
     structure.addFrontBuildTab = structure.addRearBuildTab = true;
-    const auto capTabWing = applyWingStructure(ribs, structure);
+    const auto capTabWing = testsupport::buildStructure(ribs, structure);
     assert(!capTabWing.warnings.empty());
     structure.bottomRibCaps = false;
-    const auto topWithTabs = applyWingStructure(ribs, structure);
+    const auto topWithTabs = testsupport::buildStructure(ribs, structure);
     assert(!topWithTabs.ribCaps.empty());
     for (const auto& cap : topWithTabs.ribCaps) assert(cap.top);
     structure.addFrontBuildTab = structure.addRearBuildTab = false;
     structure.bottomRibCaps = true;
     // Disabling either face removes only its caps.
     structure.topRibCaps = false;
-    for (const auto& cap : applyWingStructure(ribs, structure).ribCaps) assert(!cap.top);
+    for (const auto& cap : testsupport::buildStructure(ribs, structure).ribCaps) assert(!cap.top);
     structure.bottomRibCapThickness = 0.0;
     bool rejected = false;
-    try { static_cast<void>(applyWingStructure(ribs, structure)); }
+    try { static_cast<void>(testsupport::buildStructure(ribs, structure)); }
     catch (const std::invalid_argument&) { rejected = true; }
     assert(rejected);
   }
@@ -500,7 +501,7 @@ int main() {
     const auto tabRibs = generateRibs(tabParameters, thick, thin);
     StructureParameters tabStructure;
     tabStructure.addFrontBuildTab = tabStructure.addRearBuildTab = true;
-    const auto tabWing = applyWingStructure(tabRibs, tabStructure);
+    const auto tabWing = testsupport::buildStructure(tabRibs, tabStructure);
     const double rootBottom = untwistedRibBottom(tabRibs.front());
     const double slope = (untwistedRibBottom(tabRibs.back()) - rootBottom) / tabParameters.halfSpan;
     double adjustment = 0.0;
@@ -536,7 +537,7 @@ int main() {
     assert(twist == 0.0 || (twist > 0.0 ? std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y > tipTranslation.y
                        : tipTranslation.y > std::sin(tipAngle) * tabRibs.back().chord + tipTranslation.y));
     tabStructure.bottomSpar = true;
-    const auto shifted = applyWingStructure(tabRibs, tabStructure);
+    const auto shifted = testsupport::buildStructure(tabRibs, tabStructure);
     for (const auto& rib : shifted.ribs) {
       for (std::size_t i = 0; i + 1 < rib.outerOutline.size(); ++i) {
         const auto a = rib.outerOutline[i], b = rib.outerOutline[i + 1];
@@ -556,9 +557,9 @@ int main() {
       sheetStructure.bottomTeSheetingWidth = 100.0;
       sheetStructure.bottomTeSheetingThickness = 0.5;
       // Covered tabs are omitted without failing wing generation.
-      static_cast<void>(applyWingStructure(tabRibs, sheetStructure));
+      static_cast<void>(testsupport::buildStructure(tabRibs, sheetStructure));
       sheetStructure.addFrontBuildTab = sheetStructure.addRearBuildTab = false;
-      static_cast<void>(applyWingStructure(tabRibs, sheetStructure));
+      static_cast<void>(testsupport::buildStructure(tabRibs, sheetStructure));
     }
     for (const double sheetEnd : {24.0, 30.0, 50.0}) {
       StructureParameters sheetStructure;
@@ -568,7 +569,7 @@ int main() {
       sheetStructure.leBottomSheetUpToSpar = false;
       sheetStructure.leBottomSheetStopChordPercent = sheetEnd;
       sheetStructure.leBottomSheetStopRib = static_cast<int>(tabRibs.size());
-      const auto relocated = applyWingStructure(tabRibs, sheetStructure);
+      const auto relocated = testsupport::buildStructure(tabRibs, sheetStructure);
       for (const auto& rib : relocated.ribs) {
         int feet = 0;
         for (const auto& segment : rib.outlineSegments) {
@@ -590,12 +591,12 @@ int main() {
     clearSheet.leTopSheet = true;
     clearSheet.leTopSheetUpToSpar = false;
     clearSheet.leTopSheetStopChordPercent = 50.0;
-    static_cast<void>(applyWingStructure(tabRibs, clearSheet));
+    static_cast<void>(testsupport::buildStructure(tabRibs, clearSheet));
     tabParameters.tipTwistDegrees = 0.0;
     const auto flat = generateRibs(tabParameters, thick, thin);
-    const auto flatTabs = applyWingStructure(flat, tabStructure);
+    const auto flatTabs = testsupport::buildStructure(flat, tabStructure);
     tabStructure.addFrontBuildTab = tabStructure.addRearBuildTab = false;
-    const auto plain = applyWingStructure(flat, tabStructure);
+    const auto plain = testsupport::buildStructure(flat, tabStructure);
     assert(flatTabs.ribs.back().outerOutline.size() > plain.ribs.back().outerOutline.size());
   }
   {
@@ -611,7 +612,7 @@ int main() {
     structure.addFrontBuildTab = structure.addRearBuildTab = true;
     for (const bool thickerMiddle : {false, true}) {
     if (thickerMiddle) ribs[1].profile = AirfoilProfile::nacaSymmetric(0.30);
-    const auto wing = applyWingStructure(ribs, structure);
+    const auto wing = testsupport::buildStructure(ribs, structure);
     const double tipAngle = 18.0 * std::numbers::pi / 180.0;
     const double tipBottom = untwistedRibBottom(ribs.back());
     const double inclination = std::atan2(
@@ -688,7 +689,7 @@ int main() {
       structure.leadingEdgeWidth = 20.0;
       structure.leadingEdgeHeight = 50.0;
     }
-    const auto wing = applyWingStructure(generateRibs(p, thick, thick), structure);
+    const auto wing = testsupport::buildStructure(generateRibs(p, thick, thick), structure);
     for (const auto& rib : wing.ribs) {
       int frontTabs = 0;
       for (const auto& segment : rib.outlineSegments) {
@@ -746,7 +747,7 @@ int main() {
   structureParameters.bottomRearSpar = true;
   structureParameters.turbulators = true;
   structureParameters.turbulatorCount = 3;
-  const auto structured = designrc::domain::applyWingStructure(ribs, structureParameters);
+  const auto structured = testsupport::buildStructure(ribs, structureParameters);
   assert(structured.ribs.size() == ribs.size());
   assert(structured.members.size() == 7);
   assert(structured.shearWebs.size() == ribs.size() - 1);
@@ -778,7 +779,7 @@ int main() {
   ribLighteningParameters.ribLighteningStopRib = 5;
   ribLighteningParameters.ribLighteningMinimumWoodMargin = 3.0;
   ribLighteningParameters.ribLighteningMinimumHoleDistance = 5.0;
-  auto ribLightenedWing = designrc::domain::applyWingStructure(
+  auto ribLightenedWing = testsupport::buildStructure(
       ribs, ribLighteningParameters);
   std::vector<std::size_t> originalOpeningCounts;
   for (const auto& rib : ribLightenedWing.ribs)
@@ -790,7 +791,7 @@ int main() {
   struct LighteningCancelled {};
   for (const std::size_t workers : {std::size_t{1}, std::size_t{3}}) {
     for (const int cancelAt : {1, 64}) {
-      auto cancelledWing = designrc::domain::applyWingStructure(ribs, ribLighteningParameters);
+      auto cancelledWing = testsupport::buildStructure(ribs, ribLighteningParameters);
       std::atomic_int checks{0};
       std::atomic_int completed{0};
       bool cancelled = false;
@@ -861,7 +862,7 @@ int main() {
   designrc::domain::StructureParameters endpointSparParameters;
   endpointSparParameters.spars = {
       {20, 2, 1, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0, 60}};
-  const auto endpointSparWing = designrc::domain::applyWingStructure(
+  const auto endpointSparWing = testsupport::buildStructure(
       constantRibs, endpointSparParameters);
   const auto& endpointCenters = endpointSparWing.members.front().centers;
   assert(std::abs(endpointCenters.front().x - 40.0) < 1.0e-8);
@@ -876,7 +877,7 @@ int main() {
       {30, 0, 0, 0, 4.0, 8.0, 6.0, 5.0, 6.0, 6.0, 1.0},
       {45, 2, 1, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0},
       {65, 1, 1, 2, 5.0, 9.0, 6.0, 5.0, 6.0, 7.0, 1.5}};
-  const auto multiSparWing = designrc::domain::applyWingStructure(
+  const auto multiSparWing = testsupport::buildStructure(
       ribs, multiSparParameters);
   assert(multiSparWing.members.size() == 3);
   assert(multiSparWing.members[0].name == "Spar 1");
@@ -930,7 +931,7 @@ int main() {
   sheetedSparParameters.teTopSheet = sheetedSparParameters.teBottomSheet = true;
   sheetedSparParameters.leTopSheetStopRib = sheetedSparParameters.leBottomSheetStopRib = 2;
   sheetedSparParameters.teTopSheetStopRib = sheetedSparParameters.teBottomSheetStopRib = 2;
-  const auto sheetedSpar = designrc::domain::applyWingStructure(ribs, sheetedSparParameters);
+  const auto sheetedSpar = testsupport::buildStructure(ribs, sheetedSparParameters);
   const double sparRight = 0.25 * ribs.front().chord + sheetedSparParameters.topSparWidth * 0.5;
   const auto& recessedOutline = sheetedSpar.ribs.front().outerOutline;
   const auto checkNoSheetingSpike = [&](const bool top) {
@@ -957,7 +958,7 @@ int main() {
   solidLeSheetingParameters.leadingEdgeType = 2;
   solidLeSheetingParameters.leadingEdgeWidth = 4.7625;
   solidLeSheetingParameters.leadingEdgeHeight = 30.0;
-  const auto solidLeSheeted = designrc::domain::applyWingStructure(
+  const auto solidLeSheeted = testsupport::buildStructure(
       ribs, solidLeSheetingParameters);
   const auto& solidLeOutline = solidLeSheeted.ribs.front().outerOutline;
   const auto solidLeFacePointCount = std::count_if(
@@ -980,7 +981,7 @@ int main() {
   overlappingSpars.topSparHeight = overlappingSpars.bottomSparHeight = 4.7625;
   bool rejectedOverlappingSpars = false;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         thinSparRibs, overlappingSpars));
   } catch (const std::invalid_argument& error) {
     rejectedOverlappingSpars = std::string{error.what()}.find(
@@ -1009,7 +1010,7 @@ int main() {
   joinerParameters.fiftyPercentJoinerType = 1;
   joinerParameters.joinerAxisAngleDegrees = 8.0;
   joinerParameters.joinerDihedralDegrees = 6.0;
-  const auto joined = designrc::domain::applyWingStructure(joinerRibs, joinerParameters);
+  const auto joined = testsupport::buildStructure(joinerRibs, joinerParameters);
   assert(joined.joiners.size() == 3);
   assert(std::abs(joined.joiners[0].centers.front().x - 0.30 * joinerRibs.front().chord) < 1.0e-8);
   assert(std::abs(joined.joiners[1].centers.front().x - 0.60 * joinerRibs.front().chord) < 1.0e-8);
@@ -1051,7 +1052,7 @@ int main() {
   sheetingParameters.teTopSheet = true;
   sheetingParameters.teTopSheetThickness = 2.0;
   sheetingParameters.teTopSheetStopRib = 3;
-  const auto sheeted = designrc::domain::applyWingStructure(ribs, sheetingParameters);
+  const auto sheeted = testsupport::buildStructure(ribs, sheetingParameters);
   assert(sheeted.sheeting.size() == 2);
   assert(sheeted.sheeting[0].profiles.size() == 3);
   assert(sheeted.sheeting[1].profiles.size() == 3);
@@ -1074,7 +1075,7 @@ int main() {
   turbulatorSheetingParameters.turbulatorCount = 2;
   turbulatorSheetingParameters.turbulatorWidth = 3.0;
   turbulatorSheetingParameters.turbulatorHeight = 2.0;
-  const auto turbulatorSheeted = designrc::domain::applyWingStructure(
+  const auto turbulatorSheeted = testsupport::buildStructure(
       ribs, turbulatorSheetingParameters);
   assert(turbulatorSheeted.sheeting.size() == 3);
   for (const auto& strip : turbulatorSheeted.sheeting)
@@ -1093,7 +1094,7 @@ int main() {
   newSparSheetingParameters.teTopSheet = true;
   newSparSheetingParameters.leBottomSheet = true;
   newSparSheetingParameters.teBottomSheet = true;
-  const auto newSparSheeted = designrc::domain::applyWingStructure(
+  const auto newSparSheeted = testsupport::buildStructure(
       ribs, newSparSheetingParameters);
   const auto sheetBounds = [&](const std::string& name) {
     const auto sheet = std::find_if(newSparSheeted.sheeting.begin(),
@@ -1119,7 +1120,7 @@ int main() {
   manualFrontSheetingParameters.leBottomSheetUpToSpar = false;
   manualFrontSheetingParameters.leTopSheetStopChordPercent = 35.0;
   manualFrontSheetingParameters.leBottomSheetStopChordPercent = 40.0;
-  const auto manualFrontSheeted = designrc::domain::applyWingStructure(
+  const auto manualFrontSheeted = testsupport::buildStructure(
       ribs, manualFrontSheetingParameters);
   const auto manualBounds = [&](const std::string& name) {
     const auto sheet = std::find_if(manualFrontSheeted.sheeting.begin(),
@@ -1141,7 +1142,7 @@ int main() {
                    manualFrontSheetingParameters.leBottomSheetThickness)) < 1.0e-8);
 
   manualFrontSheetingParameters.leTopSheetStopChordPercent = 50.0;
-  const auto buttedFrontAndRear = designrc::domain::applyWingStructure(
+  const auto buttedFrontAndRear = testsupport::buildStructure(
       ribs, manualFrontSheetingParameters);
   const auto buttedRear = std::find_if(buttedFrontAndRear.sheeting.begin(),
       buttedFrontAndRear.sheeting.end(), [](const auto& part) {
@@ -1161,7 +1162,7 @@ int main() {
   teSheetingParameters.topTeSheetingThickness = 1.5875;
   teSheetingParameters.topTeSheetingTaper = true;
   teSheetingParameters.topTeSheetingTaperStartLocationPercent = 50.0;
-  const auto teSheeted = designrc::domain::applyWingStructure(
+  const auto teSheeted = testsupport::buildStructure(
       ribs, teSheetingParameters);
   const auto topTeSheet = std::find_if(teSheeted.sheeting.begin(),
       teSheeted.sheeting.end(), [](const auto& part) {
@@ -1227,7 +1228,7 @@ int main() {
   auto untaperedTopOnlyParameters = teSheetingParameters;
   untaperedTopOnlyParameters.teTopSheet = false;
   untaperedTopOnlyParameters.topTeSheetingTaper = false;
-  const auto untaperedTopOnly = designrc::domain::applyWingStructure(
+  const auto untaperedTopOnly = testsupport::buildStructure(
       ribs, untaperedTopOnlyParameters);
   assert(!hasSkinnyTrailingRibSliver(
       untaperedTopOnly, untaperedTopOnlyParameters.topTeSheetingWidth,
@@ -1239,7 +1240,7 @@ int main() {
   untaperedBottomOnlyParameters.bottomTeSheetingWidth = 30.0;
   untaperedBottomOnlyParameters.bottomTeSheetingThickness = 1.5875;
   untaperedBottomOnlyParameters.bottomTeSheetingTaper = false;
-  const auto untaperedBottomOnly = designrc::domain::applyWingStructure(
+  const auto untaperedBottomOnly = testsupport::buildStructure(
       ribs, untaperedBottomOnlyParameters);
   assert(!hasSkinnyTrailingRibSliver(
       untaperedBottomOnly, untaperedBottomOnlyParameters.bottomTeSheetingWidth,
@@ -1261,7 +1262,7 @@ int main() {
   savedTopOnlyParameters.teBottomSheetThickness = 1.5875;
   savedTopOnlyParameters.teTopSheetStopRib = 2;
   savedTopOnlyParameters.teBottomSheetStopRib = 2;
-  const auto savedTopOnly = designrc::domain::applyWingStructure(
+  const auto savedTopOnly = testsupport::buildStructure(
       savedTeSheetingRibs, savedTopOnlyParameters);
   assert(!hasSkinnyTrailingRibSliver(
       savedTopOnly, savedTopOnlyParameters.topTeSheetingWidth,
@@ -1270,7 +1271,7 @@ int main() {
   auto savedBottomOnlyParameters = savedTopOnlyParameters;
   savedBottomOnlyParameters.topTeSheeting = false;
   savedBottomOnlyParameters.bottomTeSheeting = true;
-  const auto savedBottomOnly = designrc::domain::applyWingStructure(
+  const auto savedBottomOnly = testsupport::buildStructure(
       savedTeSheetingRibs, savedBottomOnlyParameters);
   assert(!hasSkinnyTrailingRibSliver(
       savedBottomOnly, savedBottomOnlyParameters.bottomTeSheetingWidth,
@@ -1285,7 +1286,7 @@ int main() {
   bothTeSheetingParameters.bottomTeSheetingThickness = 1.5875;
   bothTeSheetingParameters.bottomTeSheetingTaper = false;
   bothTeSheetingParameters.bottomTeSheetingTaperStartLocationPercent = 50.0;
-  const auto bothTeSheeted = designrc::domain::applyWingStructure(
+  const auto bothTeSheeted = testsupport::buildStructure(
       ribs, bothTeSheetingParameters);
   assert(!hasSkinnyTrailingRibSliver(
       bothTeSheeted, std::max(
@@ -1306,7 +1307,7 @@ int main() {
   conflictingTeStock.trailingEdgeType = 2;
   bool rejectedConflictingTeStock = false;
   try {
-    (void)designrc::domain::applyWingStructure(ribs, conflictingTeStock);
+    (void)testsupport::buildStructure(ribs, conflictingTeStock);
   } catch (const std::invalid_argument&) {
     rejectedConflictingTeStock = true;
   }
@@ -1328,7 +1329,7 @@ int main() {
   controlSheetingParameters.aileronWidth = 35.0;
   controlSheetingParameters.aileronHingePostWidth = 6.0;
   controlSheetingParameters.controlSurfaceGap = 1.5;
-  const auto controlSheeted = designrc::domain::applyWingStructure(
+  const auto controlSheeted = testsupport::buildStructure(
       ribs, controlSheetingParameters);
   assert(controlSheeted.sheeting.size() == 1);
   const auto maximumProfileX = [](const std::vector<designrc::domain::Point2>& profile) {
@@ -1356,7 +1357,7 @@ int main() {
 
   designrc::domain::StructureParameters carbonParameters;
   carbonParameters.carbonSpar = 1;
-  const auto carbonStructured = designrc::domain::applyWingStructure(ribs, carbonParameters);
+  const auto carbonStructured = testsupport::buildStructure(ribs, carbonParameters);
   assert(carbonStructured.members.size() == 1);
   assert(carbonStructured.members.front().kind == designrc::domain::SpanMemberKind::Tube);
   assert(carbonStructured.ribs.front().holes.size() == 1);
@@ -1368,7 +1369,7 @@ int main() {
   edgeParameters.trailingEdgeType = 2;
   edgeParameters.trailingEdgeWidth = 18.0;
   edgeParameters.trailingEdgeHeight = 50.0;
-  const auto edged = designrc::domain::applyWingStructure(ribs, edgeParameters);
+  const auto edged = testsupport::buildStructure(ribs, edgeParameters);
   assert(edged.profiledMembers.size() == 2);
   assert(std::abs(edged.profiledMembers.front().profiles.front().front().x -
                   edgeParameters.leadingEdgeWidth) < 1.0e-9);
@@ -1392,7 +1393,7 @@ int main() {
   designrc::domain::StructureParameters removedShapedStock;
   removedShapedStock.leadingEdgeType = 1;
   removedShapedStock.trailingEdgeType = 1;
-  const auto withoutRemovedStock = designrc::domain::applyWingStructure(
+  const auto withoutRemovedStock = testsupport::buildStructure(
       ribs, removedShapedStock);
   assert(withoutRemovedStock.profiledMembers.empty());
   assert(withoutRemovedStock.sheetStockParts.empty());
@@ -1404,11 +1405,11 @@ int main() {
   bool rejectedInsufficientLeHeight = false;
   double reportedLeCutHeight = 0.0;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         constantRibs, insufficientLeHeight));
   } catch (const designrc::domain::EdgeHeightError& error) {
     rejectedInsufficientLeHeight = std::string{error.what()}.find(
-        "not smaller than the specified LE Height") != std::string::npos;
+        "greater than the specified LE Height") != std::string::npos;
     assert(error.edgeName() == "LE");
     reportedLeCutHeight = error.cutHeightMm();
   }
@@ -1422,11 +1423,11 @@ int main() {
   bool rejectedInsufficientTeHeight = false;
   double reportedTeCutHeight = 0.0;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         constantRibs, insufficientTeHeight));
   } catch (const designrc::domain::EdgeHeightError& error) {
     rejectedInsufficientTeHeight = std::string{error.what()}.find(
-        "not smaller than the specified TE Height") != std::string::npos;
+        "greater than the specified TE Height") != std::string::npos;
     assert(error.edgeName() == "TE");
     reportedTeCutHeight = error.cutHeightMm();
   }
@@ -1435,7 +1436,7 @@ int main() {
 
   designrc::domain::StructureParameters leadingTubeParameters;
   leadingTubeParameters.leadingEdgeType = 3;
-  const auto leadingTube = designrc::domain::applyWingStructure(ribs, leadingTubeParameters);
+  const auto leadingTube = testsupport::buildStructure(ribs, leadingTubeParameters);
   assert(leadingTube.ribs.front().holes.empty());
   assert(leadingTube.ribs.front().booleanHoles.empty());
   assert(leadingTube.members.size() == 1);
@@ -1464,7 +1465,7 @@ int main() {
   controlParameters.aileronWidth = 35.0;
   controlParameters.aileronHingePostWidth = 6.0;
   controlParameters.controlSurfaceGap = 1.5;
-  const auto controlled = designrc::domain::applyWingStructure(ribs, controlParameters);
+  const auto controlled = testsupport::buildStructure(ribs, controlParameters);
   assert(controlled.controlSurfaces.size() == 1);
   assert(controlled.controlSurfaces.front().profiles.size() == 5);
   assert(controlled.profiledMembers.front().activeRanges.size() == 2);
@@ -1481,7 +1482,7 @@ int main() {
   auto boundedControlParameters = controlParameters;
   boundedControlParameters.aileronStartRib = 1;
   boundedControlParameters.aileronStopRib = static_cast<int>(ribs.size());
-  const auto boundedControl = designrc::domain::applyWingStructure(ribs, boundedControlParameters);
+  const auto boundedControl = testsupport::buildStructure(ribs, boundedControlParameters);
   assert(boundedControl.controlSurfaces.size() == 1);
   assert(boundedControl.controlSurfaces.front().startRibIndex == 1);
   assert(boundedControl.controlSurfaces.front().stopRibIndex == ribs.size() - 1);
@@ -1503,7 +1504,7 @@ int main() {
   sharedControlParameters.flapStopRib = 4;
   sharedControlParameters.aileronStartRib = 4;
   sharedControlParameters.aileronStopRib = static_cast<int>(ribs.size());
-  const auto sharedControl = designrc::domain::applyWingStructure(
+  const auto sharedControl = testsupport::buildStructure(
       ribs, sharedControlParameters);
   assert(sharedControl.controlSurfaces.size() == 2);
   const auto& flap = sharedControl.controlSurfaces.front();
@@ -1522,7 +1523,7 @@ int main() {
   unequalSharedWidths.flapWidth += 3.0;
   bool rejectedSharedWidths = false;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         ribs, unequalSharedWidths));
   } catch (const std::invalid_argument& error) {
     rejectedSharedWidths = std::string{error.what()}.find(
@@ -1534,7 +1535,7 @@ int main() {
   invalidControlOrder.aileronStartRib = invalidControlOrder.flapStopRib - 1;
   bool rejectedControlOrder = false;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         ribs, invalidControlOrder));
   } catch (const std::invalid_argument& error) {
     rejectedControlOrder = std::string{error.what()}.find(
@@ -1549,7 +1550,7 @@ int main() {
   sheetTeParameters.trailingEdgeHeight = 50.0;
   sheetTeParameters.trailingEdgeSlotted = true;
   sheetTeParameters.trailingEdgeSlotDepth = 6.0;
-  const auto sheetTe = designrc::domain::applyWingStructure(ribs, sheetTeParameters);
+  const auto sheetTe = testsupport::buildStructure(ribs, sheetTeParameters);
   assert(sheetTe.sheetStockParts.size() == 1);
   assert(sheetTe.sheetStockParts.front().outline.size() == ribs.size() * 4);
   assert(sheetTe.sheetStockParts.front().slots.empty());
@@ -1574,7 +1575,7 @@ int main() {
   auto slottedSheetingParameters = sheetTeParameters;
   slottedSheetingParameters.teTopSheet = true;
   slottedSheetingParameters.teTopSheetStopRib = 2;
-  const auto slottedSheeting = designrc::domain::applyWingStructure(
+  const auto slottedSheeting = testsupport::buildStructure(
       ribs, slottedSheetingParameters);
   assert(slottedSheeting.sheeting.size() == 1);
   const double teInnerFace = ribs.front().chord -
@@ -1814,7 +1815,7 @@ int main() {
   spoilerParameters.spoilerThickness = 3.0;
   spoilerParameters.spoilerFrameRailWidth = 6.0;
   spoilerParameters.spoilerSupportRailHeight = 3.0;
-  const auto spoilerWing = designrc::domain::applyWingStructure(ribs, spoilerParameters);
+  const auto spoilerWing = testsupport::buildStructure(ribs, spoilerParameters);
   assert(spoilerWing.spoilers.size() == 1);
   assert(spoilerWing.spoilers.front().spoilerProfiles.size() == 5);
   assert(spoilerWing.spoilers.front().supportProfiles.size() == 2);
@@ -1823,7 +1824,7 @@ int main() {
   legacyTopSparSpoilerParameters.spoilerChordLocationPercent = 10;
   legacyTopSparSpoilerParameters.topSpar = true;
   legacyTopSparSpoilerParameters.topSparWidth = 10.0;
-  const auto legacyTopSparSpoiler = designrc::domain::applyWingStructure(
+  const auto legacyTopSparSpoiler = testsupport::buildStructure(
       ribs, legacyTopSparSpoilerParameters);
   for (std::size_t local = 0;
        local < legacyTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
@@ -1839,7 +1840,7 @@ int main() {
   auto immediatelyBehindSparParameters = legacyTopSparSpoilerParameters;
   immediatelyBehindSparParameters.spoilerChordLocationPercent = 70;
   immediatelyBehindSparParameters.spoilerImmediatelyBehindSpar = true;
-  const auto immediatelyBehindSpar = designrc::domain::applyWingStructure(
+  const auto immediatelyBehindSpar = testsupport::buildStructure(
       ribs, immediatelyBehindSparParameters);
   for (std::size_t local = 0;
        local < immediatelyBehindSpar.spoilers.front().forwardRailProfiles.size();
@@ -1856,7 +1857,7 @@ int main() {
   configurableTopSparSpoilerParameters.spoilerChordLocationPercent = 10;
   configurableTopSparSpoilerParameters.spars = {
       {45, 0, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
-  const auto configurableTopSparSpoiler = designrc::domain::applyWingStructure(
+  const auto configurableTopSparSpoiler = testsupport::buildStructure(
       ribs, configurableTopSparSpoilerParameters);
   for (std::size_t local = 0;
        local < configurableTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
@@ -1874,7 +1875,7 @@ int main() {
   decimalTopSparSpoilerParameters.spars = {
       {25.1, 0, 0, 0, 4.7625, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0},
       {25.1, 1, 0, 0, 4.7625, 6.35, 6.0, 5.0, 6.0, 6.0, 1.0}};
-  const auto decimalTopSparSpoiler = designrc::domain::applyWingStructure(
+  const auto decimalTopSparSpoiler = testsupport::buildStructure(
       ribs, decimalTopSparSpoilerParameters);
   for (std::size_t local = 0;
        local < decimalTopSparSpoiler.spoilers.front().forwardRailProfiles.size();
@@ -1892,7 +1893,7 @@ int main() {
   lightenedSpoilerParameters.spoilerLighteningHoles = true;
   lightenedSpoilerParameters.spoilerMinimumWoodMargin = 6.0;
   lightenedSpoilerParameters.spoilerMinimumCircleDistance = 12.0;
-  const auto lightenedSpoilerWing = designrc::domain::applyWingStructure(
+  const auto lightenedSpoilerWing = testsupport::buildStructure(
       ribs, lightenedSpoilerParameters);
   const auto& lightenedSpoiler = lightenedSpoilerWing.spoilers.front();
   assert(lightenedSpoiler.lighteningHoleOutlines.size() > 4);
@@ -1922,7 +1923,7 @@ int main() {
   carbonSpoilerParameters.leadingEdgeType = 3;
   carbonSpoilerParameters.topSpar = true;
   carbonSpoilerParameters.bottomSpar = true;
-  const auto carbonSpoilerWing = designrc::domain::applyWingStructure(
+  const auto carbonSpoilerWing = testsupport::buildStructure(
       ribs, carbonSpoilerParameters);
   const auto sharpNotchCount = [](const auto& segments) {
     std::size_t count = 0;
@@ -1959,7 +1960,7 @@ int main() {
   sheetedCarbonLeParameters.leBottomSheetThickness = 1.5875;
   sheetedCarbonLeParameters.leTopSheetStopRib = 2;
   sheetedCarbonLeParameters.leBottomSheetStopRib = 2;
-  const auto sheetedCarbonLeWing = designrc::domain::applyWingStructure(
+  const auto sheetedCarbonLeWing = testsupport::buildStructure(
       ribs, sheetedCarbonLeParameters);
   const auto carbonLeMember = std::find_if(
       sheetedCarbonLeWing.members.begin(), sheetedCarbonLeWing.members.end(),
@@ -1995,13 +1996,13 @@ int main() {
   dihedralSpoilerParameters.joinerDihedralDegrees = 5.0;
   dihedralSpoilerParameters.spoilerStartRib = 2;
   dihedralSpoilerParameters.spoilerEndRib = 6;
-  const auto dihedralSpoilerWing = designrc::domain::applyWingStructure(
+  const auto dihedralSpoilerWing = testsupport::buildStructure(
       ribs, dihedralSpoilerParameters);
   assert(dihedralSpoilerWing.spoilers.size() == 1);
   dihedralSpoilerParameters.spoilerStartRib = 1;
   bool rejectedCenterSpoilerWithDihedral = false;
   try {
-    static_cast<void>(designrc::domain::applyWingStructure(
+    static_cast<void>(testsupport::buildStructure(
         ribs, dihedralSpoilerParameters));
   } catch (const std::invalid_argument& error) {
     rejectedCenterSpoilerWithDihedral =
@@ -2063,7 +2064,7 @@ int main() {
   wiringParameters.wiringHoleChordLocationPercent = 50;
   wiringParameters.wiringHoleWidth = 9.525;
   wiringParameters.wiringHoleHeight = 6.35;
-  const auto wiredWing = designrc::domain::applyWingStructure(ribs, wiringParameters);
+  const auto wiredWing = testsupport::buildStructure(ribs, wiringParameters);
   assert(wiredWing.wiringHoles.size() == 3);
   assert(wiredWing.ribs[0].internalCutouts.empty());
   for (std::size_t index = 1; index <= 3; ++index) {
@@ -2094,7 +2095,7 @@ int main() {
   ribletParameters.ribletEndRib = 6;
   ribletParameters.ribletsPerBay = 2;
   auto ribletWing =
-      designrc::domain::applyWingStructure(ribs, ribletParameters);
+      testsupport::buildStructure(ribs, ribletParameters);
   for (std::size_t index = 0; index < ribletWing.ribs.size(); ++index)
     ribletWing.ribs[index].name = "R" + std::to_string(index + 1);
   designrc::domain::addRiblets(ribletWing, ribletParameters);
@@ -2114,7 +2115,7 @@ int main() {
     auto capParameters = ribletParameters;
     capParameters.topRibCaps = topCaps;
     capParameters.bottomRibCaps = !topCaps;
-    auto cappedWing = designrc::domain::applyWingStructure(ribs, capParameters);
+    auto cappedWing = testsupport::buildStructure(ribs, capParameters);
     const auto capCount = cappedWing.ribCaps.size();
     assert(capCount > 0);
     designrc::domain::addRiblets(cappedWing, capParameters);
@@ -2146,4 +2147,9 @@ int main() {
         return !riblet.internalCutouts.empty();
       }));
   return 0;
+}
+
+int main() {
+  try { return runTests(); }
+  catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
 }

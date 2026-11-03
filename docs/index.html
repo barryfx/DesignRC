@@ -46,7 +46,7 @@
             and manufacturing-ready parts—all from one parametric desktop application.
           </p>
           <div class="hero-actions">
-            <a class="button button-primary" href="#download">Download version 1.6.0</a>
+            <a class="button button-primary" href="#download">Download installers</a>
             <a class="button button-secondary" href="https://github.com/barryfx/DesignRC">View on GitHub</a>
           </div>
           <div class="hero-meta" aria-label="Project highlights">
@@ -103,7 +103,8 @@
           <h3>Parametric wing geometry</h3>
           <p>
             Define connected panels with independent chord, sweep, twist, dihedral, rib spacing,
-            and root and tip airfoils. DesignRC mirrors the half-wing into the complete aircraft.
+            and root and tip airfoils. Import dimensioned SVG/DXF leading and trailing edges
+            for curved panels. DesignRC mirrors the half-wing into the complete aircraft.
           </p>
           <div class="airfoil-diagram" aria-hidden="true">
             <div class="airfoil-line airfoil-root"></div>
@@ -117,8 +118,9 @@
           <p class="card-number">02</p>
           <h3>Built-up structure</h3>
           <p>
-            Generate ribs, rib caps, tapered root-to-tip spars, shear webs, front, rear, and trailing-edge
-            sheeting, collision-checked joiners, spoilers, hinge posts, flaps, and ailerons.
+            Generate ribs, rib caps, root-to-tip spars, shear webs, front, rear, and trailing-edge
+            sheeting, collision-checked joiners, spoilers, and solid or built-up controls with
+            matching hinge posts or beveled top/bottom hinge spars.
           </p>
         </article>
 
@@ -135,8 +137,8 @@
           <p class="card-number">04</p>
           <h3>Manufacturing output</h3>
           <p>
-            Create a tightly packed, full-scale poster plan and export selected laser-cut parts
-            as vector DXF, SVG, or PDF files.
+            Export the complete full-scale plan as PDF, RGB-colored DXF, or SVG with colors
+            and transparency. Export selected laser-cut parts as vector DXF, SVG, or PDF files.
           </p>
         </article>
 
@@ -154,47 +156,50 @@
     <section class="section shell" id="new">
       <div class="section-heading">
         <div>
-          <p class="eyebrow"><span></span> New in version 1.6.0</p>
-          <h2>Bring your own wing curves.</h2>
+          <p class="eyebrow"><span></span> New in version 1.7.0 · November 3, 2026</p>
+          <h2>Build the controls. Export the plan.</h2>
         </div>
         <p>
-          Import leading and trailing edges from SVG or DXF, generate smooth curved stock,
-          and keep adjoining panels matched across your wing.
+          Design separate aileron and flap ribs, choose the hinge construction, set joiner
+          span by rib bays, and export a full-scale plan in PDF, DXF, or SVG.
         </p>
       </div>
 
       <div class="feature-grid">
         <article class="feature-card feature-wide">
           <p class="card-number">01</p>
-          <h3>Import leading and trailing edges</h3>
+          <h3>Built-up ailerons and flaps</h3>
           <p>
-            Add two open curves from an SVG or DXF file on each panel's LE/TE tab.
-            Files must include physical units. DesignRC automatically swaps X and Y when
-            the long axis is X, checks root placement and span within 1/4 in (6.35 mm),
-            and scales the span to the Specs tab's Panel Span while preserving chord.
-            Imported curves replace the panel's sweep and define its root and tip chords.
+            Add separate ribs, independent top/bottom skins, and wood or carbon spars.
+            Choose matching Hinge Posts or four Top/Bottom Hinge Spars with an aft bevel.
+            Hinge-spar skins automatically reach their spars, and the wing's TE settings
+            remain independent. Control ribs use ARn/FRn and stock TE parts use ATE/FTE names
+            throughout plans and manufacturing output. New parameters are saved in projects
+            and available in Edit &gt; Defaults.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">02</p>
-          <h3>Smooth stock and straight hinges</h3>
+          <h3>Colored full-scale plan exports</h3>
           <p>
-            Curved stock follows smooth 3D guides, including twisted panels and changing
-            airfoil profiles. Ailerons and flaps retain straight hinge lines with a curved
-            trailing edge. Choose a hinge parallel to the span axis, or use the Width
-            setting to position the hinge at both ends of the control surface.
+            Export Plan offers PDF, DXF, or SVG before choosing a filename. DXF retains
+            RGB line and label colors; SVG also retains fill colors and transparency.
+            Outlined labels preserve their shape without installed fonts. Plans include
+            leaders for control spars, sheeting thickness, and TE stock dimensions.
+            CAD sketch display colors may override colors stored in an imported file.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">03</p>
-          <h3>Connected panels and portable projects</h3>
+          <h3>Joiner bays and clearer geometry checks</h3>
           <p>
-            Adjoining panel chords are checked and matched, including imported curves
-            within the 1/4 in tolerance. Curve geometry and its filename are saved inside
-            the project, so designs reopen without the original file. Additional clearance
-            checks help identify interference along curved edges.
+            Number of Rib Bays controls fixed wood, tube, and rod joiners and removable
+            sleeves/rods. One bay passes through two ribs, and the selected span must fit
+            both panels. Alignment pins keep their existing lengths. Checks identify
+            joiners leaving rib boundaries; stock height equality, deleted spars, shared
+            control gaps, and exported sheeting notches are handled consistently.
           </p>
         </article>
       </div>
@@ -248,11 +253,13 @@
 
     <section class="section shell download-section" id="download">
       <div class="download-intro">
-        <p class="eyebrow"><span></span> Version 1.6.0</p>
+        <p class="eyebrow"><span></span> Installer downloads: 1.6.0</p>
         <h2>Choose your platform.</h2>
         <p>
           DesignRC is available for 64-bit Windows and Linux. Every installer is published with
-          source archives and SHA-256 checksums.
+          source archives and SHA-256 checksums. These links are for the published 1.6.0
+          packages. The 1.7.0 source update is described above; its installers must be
+          built and published separately.
         </p>
       </div>
 

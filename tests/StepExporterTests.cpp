@@ -1,3 +1,4 @@
+#include "TestWingStructure.h"
 #include "geometry/StepExporter.h"
 #include "geometry/OcctRibBuilder.h"
 #include <BRepCheck_Analyzer.hxx>
@@ -82,7 +83,7 @@ void testSheetedTabs() {
     s.leadingEdgeHeight = 25.0;
     designrc::geometry::MaterialShapeSet materials;
     const auto shape = designrc::geometry::buildStructuredWingPreview(
-        applyWingStructure(ribs, s), p.ribThickness, nullptr, &materials);
+        testsupport::buildStructure(ribs, s), p.ribThickness, nullptr, &materials);
     for (const auto& part : materials.parts)
       if (!BRepCheck_Analyzer{part.shape}.IsValid())
         std::fprintf(stderr, "Invalid sheeted-tab part: %s\n", part.name.c_str());
@@ -130,23 +131,23 @@ void testDiamondAndCapTabs() {
   StructureParameters s;
   s.leadingEdgeType = 5; s.diamondLeadingEdgeWidth = 12.7;
   const auto bareDiamond = designrc::geometry::buildStructuredWingPreview(
-      applyWingStructure(ribs, s), p.ribThickness);
+      testsupport::buildStructure(ribs, s), p.ribThickness);
   assert(BRepCheck_Analyzer{bareDiamond}.IsValid());
   s.topRibCaps = s.bottomRibCaps = true;
   auto capBaseline = s; capBaseline.leadingEdgeType = 0;
   const auto baselineShape = designrc::geometry::buildStructuredWingPreview(
-      applyWingStructure(ribs, capBaseline), p.ribThickness);
+      testsupport::buildStructure(ribs, capBaseline), p.ribThickness);
   assert(BRepCheck_Analyzer{baselineShape}.IsValid());
   designrc::geometry::MaterialShapeSet plain;
   const auto plainShape = designrc::geometry::buildStructuredWingPreview(
-      applyWingStructure(ribs, s), p.ribThickness, nullptr, &plain);
+      testsupport::buildStructure(ribs, s), p.ribThickness, nullptr, &plain);
   for (const auto& part : plain.parts)
     if (!BRepCheck_Analyzer{part.shape}.IsValid())
       std::fprintf(stderr, "Invalid diamond part: %s\n", part.name.c_str());
   assert(BRepCheck_Analyzer{plainShape}.IsValid());
   s.addFrontBuildTab = s.addTopFrontBuildTab = true;
   s.buildTabHeightAboveTable = 5.0;
-  const auto wing = applyWingStructure(ribs, s);
+  const auto wing = testsupport::buildStructure(ribs, s);
   assert(wing.warnings.size() == p.ribCount * 2);
   designrc::geometry::MaterialShapeSet tabbed;
   const auto shape = designrc::geometry::buildStructuredWingPreview(
@@ -188,7 +189,7 @@ void testMoldedAndNotchedLeadingEdges() {
     p.tipTwistDegrees = 3.0;
     const auto ribs = generateRibs(p, AirfoilProfile::nacaSymmetric(0.12), AirfoilProfile::nacaSymmetric(0.10));
     StructureParameters s; s.leadingEdgeType = type;
-    const auto wing = applyWingStructure(ribs, s);
+    const auto wing = testsupport::buildStructure(ribs, s);
     designrc::geometry::MaterialShapeSet materials;
     const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, nullptr, &materials);
     for (const auto& part : materials.parts)
@@ -217,12 +218,14 @@ void testMoldedAndNotchedLeadingEdges() {
     s.addFrontBuildTab = s.addTopFrontBuildTab = true;
     s.buildTabHeightAboveTable = 5.0;
     const auto withSupports = designrc::geometry::buildStructuredWingPreview(
-        applyWingStructure(ribs, s), p.ribThickness);
+        testsupport::buildStructure(ribs, s), p.ribThickness);
     assert(BRepCheck_Analyzer{withSupports}.IsValid());
   }
 }
 
 } // namespace
+
+int testPartNames();
 
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
@@ -231,6 +234,7 @@ int main(int argc, char* argv[]) {
   if (argc > 1 && std::string{argv[1]} == "--sheeted-tabs") { testSheetedTabs(); return 0; }
   if (argc > 1 && std::string{argv[1]} == "--diamond-cap-tabs") { testDiamondAndCapTabs(); return 0; }
   if (argc > 1 && std::string{argv[1]} == "--molded-notched-le") { testMoldedAndNotchedLeadingEdges(); return 0; }
+  if (argc > 1 && std::string{argv[1]} == "--part-names") return testPartNames();
   testMoldedAndNotchedLeadingEdges();
   testDiamondAndCapTabs();
   try {
@@ -261,7 +265,7 @@ int main(int argc, char* argv[]) {
       s.ribThickness = p.ribThickness;
       s.topRibCaps = s.bottomRibCaps = true;
       s.topRibCapWidth = s.bottomRibCapWidth = 25.4;
-      const auto wing = applyWingStructure(ribs, s);
+      const auto wing = testsupport::buildStructure(ribs, s);
       designrc::geometry::MaterialShapeSet materials;
       const auto shape = designrc::geometry::buildStructuredWingPreview(
           wing, p.ribThickness, nullptr, &materials, {}, 3);
@@ -304,7 +308,7 @@ int main(int argc, char* argv[]) {
       s.spoilers = true; s.spoilerStartRib = 1; s.spoilerEndRib = 4;
       s.spoilerChordLocationPercent = 40.0;
     }
-    const auto wing = applyWingStructure(ribs, s);
+    const auto wing = testsupport::buildStructure(ribs, s);
     designrc::geometry::MaterialShapeSet serialMaterials;
     designrc::geometry::PanelBuildTimings serialTimings, parallelTimings;
     const auto serial = designrc::geometry::buildStructuredWingPreview(
@@ -396,7 +400,7 @@ int main(int argc, char* argv[]) {
     structure.trailingEdgeHeight = 9.525;
     designrc::geometry::MaterialShapeSet materials;
     const auto shape = designrc::geometry::buildStructuredWingPreview(
-        designrc::domain::applyWingStructure(ribs, structure), 2.38125, nullptr, &materials);
+        testsupport::buildStructure(ribs, structure), 2.38125, nullptr, &materials);
     assert(BRepCheck_Analyzer{shape}.IsValid());
     const auto path = std::filesystem::temp_directory_path() / "designrc_ag_le_regression.step";
     designrc::geometry::exportStepAssembly(materials.parts, path, "AG glider outer panel");
@@ -418,10 +422,10 @@ int main(int argc, char* argv[]) {
     // Exercise relocation around a bottom spar as well as the free rear tab.
     structure.bottomSpar = true;
     const auto plain = designrc::geometry::buildStructuredWingPreview(
-        designrc::domain::applyWingStructure(ribs, structure), parameters.ribThickness);
+        testsupport::buildStructure(ribs, structure), parameters.ribThickness);
     structure.addFrontBuildTab = structure.addRearBuildTab = true;
     designrc::geometry::MaterialShapeSet materials;
-    const auto tabWing = designrc::domain::applyWingStructure(ribs, structure);
+    const auto tabWing = testsupport::buildStructure(ribs, structure);
     const auto tabbed = designrc::geometry::buildStructuredWingPreview(
         tabWing, parameters.ribThickness,
         nullptr, &materials);
@@ -478,9 +482,15 @@ int main(int argc, char* argv[]) {
     assert(footEndpoints == 4 * parameters.ribCount);
     std::filesystem::remove(tabPath);
   }
+  return testPartNames();
+}
+
+int testPartNames() {
   using designrc::geometry::NamedPartShape;
   using designrc::geometry::PartMaterial;
   const std::vector<NamedPartShape> parts{
+      {"Right Panel 1 - ATE1", BRepPrimAPI_MakeBox{3.0,2.0,1.0}.Shape(), PartMaterial::Wood, false},
+      {"Right Panel 1 - FTE1", BRepPrimAPI_MakeBox{3.0,2.0,1.0}.Shape(), PartMaterial::Wood, false},
       {"Right Panel 1 - R1", BRepPrimAPI_MakeBox{10.0, 2.0, 3.0}.Shape(),
        PartMaterial::Wood, false},
       {"Right Panel 1 - Spar 1", BRepPrimAPI_MakeBox{
@@ -545,6 +555,9 @@ int main(int argc, char* argv[]) {
   const auto rightSpars = findChild(rightPanel, "Spars and Shear Webs");
   const auto rightEdges = findChild(
       rightPanel, "Leading and Trailing Edges");
+  const auto rightControls = findChild(rightPanel,"Controls");
+  assert(labelName(findChild(rightControls,"ATE1"))=="ATE1");
+  assert(labelName(findChild(rightControls,"FTE1"))=="FTE1");
   assert(labelName(findChild(rightRibs, "R1")) == "R1");
   assert(labelName(findChild(rightSpars, "Spar 1")) == "Spar 1");
   assert(labelName(findChild(rightEdges, "Top TE sheeting")) ==

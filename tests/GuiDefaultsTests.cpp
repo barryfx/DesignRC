@@ -1,11 +1,16 @@
+#include "TestWingStructure.h"
 #include "gui/TechnicalDrawing.h"
+#include "domain/DxfExporter.h"
 #include "gui/PlanViewport.h"
 #include "gui/PartPdfExporter.h"
 #include "gui/WingPanelEditor.h"
 
 #include <QApplication>
+#include <QFrame>
+#include <QGroupBox>
 #include <QFileDialog>
 #include <QTemporaryDir>
+#include <QXmlStreamReader>
 #include <QTimer>
 #include <QMessageBox>
 #include <QCheckBox>
@@ -37,6 +42,303 @@ int main(int argc, char* argv[]) {
 #endif
   QApplication application{argc, argv};
   using namespace designrc::gui;
+  {
+    WingPanelData values;
+    values.ailerons = values.flaps = true;
+    for (auto* options : {&values.builtUpAileron, &values.builtUpFlap}) {
+      options->enabled = true;
+      options->hingeSpars = true;
+      options->hingeSparWidth = 7.0;
+      options->hingeSparHeight = 1.75;
+      options->hingeAngleDegrees = 35;
+    }
+    WingPanelEditor editor{values};
+    for (const QString prefix : {QString{"aileron"}, QString{"flap"}}) {
+      auto* post = editor.findChild<QRadioButton*>(prefix + "HingePost");
+      auto* spars = editor.findChild<QRadioButton*>(prefix + "HingeSpars");
+      auto* postDetails = editor.findChild<QWidget*>(prefix + "HingePostDetails");
+      auto* sparDetails = editor.findChild<QWidget*>(prefix + "HingeSparDetails");
+      assert(post && spars && postDetails && sparDetails);
+      assert(spars->isChecked() && !post->isChecked());
+      assert(postDetails->isHidden() && !sparDetails->isHidden());
+      auto* skinWidth = editor.findChild<LengthInput*>(prefix + "TopSheetingWidth");
+      assert(skinWidth && skinWidth->parentWidget()->isHidden());
+      assert(!editor.findChild<QCheckBox*>(prefix + "TopSheetingTaper"));
+      assert(!editor.findChild<QCheckBox*>(prefix + "BottomSheetingTaper"));
+      post->setChecked(true);
+      assert(!spars->isChecked() && !postDetails->isHidden() && sparDetails->isHidden());
+      assert(!skinWidth->parentWidget()->isHidden());
+      spars->setChecked(true);
+      assert(!post->isChecked() && postDetails->isHidden() && !sparDetails->isHidden());
+      assert(skinWidth->parentWidget()->isHidden());
+    }
+    const auto saved = panelDataToJson(editor.data());
+    const auto loaded = panelDataFromJson(saved);
+    for (const auto* options : {&loaded.builtUpAileron, &loaded.builtUpFlap}) {
+      assert(options->hingeSpars && options->hingeSparWidth == 7.0);
+      assert(options->hingeSparHeight == 1.75 && options->hingeAngleDegrees == 35);
+    }
+    auto old = saved;
+    for (const QString key : {QString{"builtUpAileron"}, QString{"builtUpFlap"}}) {
+      auto options = old.value(key).toObject();
+      options.remove("hingeSpars"); options.remove("hingeAngleDegrees");
+      options.insert("topSheetingTaper", true);
+      old.insert(key, options);
+    }
+    const auto migrated = panelDataFromJson(old);
+    assert(!migrated.builtUpAileron.hingeSpars && !migrated.builtUpFlap.hingeSpars);
+    assert(!migrated.builtUpAileron.topSheetingTaper && !migrated.builtUpFlap.topSheetingTaper);
+    using namespace designrc::domain;
+    WingParameters panel;
+    panel.rootChord = panel.tipChord = 200; panel.halfSpan = 250;
+    panel.ribCount = 7; panel.dihedralDegrees = panel.sweep = 0;
+    const auto foil = AirfoilProfile::nacaSymmetric(.15);
+    StructureParameters structure;
+    structure.ailerons = structure.flaps = true;
+    structure.flapStartRib = 2; structure.flapStopRib = 4;
+    structure.aileronStartRib = 4; structure.aileronStopRib = 7;
+    structure.flapWidth = structure.aileronWidth = 50;
+    structure.builtUpAileron = loaded.builtUpAileron;
+    structure.builtUpFlap = loaded.builtUpFlap;
+    const auto wing = applyWingStructure(generateRibs(panel, foil, foil), structure);
+    const auto plan = buildFlattenedWingPlan({wing}, {3}, {loaded}, false, "HingeSpars.designrc");
+    assert(std::count_if(plan.texts.begin(), plan.texts.end(), [](const auto& text) {
+      return text.text.contains("hinge spar");
+    }) == 8);
+    assert(std::count_if(plan.texts.begin(), plan.texts.end(), [](const auto& text) {
+      return text.text.contains("Hinge Angle:");
+    }) == 2);
+    assert(std::none_of(plan.texts.begin(), plan.texts.end(), [](const auto& text) {
+      return text.text.contains("Hinge Post:");
+    }));
+  }
+  if (argc > 1 && std::string{argv[1]} == "--hinge-options") return 0;
+  {
+    // Deleting the last modern spar must not resurrect hidden legacy spars.
+    auto defaults=installedDefaultPanelData(DisplayUnit::Inches);
+    assert(defaults.topSpar && defaults.bottomSpar && defaults.spars.size()==2);
+    WingPanelEditor editor{defaults};
+    int changes=0;
+    QObject::connect(&editor,&WingPanelEditor::changed,[&] {++changes;});
+    for(auto* row:editor.findChildren<QWidget*>("sparEditorRow"))
+      row->findChild<QCheckBox*>("sparDeleteSelection")->setChecked(true);
+    editor.findChild<QPushButton*>("deleteSparButton")->click();
+    const auto empty=editor.data();
+    assert(changes>0 && empty.spars.empty());
+    assert(!empty.topSpar && !empty.bottomSpar && !empty.topRearSpar && !empty.bottomRearSpar && empty.carbonSpar==0);
+    auto saved=panelDataToJson(empty);
+    // Reproduce the stale flags in JoinerNumBays without modifying the project.
+    saved.insert("topSpar",true); saved.insert("bottomSpar",true);
+    saved.insert("topRearSpar",true); saved.insert("bottomRearSpar",true); saved.insert("carbonSpar",1);
+    const auto reopened=panelDataFromJson(saved);
+    assert(reopened.spars.empty() && !reopened.topSpar && !reopened.bottomSpar &&
+        !reopened.topRearSpar && !reopened.bottomRearSpar && reopened.carbonSpar==0);
+    WingPanelEditor reopenedEditor{reopened};
+    assert(reopenedEditor.findChildren<QWidget*>("sparEditorRow").empty());
+    assert(reopenedEditor.data().spars.empty());
+    // Old projects without a modern list still migrate their spar switches.
+    saved.remove("spars"); saved.remove("sparDefaults");
+    const auto legacy=panelDataFromJson(saved);
+    assert(!legacy.spars.empty());
+  }
+  {
+    WingPanelData data;
+    data.ribCount=5; data.joinerPanelMode=1;
+    FixedJoinerData fixed; fixed.ribBays=3;
+    data.fixedJoiners={fixed};
+    RemovableJoinerData sleeve; sleeve.ribBays=2;
+    RemovableJoinerData pin; pin.kind=1; pin.ribBays=4;
+    data.removableJoiners={sleeve,pin};
+    const auto json=panelDataToJson(data);
+    const auto restored=panelDataFromJson(json);
+    assert(restored.fixedJoiners.front().ribBays==3);
+    assert(restored.removableJoiners.front().ribBays==2);
+    assert(!json.value("removableJoiners").toArray()[1].toObject().contains("ribBays"));
+    WingPanelEditor editor{data};
+    auto* fixedBays=editor.findChild<QSpinBox*>("fixedJoinerRibBays");
+    assert(fixedBays && fixedBays->minimum()==1 && fixedBays->maximum()==4 && fixedBays->value()==3);
+    auto* ribCount=editor.findChild<QSpinBox*>("ribCount");
+    ribCount->setValue(3);
+    assert(fixedBays->maximum()==2 && editor.data().fixedJoiners.front().ribBays==2);
+    data.joinerPanelMode=0;
+    WingPanelEditor removable{data,DisplayUnit::Millimeters,true};
+    const auto bays=removable.findChildren<QSpinBox*>("removableJoinerRibBays");
+    assert(bays.size()==1 && bays.front()->value()==2 && bays.front()->maximum()==4);
+    auto legacy=json;
+    auto fixedJson=legacy.value("fixedJoiners").toArray();
+    auto oldFixed=fixedJson[0].toObject(); oldFixed.remove("ribBays"); fixedJson[0]=oldFixed;
+    legacy.insert("fixedJoiners",fixedJson); legacy.insert("addRib1a",true);
+    assert(panelDataFromJson(legacy).fixedJoiners.front().ribBays==2);
+  }
+  {
+    using namespace designrc::domain;
+    WingParameters p;
+    p.rootChord=p.tipChord=200; p.halfSpan=300; p.ribCount=7; p.dihedralDegrees=0; p.sweep=0;
+    const auto foil=AirfoilProfile::nacaSymmetric(.15);
+    StructureParameters settings;
+    settings.ailerons=settings.flaps=true;
+    settings.flapStartRib=2; settings.flapStopRib=4;
+    settings.aileronStartRib=4; settings.aileronStopRib=7;
+    settings.aileronWidth=settings.flapWidth=40;
+    settings.aileronHingePostHeight=settings.flapHingePostHeight=30;
+    settings.topTeSheeting=true; settings.topTeSheetingWidth=25.4; settings.topTeSheetingThickness=1.5875;
+    auto& a=settings.builtUpAileron; auto& f=settings.builtUpFlap;
+    a.enabled=f.enabled=true;
+    a.topSheeting=a.bottomSheeting=f.topSheeting=f.bottomSheeting=true;
+    a.topSheetingWidth=a.bottomSheetingWidth=f.topSheetingWidth=f.bottomSheetingWidth=40;
+    a.topSheetingThickness=a.bottomSheetingThickness=f.topSheetingThickness=f.bottomSheetingThickness=.5;
+    SparParameters spar;
+    spar.material=0; spar.verticalLocation=0; spar.chordLocationPercent=spar.tipChordLocationPercent=35;
+    spar.woodWidth=2; spar.woodHeight=1;
+    a.spars.push_back(spar);
+    spar.material=1; spar.type=1; spar.rodOd=1; spar.verticalLocation=1;
+    f.spars.push_back(spar);
+    const auto wing=applyWingStructure(generateRibs(p,foil,foil),settings);
+    WingPanelData data;
+    data.panelSpan=300; data.rootChord=data.tipChord=200; data.ribCount=7;
+    data.ailerons=data.flaps=true; data.aileronWidth=data.flapWidth=40;
+    data.aileronHingePostHeight=data.flapHingePostHeight=30;
+    data.topTeSheeting=true; data.builtUpAileron=a; data.builtUpFlap=f;
+    data.unitOverrides.insert("aileronTopSheetingThickness",UnitOverride::Inches);
+    data.unitOverrides.insert("aileronSpar0WoodWidth",UnitOverride::Inches);
+    const auto document=buildFlattenedWingPlan({wing},{3},{data},false,"ControlAnnotations.designrc");
+    const TechnicalDrawingText *ar=nullptr,*fr=nullptr;
+    bool aSkin=false,aTe=false,fSkin=false,aSpar=false,fSpar=false;
+    for(const auto& label:document.texts) {
+      if(label.text=="AR4") ar=&label;
+      if(label.text=="FR4") fr=&label;
+      aSkin=aSkin||(label.text.startsWith("Aileron Top Sheeting")&&label.text.contains("Thickness:")&&label.text.contains(" in"));
+      aTe=aTe||(label.text.startsWith("Aileron Top TE Sheeting")&&label.text.contains("Thickness:")&&label.text.contains(" mm"));
+      fSkin=fSkin||(label.text.startsWith("Flap Bottom Sheeting")&&label.text.contains("Thickness:"));
+      aSpar=aSpar||(label.text.startsWith("Aileron Spar 1")&&label.text.contains("Top Wood")&&label.text.contains(" in")&&label.text.contains(" mm"));
+      fSpar=fSpar||(label.text.startsWith("Flap Spar 1")&&label.text.contains("CF Rod")&&label.text.contains("OD:"));
+      assert(!label.text.startsWith("Aileron R")&&!label.text.startsWith("Flap R"));
+    }
+    assert(ar&&fr&&std::abs(ar->position.x()-fr->position.x())>5);
+    assert(aSkin&&aTe&&fSkin&&aSpar&&fSpar);
+    std::size_t leaders=0;
+    for(const auto& path:document.paths) if(path.path.elementCount()==3&&std::abs(path.lineWidthMm-.25)<1e-8) ++leaders;
+    assert(leaders>=8);
+    // Only the two main wing views have a full-chord panel perimeter.
+    // Built-up flap/aileron ribs still carry a 200 mm parent airfoil chord.
+    std::size_t panelOutlines=0;
+    for(const auto& path:document.paths)
+      if(std::abs(path.lineWidthMm-.45)<1e-8) ++panelOutlines;
+    assert(panelOutlines==2);
+    const auto sheetCovers=[](const TechnicalDrawingDocument& plan,const QPointF point) {
+      return std::any_of(plan.paths.begin(),plan.paths.end(),[&](const auto& path) {
+        return path.fill==QColor{212,189,165,65} && path.path.contains(point);
+      });
+    };
+    // Fixed-wing and moving-control sheets must leave both end gaps open.
+    assert(!sheetCovers(document,{52.25,252+185}));
+    assert(!sheetCovers(document,{152.25,252+185}));
+    assert(sheetCovers(document,{25,252+185}));
+    assert(sheetCovers(document,{100,252+185}));
+    auto wideSettings=settings;
+    wideSettings.topTeSheetingWidth=60;
+    const auto wideWing=applyWingStructure(generateRibs(p,foil,foil),wideSettings);
+    const auto widePlan=buildFlattenedWingPlan({wideWing},{3},{data},false,"WideControlSheet.designrc");
+    assert(!sheetCovers(widePlan,{100,252+159.25}));
+    auto stockSettings=settings;
+    stockSettings.topTeSheeting=false;
+    stockSettings.trailingEdgeType=2; stockSettings.trailingEdgeWidth=10; stockSettings.trailingEdgeHeight=30;
+    auto stockData=data;
+    stockData.topTeSheeting=false;
+    stockData.trailingEdgeType=2; stockData.trailingEdgeWidth=10; stockData.trailingEdgeHeight=30;
+    stockData.unitOverrides.insert("trailingEdgeWidth",UnitOverride::Inches);
+    const auto stockWing=applyWingStructure(generateRibs(p,foil,foil),stockSettings);
+    const auto stockPlan=buildFlattenedWingPlan({stockWing},{3},{stockData},false,"ControlStock.designrc");
+    bool ate=false,fte=false;
+    for(const auto& label:stockPlan.texts) {
+      ate=ate||(label.text.startsWith("ATE1\n")&&label.text.contains(" in")&&label.text.contains("30 mm"));
+      fte=fte||(label.text.startsWith("FTE1\n")&&label.text.contains(" in")&&label.text.contains("30 mm"));
+    }
+    assert(ate&&fte);
+    for(const auto& control:wing.controlSurfaces) {
+      const auto& ribs=control.builtUpWing->ribs;
+      const double start=ribs.front().rib.spanPosition+
+          ribs.front().rib.ribThicknessStartFactor*3;
+      const double stop=ribs.back().rib.spanPosition+
+          (ribs.back().rib.ribThicknessStartFactor+1)*3;
+      bool postReachesFaces=false;
+      for(const auto& path:document.paths) {
+        const auto bounds=path.path.boundingRect();
+        if(std::abs(path.lineWidthMm-.22)<1e-8 &&
+           std::abs(bounds.top()-172)<1e-6 &&
+           std::abs(bounds.height()-control.hingePostWidth)<1e-6 &&
+           std::abs(bounds.left()-(300-stop))<1e-6 &&
+           std::abs(bounds.right()-(300-start))<1e-6)
+          postReachesFaces=true;
+      }
+      assert(postReachesFaces);
+    }
+  }
+
+  {
+    WingPanelData d;
+    d.ailerons = true; d.flaps = true;
+    d.topTeSheeting = true; d.topTeSheetingWidth = 12;
+    d.builtUpAileron.enabled = true;
+    d.builtUpAileron.topSheeting = true;
+    d.builtUpAileron.topSheetingWidth = 18;
+    d.builtUpFlap.enabled = true;
+    d.builtUpFlap.bottomSheeting = true;
+    designrc::domain::SparParameters spar;
+    spar.verticalLocation = 1; spar.material = 0;
+    spar.woodWidth = 2; spar.woodHeight = 1;
+    d.builtUpFlap.spars.push_back(spar);
+    d.unitOverrides.insert("aileronTopSheetingWidth", UnitOverride::Inches);
+    d.unitOverrides.insert("flapSpar0WoodHeight", UnitOverride::Millimeters);
+    WingPanelEditor editor{d};
+    assert(editor.findChild<QFrame*>("aileronFlapDivider"));
+    auto restored = editor.data();
+    assert(restored.builtUpAileron.enabled && restored.builtUpFlap.enabled);
+    assert(restored.topTeSheeting && restored.topTeSheetingWidth == 12);
+    assert(restored.builtUpAileron.topSheetingWidth == 18);
+    assert(restored.builtUpFlap.spars.size() == 1);
+    auto* add = editor.findChild<QPushButton*>("aileronAddSpar");
+    add->click();
+    assert(editor.data().builtUpAileron.spars.size() == 1);
+    auto* row = add->parentWidget()->findChildren<QGroupBox*>("controlSparEditorRow").back();
+    for (auto* radio : row->findChildren<QRadioButton*>())
+      if (radio->text() == "Mid") assert(radio->isHidden());
+    row->findChild<QCheckBox*>("sparDeleteSelection")->setChecked(true);
+    editor.findChild<QPushButton*>("aileronDeleteSpar")->click();
+    assert(editor.data().builtUpAileron.spars.empty());
+    restored = panelDataFromJson(panelDataToJson(editor.data()));
+    assert(restored.builtUpFlap.spars.size() == 1);
+    assert(restored.builtUpFlap.spars.front().woodHeight == 1);
+    // Defaults uses the same editor with per-parameter unit selectors enabled.
+    WingPanelEditor defaults{restored, DisplayUnit::Inches, true};
+    defaults.setGlobalUnit(DisplayUnit::Millimeters);
+    const auto saved = defaults.data();
+    assert(saved.builtUpAileron.enabled && saved.builtUpAileron.topSheetingWidth == 18);
+    assert(saved.builtUpFlap.spars.front().verticalLocation == 1);
+    assert(saved.unitOverrides.value("aileronTopSheetingWidth") == UnitOverride::Inches);
+    assert(saved.unitOverrides.value("flapSpar0WoodHeight") == UnitOverride::Millimeters);
+    const auto old = panelDataFromJson(QJsonObject{});
+    assert(!old.builtUpAileron.enabled && !old.builtUpFlap.enabled);
+    designrc::domain::WingParameters wing;
+    wing.halfSpan = 250; wing.rootChord = wing.tipChord = 200; wing.ribCount = 7;
+    designrc::domain::StructureParameters structure;
+    structure.ailerons = true; structure.aileronStartRib = 2; structure.aileronStopRib = 7;
+    structure.builtUpAileron.enabled = true;
+    structure.builtUpAileron.topSheeting = true;
+    structure.builtUpAileron.topSheetingThickness = .5;
+    auto model = testsupport::buildStructure(
+        designrc::domain::generateRibs(wing, d.rootAirfoil, d.tipAirfoil), structure);
+    const auto drawing = buildFlattenedWingPlan({model}, {3}, {d}, false, "BuiltUp.designrc");
+    assert(!drawing.empty());
+    bool hasControlRib = false;
+    for (const auto& text : drawing.texts) hasControlRib = hasControlRib || text.text.startsWith("AR");
+    assert(hasControlRib);
+    const auto& rib = model.controlSurfaces.back().builtUpWing->ribs.front();
+    const auto cutting = designrc::domain::makeStructuredRibPartDrawing(rib, rib.name);
+    assert(!cutting.paths.empty());
+
+  }
+
   {
     WingPanelData inner, outer;
     outer.planform = {{{0, 0}, {-10, .5}, {0, 1}},
@@ -180,7 +482,7 @@ int main(int argc, char* argv[]) {
     parameters.ribCount = 5;
     parameters.dihedralDegrees = 0;
     const auto foil = designrc::domain::AirfoilProfile::nacaSymmetric(.12);
-    const auto wing = designrc::domain::applyWingStructure(
+    const auto wing = testsupport::buildStructure(
         designrc::domain::generateRibs(parameters, foil, foil), {});
     const auto plan = buildFlattenedWingPlan({wing}, {3}, {restored}, false, {});
     int curvedLeadingOutlines = 0;
@@ -313,7 +615,7 @@ int main(int argc, char* argv[]) {
           spar.stripThickness, spar.tipChordLocationPercent});
     std::fprintf(stderr, "Saved glider panel %d\n", panelIndex + 1);
     const auto outer = [&] {
-      try { return applyWingStructure(ribs, structure); }
+      try { return testsupport::buildStructure(ribs, structure); }
       catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         throw;
@@ -367,7 +669,7 @@ int main(int argc, char* argv[]) {
       rib.dihedralHeight += 350.0;
       rib.leadingEdgeOffset += 100.0;
     }
-    const auto relocated = applyWingStructure(ribs, structure);
+    const auto relocated = testsupport::buildStructure(ribs, structure);
     for (std::size_t i = 0; i < outer.ribs.size(); ++i) {
       const auto& before = outer.ribs[i].outerOutline;
       const auto& after = relocated.ribs[i].outerOutline;
@@ -1234,15 +1536,11 @@ int main(int argc, char* argv[]) {
   assert(sheetTeStock != nullptr && sheetTeStock->isChecked());
   topTeSheeting->setChecked(true);
   assert(!sheetTeStock->isChecked());
-  QCheckBox* topTaper = nullptr;
-  QCheckBox* bottomTaper = nullptr;
+  auto* topTaper = teSheetingEditor.findChild<QCheckBox*>("topTeSheetingTaper");
+  auto* bottomTaper = teSheetingEditor.findChild<QCheckBox*>("bottomTeSheetingTaper");
   bool hasRearTopLabel = false;
   bool hasRearBottomLabel = false;
   for (auto* check : teSheetingEditor.findChildren<QCheckBox*>()) {
-    if (check->text() == "Taper Sheeting") {
-      if (!topTaper) topTaper = check;
-      else if (!bottomTaper) bottomTaper = check;
-    }
     hasRearTopLabel = hasRearTopLabel || check->text() == "Rear Top Sheeting";
     hasRearBottomLabel = hasRearBottomLabel || check->text() == "Rear Bottom Sheeting";
   }
@@ -2024,7 +2322,7 @@ int main(int argc, char* argv[]) {
       ribletPlanParameters,
       designrc::domain::AirfoilProfile::nacaSymmetric(0.12),
       designrc::domain::AirfoilProfile::nacaSymmetric(0.10));
-  auto ribletPlanWing = designrc::domain::applyWingStructure(
+  auto ribletPlanWing = testsupport::buildStructure(
       ribletPlanRibs, ribletPlanStructure);
   for (std::size_t index = 0; index < ribletPlanWing.ribs.size(); ++index)
     ribletPlanWing.ribs[index].name = "R" + std::to_string(index + 1);
@@ -2060,7 +2358,7 @@ int main(int argc, char* argv[]) {
   spoilerPlanStructure.spoilerLighteningHoles = true;
   spoilerPlanStructure.spoilerMinimumWoodMargin = 6.0;
   spoilerPlanStructure.spoilerMinimumCircleDistance = 12.0;
-  const auto spoilerPlanWing = designrc::domain::applyWingStructure(
+  const auto spoilerPlanWing = testsupport::buildStructure(
       spoilerPlanRibs, spoilerPlanStructure);
   WingPanelData spoilerPanelData;
   spoilerPanelData.spoilers = true;
@@ -2099,6 +2397,130 @@ int main(int argc, char* argv[]) {
   assert(pdfFile.read(5) == "%PDF-");
   pdfFile.close();
   if (!preservePdf) QFile::remove(pdfPath);
+
+  {
+    QTemporaryDir directory;
+    assert(directory.isValid());
+    const QString dxfPath = directory.filePath("Full plan.dxf");
+    QString error;
+    assert(pdfViewport.exportDxf(dxfPath, error));
+    QFile file{dxfPath};
+    assert(file.open(QIODevice::ReadOnly));
+    const auto contents = file.readAll().replace("\r\n", "\n");
+    assert(contents.contains("$INSUNITS\n 70\n4\n"));
+    assert(contents.contains("PLAN_GEOMETRY") && contents.contains("PLAN_ANNOTATION"));
+    assert(contents.endsWith("EOF\n"));
+    assert(contents.contains("AC1018"));
+    // Autodesk's DXF translator rejects R2004 classes missing instance counts.
+    const auto classStart = contents.indexOf("  2\nCLASSES\n");
+    assert(classStart >= 0);
+    const auto classEnd = contents.indexOf("  0\nENDSEC\n", classStart);
+    assert(classEnd > classStart);
+    const auto classes = contents.mid(classStart, classEnd - classStart);
+    assert(classes.count("  0\nCLASS\n") > 0);
+    assert(classes.count(" 91\n") == classes.count("  0\nCLASS\n"));
+    assert(classes.contains("VISUALSTYLE\n  2\nAcDbVisualStyle\n  3\nObjectDBX Classes\n"
+                            " 90\n4095\n 91\n25\n"));
+    assert(contents.contains("420\n4076589\n")); // plan outline RGB(62,52,45)
+    assert(contents.contains("420\n3618615\n")); // label RGB(55,55,55)
+    file.close();
+    const auto exportedPlanPath = qEnvironmentVariable("DESIGNRC_PLAN_DXF_TEST_OUTPUT");
+    if (!exportedPlanPath.isEmpty()) assert(QFile::copy(dxfPath, exportedPlanPath));
+
+    // Known CAD coordinates: preserve physical size and independent open
+    // subpaths, including a leader; do not close or connect them together.
+    TechnicalDrawingDocument fixture;
+    fixture.pageBoundsMm = QRectF{-20, -30, 200, 100};
+    QPainterPath border;
+    border.addRect(QRectF{-10, -20, 180, 80});
+    fixture.paths.push_back({border, QColor{200, 100, 50}, QColor{212, 189, 165, 105}});
+    QPainterPath leaders;
+    leaders.moveTo(0, 0); leaders.lineTo(25.4, 0);
+    leaders.moveTo(50, 10); leaders.lineTo(60, 20);
+    fixture.paths.push_back({leaders, QColor{0, 0, 255}});
+    QPainterPath curve;
+    curve.moveTo(0, 20); curve.cubicTo(10, 0, 20, 40, 30, 20);
+    fixture.paths.push_back({curve, Qt::black});
+    fixture.texts.push_back({{80, 20}, "AR1\n1.5 mm", 3.0, -90});
+    PlanViewport viewport;
+    viewport.setDocument(fixture);
+    assert(viewport.exportDxf(dxfPath, error));
+    assert(file.open(QIODevice::ReadOnly));
+    const auto fixtureDxf = file.readAll().replace("\r\n", "\n");
+    file.close();
+    // The border is 180 x 80 mm, with CAD Y pointing up from the page bottom.
+    assert(fixtureDxf.contains("90\n4\n70\n1\n10\n10.000000\n20\n90.000000\n"
+                               "10\n190.000000\n20\n90.000000\n"
+                               "10\n190.000000\n20\n10.000000\n"
+                               "10\n10.000000\n20\n10.000000\n"));
+    assert(fixtureDxf.contains("10\n20.000000\n20\n70.000000\n30\n0.0\n"
+                               "11\n45.400000\n21\n70.000000\n31\n0.0\n"));
+    assert(fixtureDxf.contains("10\n70.000000\n20\n60.000000\n30\n0.0\n"
+                               "11\n80.000000\n21\n50.000000\n31\n0.0\n"));
+    // Curves and rotated multiline text are CAD geometry, never font entities.
+    assert(fixtureDxf.contains("8\nPLAN_GEOMETRY\n420\n13132850\n100\nAcDbPolyline\n"));
+    assert(fixtureDxf.count("8\nPLAN_GEOMETRY\n420\n255\n100\nAcDbLine\n") == 2);
+    assert(fixtureDxf.contains("8\nPLAN_ANNOTATION\n420\n3618615\n100\nAcDbPolyline\n"));
+    assert(fixtureDxf.count("\nLINE\n") > 10);
+    assert(fixtureDxf.count("\nLWPOLYLINE\n") > 4);
+    assert(!fixtureDxf.contains("\nTEXT\n") && !fixtureDxf.contains("\nMTEXT\n"));
+    assert(!viewport.exportDxf(directory.filePath("missing/plan.dxf"), error));
+    assert(!error.isEmpty());
+    const QString svgPath = directory.filePath("Full plan.svg");
+    assert(pdfViewport.exportSvg(svgPath, error));
+    QFile svgFile{svgPath};
+    assert(svgFile.open(QIODevice::ReadOnly));
+    const auto planSvg = svgFile.readAll();
+    svgFile.close();
+    const auto requestedSvgPath = qEnvironmentVariable("DESIGNRC_PLAN_SVG_TEST_OUTPUT");
+    if (!requestedSvgPath.isEmpty()) assert(QFile::copy(svgPath, requestedSvgPath));
+    assert(planSvg.contains("#3e342d") && planSvg.contains("#373737"));
+    assert(viewport.exportSvg(svgPath, error));
+    assert(svgFile.open(QIODevice::ReadOnly));
+    QXmlStreamReader svg{svgFile.readAll()};
+    svgFile.close();
+    bool sawSize = false, sawBorder = false, sawLeader = false;
+    bool sawCurve = false, sawLabel = false;
+    int pathCount = 0;
+    while (!svg.atEnd()) {
+      svg.readNext();
+      if (!svg.isStartElement()) continue;
+      const auto attributes = svg.attributes();
+      if (svg.name() == QLatin1StringView{"svg"}) {
+        assert(svg.namespaceUri() == QLatin1StringView{"http://www.w3.org/2000/svg"});
+        assert(attributes.value("width") == QLatin1StringView{"200mm"});
+        assert(attributes.value("height") == QLatin1StringView{"100mm"});
+        assert(attributes.value("viewBox") == QLatin1StringView{"-20 -30 200 100"});
+        sawSize = true;
+      }
+      assert(svg.name() != QLatin1StringView{"text"}); // outlined, font-independent labels
+      if (svg.name() != QLatin1StringView{"path"}) continue;
+      ++pathCount;
+      const auto data = attributes.value("d").toString();
+      if (attributes.value("stroke") == QLatin1StringView{"#c86432"}) {
+        assert(data == "M-10 -20 L170 -20 L170 60 L-10 60 Z");
+        assert(attributes.value("fill") == QLatin1StringView{"#d4bda5"});
+        assert(std::abs(attributes.value("fill-opacity").toDouble() - 105.0 / 255.0) < 1e-6);
+        sawBorder = true;
+      }
+      if (attributes.value("stroke") == QLatin1StringView{"#0000ff"}) {
+        assert(data == "M0 0 L25.4 0 M50 10 L60 20");
+        assert(attributes.value("fill") == QLatin1StringView{"none"});
+        sawLeader = true;
+      }
+      if (data == "M0 20 C10 0 20 40 30 20") sawCurve = true;
+      if (attributes.value("fill") == QLatin1StringView{"#373737"}) {
+        assert(!data.isEmpty());
+        sawLabel = true;
+      }
+    }
+    assert(!svg.hasError());
+    assert(pathCount == 4 && sawSize && sawBorder && sawLeader && sawCurve && sawLabel);
+    assert(!viewport.exportSvg(directory.filePath("missing/plan.svg"), error));
+    viewport.clearPlan();
+    assert(!viewport.exportDxf(dxfPath, error));
+    assert(!viewport.exportSvg(svgPath, error));
+  }
 
   auto turbulatorCutawayWing = planWing;
   designrc::domain::SpanMember cutawayTurbulator;

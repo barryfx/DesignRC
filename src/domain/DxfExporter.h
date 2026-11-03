@@ -3,6 +3,7 @@
 #include "domain/WingDesign.h"
 #include "domain/WingStructure.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -15,6 +16,7 @@ struct PartDrawingPath {
   std::string layer;
   bool spline{false};
   bool closed{true};
+  std::optional<std::uint32_t> rgb; // 0x00RRGGBB; absent uses the layer color.
 };
 
 struct PartLabelPlacement {
@@ -48,6 +50,10 @@ PartDrawing makeDihedralAnglePartDrawing(
 
 std::vector<PartDrawing> arrangePartDrawings(
     const std::vector<PartDrawing>& parts, double gap = 5.0);
+// Writes paths in their existing positions, in millimeters, without arranging parts.
+void exportDrawingDxf(const std::vector<PartDrawingPath>& paths,
+                      const std::filesystem::path& path);
+
 void exportPartsDxf(const std::vector<PartDrawing>& parts,
                     const std::filesystem::path& path);
 void exportPartsSvg(const std::vector<PartDrawing>& parts,

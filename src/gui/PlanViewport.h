@@ -19,6 +19,8 @@ public:
   void setDocument(const TechnicalDrawingDocument& document);
   void clearPlan();
   void fitAll();
+  [[nodiscard]] bool exportSvg(const QString& path, QString& error) const;
+  [[nodiscard]] bool exportDxf(const QString& path, QString& error) const;
   [[nodiscard]] bool exportPdf(const QString& path, QString& error) const;
 
 protected:

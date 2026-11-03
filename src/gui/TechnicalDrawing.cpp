@@ -313,6 +313,10 @@ PlanLayout calculateLayout(const std::vector<domain::StructuredWing>& wings) {
 double flattenedSpanForModelPoint(const PanelStations& panel,
                                   domain::Point3 point);
 
+void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLayout& layout,
+    const PanelStations& panel, bool mirrored, double row, double ribThickness,
+    bool drawPanelOutline = true);
+
 void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& layout,
                         const PanelStations& panel, const bool mirrored, const double row,
                         const double ribThickness, const std::size_t panelIndex) {
@@ -342,7 +346,16 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
     if (count < 2) continue;
     const QColor fill = member.kind == domain::SpanMemberKind::Tube ||
             member.kind == domain::SpanMemberKind::Rod ? kCarbonFill : kWoodFill;
-    addBand(document, layout, panel, mirrored, row, 0, count - 1,
+    auto memberPanel = panel;
+    if (member.name == "Movable hinge post") {
+      // Match the actual stock, which reaches the outer end-rib faces.
+      // Station centers leave half an end rib missing beside a shared gap.
+      memberPanel.span.front() = panelSpanAtRibFace(panel, 0,
+          wing.ribs.front().rib.ribThicknessStartFactor * ribThickness);
+      memberPanel.span[count - 1] = panelSpanAtRibFace(panel, count - 1,
+          (wing.ribs[count - 1].rib.ribThicknessStartFactor + 1.0) * ribThickness);
+    }
+    addBand(document, layout, memberPanel, mirrored, row, 0, count - 1,
         [&](const std::size_t i) {
           const double center = wing.ribs[i].rib.leadingEdgeOffset + member.centers[i].x;
           return std::pair{center - member.width * 0.5, center + member.width * 0.5};
@@ -416,8 +429,10 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
   for (const auto& flap : wing.controlSurfaces) {
     if (flap.name != "Flap") continue;
     for (const auto& aileron : wing.controlSurfaces) {
-      if (aileron.name == "Aileron" &&
-          flap.stopRibIndex == aileron.startRibIndex) {
+      if (aileron.name == "Aileron" && !aileron.hingeSpars && !flap.hingeSpars &&
+          flap.stopRibIndex == aileron.startRibIndex &&
+          std::abs(flap.hingePostWidth - aileron.hingePostWidth) < 1e-8 &&
+          std::abs(flap.hingePostHeight - aileron.hingePostHeight) < 1e-8) {
         sharedFlap = &flap;
         sharedAileron = &aileron;
       }
@@ -445,7 +460,19 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
                 (control.extendThroughStopRib ? 0.0 : control.gap));
       controlStations.push_back({span, low, high});
     }
-    addStationBand(controlStations, kWoodFill);
+    if (control.builtUpWing) {
+      PanelStations built;
+      built.wing = control.builtUpWing.get();
+      for (const auto& rib : built.wing->ribs)
+        built.span.push_back(flattenedSpanForRib(panel, rib.rib));
+      addPanelComponents(document, layout, built, mirrored, row, ribThickness, panelIndex);
+      auto references = *built.wing;
+      for (auto& rib : references.ribs) rib.rib.planform.reset();
+      built.wing = &references;
+      addPanelReferenceGeometry(document, layout, built, mirrored, row, ribThickness, false);
+    } else {
+      addStationBand(controlStations, kWoodFill);
+    }
     if ((!wing.ribs.front().rib.planform &&
          (&control == sharedFlap || &control == sharedAileron)) ||
         control.hingePostWidth <= 0.0 || control.hingePostCenters.size() != control.profiles.size())
@@ -521,6 +548,46 @@ void addPanelComponents(TechnicalDrawingDocument& document, const PlanLayout& la
     }
     addPolyline(document, outline, kOutlineColor, 0.22, true,
                 QColor{212, 189, 165, 65});
+    auto& sheetPath = document.paths.back().path;
+    for (const auto& control : wing.controlSurfaces) {
+      std::vector<QPointF> opening;
+      std::vector<QPointF> trailing;
+      for (std::size_t i = control.startRibIndex; i <= control.stopRibIndex; ++i) {
+        const auto& rib = wing.ribs[i].rib;
+        const auto bounds = profileBounds(control.profiles[i - control.startRibIndex], rib.leadingEdgeOffset);
+        const double offset = i == control.startRibIndex
+            ? (rib.ribThicknessStartFactor + 1.0) * ribThickness
+            : i == control.stopRibIndex
+                ? (rib.ribThicknessStartFactor + (control.extendThroughStopRib ? 1.0 : 0.0)) * ribThickness : 0.0;
+        const double span = panelSpanAtRibFace(panel, i, offset);
+        opening.push_back(drawingPoint(layout, mirrored, row, span, bounds.first - control.gap -
+            (control.hingeSpars ? control.hingeSparWidth : 0.0)));
+        trailing.push_back(drawingPoint(layout, mirrored, row, span, rib.leadingEdgeOffset + rib.chord + 10));
+      }
+      QPainterPath cutout{opening.front()};
+      for (std::size_t i = 1; i < opening.size(); ++i) cutout.lineTo(opening[i]);
+      for (auto i = trailing.rbegin(); i != trailing.rend(); ++i) cutout.lineTo(*i);
+      cutout.closeSubpath();
+      sheetPath = sheetPath.subtracted(cutout);
+    }
+    const bool topSheet = QString::fromStdString(sheeting.name).contains("top", Qt::CaseInsensitive);
+    for (const auto& member : wing.profiledMembers) {
+      if (member.name.find("hinge spar") == std::string::npos || member.profiles.size() != count ||
+          (member.name.find("Top") != std::string::npos) != topSheet) continue;
+      std::vector<QPointF> polygon;
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto bounds = profileBounds(member.profiles[i], wing.ribs[i].rib.leadingEdgeOffset);
+        polygon.push_back(drawingPoint(layout, mirrored, row, sheetingSpan(i), bounds.first));
+      }
+      for (std::size_t i = count; i-- > 0;) {
+        const auto bounds = profileBounds(member.profiles[i], wing.ribs[i].rib.leadingEdgeOffset);
+        polygon.push_back(drawingPoint(layout, mirrored, row, sheetingSpan(i), bounds.second));
+      }
+      QPainterPath cutout{polygon.front()};
+      for (std::size_t i = 1; i < polygon.size(); ++i) cutout.lineTo(polygon[i]);
+      cutout.closeSubpath();
+      sheetPath = sheetPath.subtracted(cutout);
+    }
   }
 
   for (const auto& spoiler : wing.spoilers) {
@@ -797,7 +864,8 @@ void addCrossPanelJoiners(TechnicalDrawingDocument& document,
 
 void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLayout& layout,
                                const PanelStations& panel, const bool mirrored,
-                               const double row, const double ribThickness) {
+                               const double row, const double ribThickness,
+                               const bool drawPanelOutline) {
   const auto& wing = *panel.wing;
   if (!wing.ribs.empty() && wing.ribs.front().rib.planform) {
     const auto& root = wing.ribs.front().rib;
@@ -881,6 +949,9 @@ void addPanelReferenceGeometry(TechnicalDrawingDocument& document, const PlanLay
         drawingPoint(layout, mirrored, row, station + cap.startOffset, right)},
         kRibColor, 0.15, true, Qt::transparent);
   }
+  // Control ribs retain the parent airfoil chord. Its full-wing perimeter is
+  // not a control outline; drawing it here crosses the LE at both control ends.
+  if (!drawPanelOutline) return;
   const auto& root = wing.ribs.front().rib;
   const auto& tip = wing.ribs.back().rib;
   addPolyline(document, {
@@ -1114,6 +1185,89 @@ struct CalloutPlacer {
   }
 };
 
+QPointF sheetingLeaderTarget(const PlanLayout& layout, const PanelStations& panel,
+    const domain::SheetingPart& sheeting, const double ribThickness) {
+  const auto& wing = *panel.wing;
+  const auto& profiles = sheeting.fullProfiles.empty() ? sheeting.profiles : sheeting.fullProfiles;
+  const std::size_t index = profiles.size() / 2;
+  const std::size_t ribIndex = std::min(index, wing.ribs.size() - 1);
+  const auto bounds = profileBounds(profiles[index], wing.ribs[ribIndex].rib.leadingEdgeOffset);
+      QPointF target = drawingPoint(
+          layout, false, layout.lowerRow, panel.span[ribIndex],
+          (bounds.first + bounds.second) * 0.5);
+      if (profiles.size() >= 2 && wing.ribs.size() >= 2) {
+        double bestWidth = -1.0;
+        double bestSpan = panel.span[ribIndex];
+        double bestChord = (bounds.first + bounds.second) * 0.5;
+        const std::size_t bayCount = std::min(
+            profiles.size() - 1, wing.ribs.size() - 1);
+        for (std::size_t bay = 0; bay < bayCount; ++bay) {
+          const auto rootBounds = profileBounds(
+              profiles[bay], wing.ribs[bay].rib.leadingEdgeOffset);
+          const auto tipBounds = profileBounds(
+              profiles[bay + 1], wing.ribs[bay + 1].rib.leadingEdgeOffset);
+          // Use the chord interval that remains inside the sheeting at both
+          // ends of the bay, then remove every spar projected through it.
+          constexpr double edgeClearance = 2.0;
+          double left = std::max(rootBounds.first, tipBounds.first) + edgeClearance;
+          double right = std::min(rootBounds.second, tipBounds.second) - edgeClearance;
+          for (const auto& control : wing.controlSurfaces) {
+            if (bay < control.startRibIndex || bay >= control.stopRibIndex) continue;
+            for (const auto i : {bay, bay + 1}) {
+              const auto controlBounds = profileBounds(control.profiles[i - control.startRibIndex],
+                  wing.ribs[i].rib.leadingEdgeOffset);
+              right = std::min(right, controlBounds.first - control.gap - edgeClearance);
+            }
+          }
+          if (right <= left + 1.0e-8) continue;
+          std::vector<std::pair<double, double>> occupied;
+          for (const auto& member : wing.members) {
+            if (!QString::fromStdString(member.name).contains(
+                    "spar", Qt::CaseInsensitive) ||
+                member.centers.size() <= bay + 1)
+              continue;
+            const double rootCenter = wing.ribs[bay].rib.leadingEdgeOffset +
+                member.centers[bay].x;
+            const double tipCenter = wing.ribs[bay + 1].rib.leadingEdgeOffset +
+                member.centers[bay + 1].x;
+            const double center = 0.5 * (rootCenter + tipCenter);
+            constexpr double sparClearance = 2.0;
+            occupied.emplace_back(center - member.width * 0.5 - sparClearance,
+                                  center + member.width * 0.5 + sparClearance);
+          }
+          std::sort(occupied.begin(), occupied.end());
+          double openStart = left;
+          const auto considerOpenInterval = [&](const double openEnd) {
+            const double clippedEnd = std::min(openEnd, right);
+            if (clippedEnd - openStart > bestWidth) {
+              const auto& rootRib = wing.ribs[bay].rib;
+              const auto& tipRib = wing.ribs[bay + 1].rib;
+              const double rootFace = panelSpanAtRibFace(
+                  panel, bay,
+                  (rootRib.ribThicknessStartFactor + 1.0) * ribThickness);
+              const double tipFace = panelSpanAtRibFace(
+                  panel, bay + 1,
+                  tipRib.ribThicknessStartFactor * ribThickness);
+              bestWidth = clippedEnd - openStart;
+              bestSpan = 0.5 * (rootFace + tipFace);
+              bestChord = 0.5 * (openStart + clippedEnd);
+            }
+          };
+          for (const auto [occupiedLeft, occupiedRight] : occupied) {
+            if (occupiedRight <= openStart || occupiedLeft >= right) continue;
+            considerOpenInterval(occupiedLeft);
+            openStart = std::max(openStart, occupiedRight);
+            if (openStart >= right) break;
+          }
+          if (openStart < right) considerOpenInterval(right);
+        }
+        if (bestWidth > 0.0)
+          target = drawingPoint(layout, false, layout.lowerRow,
+                                bestSpan, bestChord);
+      }
+  return target;
+}
+
 double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& layout,
                           const std::vector<double>& ribThicknesses,
                           const std::vector<WingPanelData>& panelParameters,
@@ -1244,6 +1398,33 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
             panel.span[ribIndex] + labelOffset, chordPosition),
             QString::fromStdString(structured.negativeHalfName),
             kRibLabelTextHeightMm, 90.0});
+      }
+    }
+    std::vector<QRectF> controlRibLabels;
+    for (const auto& control : wing.controlSurfaces) {
+      if (!control.builtUpWing) continue;
+      const auto& ribs = control.builtUpWing->ribs;
+      for (std::size_t i = 0; i < ribs.size(); ++i) {
+        const auto& rib = ribs[i];
+        if (rib.name.empty() || rib.outerOutline.empty()) continue;
+        const auto bounds = std::minmax_element(rib.outerOutline.begin(), rib.outerOutline.end(),
+            [](const auto a, const auto b) { return a.x < b.x; });
+        const double station = flattenedSpanForRib(panel, rib.rib);
+        const QString name = QString::fromStdString(rib.name);
+        TechnicalDrawingText label{{0, 0}, name, kRibLabelTextHeightMm, -90.0};
+        const double offset = i + 1 == ribs.size()
+            ? rib.rib.ribThicknessStartFactor * ribThickness - drawingTextBounds(label).width() - 2.0
+            : ribThickness * .65;
+        label.position = drawingPoint(layout, false, layout.lowerRow, station + offset,
+            rib.rib.leadingEdgeOffset + .5 * (bounds.first->x + bounds.second->x));
+        for (int attempt = 0; attempt < 8; ++attempt) {
+          const auto rect = drawingTextBounds(label).adjusted(-.5, -.5, .5, .5);
+          if (std::none_of(controlRibLabels.begin(), controlRibLabels.end(),
+              [&](const auto& occupied) { return occupied.intersects(rect); })) break;
+          label.position.rx() += (i + 1 == ribs.size() ? -1 : 1) * (rect.width() + 1.0);
+        }
+        controlRibLabels.push_back(drawingTextBounds(label).adjusted(-.5, -.5, .5, .5));
+        document.texts.push_back(std::move(label));
       }
     }
     for (const auto& riblet : wing.riblets) {
@@ -1516,6 +1697,13 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
             parameters->flapHingePostHeight, "flapHingePostHeight",
             parameters, useInches);
       }
+      if (control.hingeSpars) {
+        const QString prefix = control.name == "Aileron" ? "aileron" : "flap";
+        hingePost = "\nTop/Bottom Hinge Spar: " + formatParameterSize(
+            control.hingeSparWidth, prefix + "HingeSparWidth",
+            control.hingeSparHeight, prefix + "HingeSparHeight", parameters, useInches) +
+            QString{"\nHinge Angle: %1\u00b0"}.arg(control.hingeAngleDegrees, 0, 'f', 2);
+      }
       const bool isAileron = control.name == "Aileron";
       callouts.add(
           drawingPoint(layout, false, layout.lowerRow, panel.span[ribIndex],
@@ -1526,6 +1714,77 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
                   dimensions.second,
                   isAileron ? "aileronHeight" : "flapHeight",
                   parameters, useInches) + hingePost);
+    }
+
+    for (const auto& control : wing.controlSurfaces) {
+      if (!control.builtUpWing) continue;
+      PanelStations built;
+      built.wing = control.builtUpWing.get();
+      for (const auto& rib : built.wing->ribs) built.span.push_back(flattenedSpanForRib(panel, rib.rib));
+      const bool aileron = control.name == "Aileron";
+      const QString prefix = aileron ? "aileron" : "flap";
+      const auto* options = parameters ? (aileron ? &parameters->builtUpAileron : &parameters->builtUpFlap) : nullptr;
+      for (const auto& member : built.wing->profiledMembers) {
+        if (member.name.find("hinge spar") != std::string::npos && member.profiles.size() >= 2) {
+          const std::size_t bay = (member.profiles.size() - 1) / 2;
+          const auto bounds = profileBounds(member.profiles[bay], built.wing->ribs[bay].rib.leadingEdgeOffset);
+          const double width = options ? options->hingeSparWidth : control.hingeSparWidth;
+          const double height = options ? options->hingeSparHeight : control.hingeSparHeight;
+          callouts.add(drawingPoint(layout, false, layout.lowerRow,
+              .5 * (built.span[bay] + built.span[bay + 1]), .5 * (bounds.first + bounds.second)),
+              QString::fromStdString(control.name + " " + member.name) + "\n" +
+              formatParameterSize(width, prefix + "HingeSparWidth", height, prefix + "HingeSparHeight", parameters, useInches));
+          continue;
+        }
+        if ((!member.name.starts_with("ATE") && !member.name.starts_with("FTE")) || member.profiles.size() < 2) continue;
+        const std::size_t bay = std::min(member.profiles.size() / 2, member.profiles.size() - 2);
+        const auto rootBounds = profileBounds(member.profiles[bay], built.wing->ribs[bay].rib.leadingEdgeOffset);
+        const auto tipBounds = profileBounds(member.profiles[bay + 1], built.wing->ribs[bay + 1].rib.leadingEdgeOffset);
+        const double span = .5 * (built.span[bay] + built.span[bay + 1]);
+        const double chord = .25 * (rootBounds.first + rootBounds.second + tipBounds.first + tipBounds.second);
+        const auto dimensions = parameters ? std::pair{parameters->trailingEdgeWidth, parameters->trailingEdgeHeight}
+            : profileDimensions(member.profiles[bay]);
+        callouts.add(drawingPoint(layout, false, layout.lowerRow, span, chord),
+            QString::fromStdString(member.name) + "\n" + formatParameterSize(
+                dimensions.first, "trailingEdgeWidth", dimensions.second, "trailingEdgeHeight", parameters, useInches));
+      }
+      std::size_t sparIndex = 0;
+      for (const auto& member : built.wing->members) {
+        if (!member.name.starts_with("Spar ") || member.centers.size() < 2) continue;
+        const std::size_t bay = std::min(member.centers.size() / 2, member.centers.size() - 2);
+        const double span = .5 * (built.span[bay] + built.span[bay + 1]);
+        const double chord = .5 * (built.wing->ribs[bay].rib.leadingEdgeOffset + member.centers[bay].x +
+            built.wing->ribs[bay + 1].rib.leadingEdgeOffset + member.centers[bay + 1].x);
+        const QString unitPrefix = prefix + "Spar" + QString::number(sparIndex++);
+        QString dimensions, material;
+        if (member.kind == domain::SpanMemberKind::Tube || member.kind == domain::SpanMemberKind::Rod) {
+          const bool tube = member.kind == domain::SpanMemberKind::Tube;
+          material = tube ? "CF Tube" : "CF Rod";
+          dimensions = "OD: " + formatParameterLength(member.width, parameters,
+              unitPrefix + (tube ? "TubeOd" : "RodOd"), useInches);
+          if (tube) dimensions += "  ID: " + formatParameterLength(member.innerDiameter, parameters, unitPrefix + "TubeId", useInches);
+        } else {
+          material = member.carbonFiber ? "CF Strip" : "Wood";
+          dimensions = formatParameterSize(member.width, unitPrefix + (member.carbonFiber ? "StripWidth" : "WoodWidth"),
+              member.height, unitPrefix + (member.carbonFiber ? "StripThickness" : "WoodHeight"), parameters, useInches);
+        }
+        callouts.add(drawingPoint(layout, false, layout.lowerRow, span, chord),
+            QString::fromStdString(control.name + " " + member.name) + "\n" +
+            (member.verticalLocation == 0 ? "Top " : "Bottom ") + material + "\n" + dimensions);
+      }
+      for (const auto& sheet : built.wing->sheeting) {
+        if (sheet.profiles.empty()) continue;
+        const bool top = QString::fromStdString(sheet.name).contains("top", Qt::CaseInsensitive);
+        const auto& profile = sheet.profiles.front();
+        const double thickness = sheet.nominalThickness > 0 ? sheet.nominalThickness : options ?
+            (top ? options->topSheetingThickness : options->bottomSheetingThickness) : std::abs(profile.front().y - profile.back().y);
+        const QString unitKey = sheet.inheritedWingSheeting ? (top ? "topTeSheetingThickness" : "bottomTeSheetingThickness") :
+            prefix + (top ? "TopSheetingThickness" : "BottomSheetingThickness");
+        callouts.add(sheetingLeaderTarget(layout, built, sheet, ribThickness),
+            QString::fromStdString(control.name) + (top ? " Top " : " Bottom ") +
+            (sheet.inheritedWingSheeting ? "TE Sheeting\nThickness: " : "Sheeting\nThickness: ") +
+            formatParameterLength(thickness, parameters, unitKey, useInches));
+      }
     }
 
     std::vector<std::string> annotatedSheetingNames;
@@ -1569,71 +1828,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
               ? formatLength(dimensions.second, useInches)
               : formatParameterLength(dimensions.second, parameters,
                                       thicknessKey, useInches));
-      QPointF target = drawingPoint(
-          layout, false, layout.lowerRow, panel.span[ribIndex],
-          (bounds.first + bounds.second) * 0.5);
-      if (profiles.size() >= 2 && wing.ribs.size() >= 2) {
-        double bestWidth = -1.0;
-        double bestSpan = panel.span[ribIndex];
-        double bestChord = (bounds.first + bounds.second) * 0.5;
-        const std::size_t bayCount = std::min(
-            profiles.size() - 1, wing.ribs.size() - 1);
-        for (std::size_t bay = 0; bay < bayCount; ++bay) {
-          const auto rootBounds = profileBounds(
-              profiles[bay], wing.ribs[bay].rib.leadingEdgeOffset);
-          const auto tipBounds = profileBounds(
-              profiles[bay + 1], wing.ribs[bay + 1].rib.leadingEdgeOffset);
-          // Use the chord interval that remains inside the sheeting at both
-          // ends of the bay, then remove every spar projected through it.
-          constexpr double edgeClearance = 2.0;
-          double left = std::max(rootBounds.first, tipBounds.first) + edgeClearance;
-          double right = std::min(rootBounds.second, tipBounds.second) - edgeClearance;
-          if (right <= left + 1.0e-8) continue;
-          std::vector<std::pair<double, double>> occupied;
-          for (const auto& member : wing.members) {
-            if (!QString::fromStdString(member.name).contains(
-                    "spar", Qt::CaseInsensitive) ||
-                member.centers.size() <= bay + 1)
-              continue;
-            const double rootCenter = wing.ribs[bay].rib.leadingEdgeOffset +
-                member.centers[bay].x;
-            const double tipCenter = wing.ribs[bay + 1].rib.leadingEdgeOffset +
-                member.centers[bay + 1].x;
-            const double center = 0.5 * (rootCenter + tipCenter);
-            constexpr double sparClearance = 2.0;
-            occupied.emplace_back(center - member.width * 0.5 - sparClearance,
-                                  center + member.width * 0.5 + sparClearance);
-          }
-          std::sort(occupied.begin(), occupied.end());
-          double openStart = left;
-          const auto considerOpenInterval = [&](const double openEnd) {
-            const double clippedEnd = std::min(openEnd, right);
-            if (clippedEnd - openStart > bestWidth) {
-              const auto& rootRib = wing.ribs[bay].rib;
-              const auto& tipRib = wing.ribs[bay + 1].rib;
-              const double rootFace = panelSpanAtRibFace(
-                  panel, bay,
-                  (rootRib.ribThicknessStartFactor + 1.0) * ribThickness);
-              const double tipFace = panelSpanAtRibFace(
-                  panel, bay + 1,
-                  tipRib.ribThicknessStartFactor * ribThickness);
-              bestWidth = clippedEnd - openStart;
-              bestSpan = 0.5 * (rootFace + tipFace);
-              bestChord = 0.5 * (openStart + clippedEnd);
-            }
-          };
-          for (const auto [occupiedLeft, occupiedRight] : occupied) {
-            if (occupiedRight <= openStart || occupiedLeft >= right) continue;
-            considerOpenInterval(occupiedLeft);
-            openStart = std::max(openStart, occupiedRight);
-            if (openStart >= right) break;
-          }
-          if (openStart < right) considerOpenInterval(right);
-        }
-        if (bestWidth > 0.0)
-          target = drawingPoint(layout, false, layout.lowerRow,
-                                bestSpan, bestChord);
-      }
+      const auto target = sheetingLeaderTarget(layout, panel, sheeting, ribThickness);
       callouts.add(
           target,
           QString::fromStdString(sheeting.name) + "\n" +

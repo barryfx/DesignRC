@@ -2,6 +2,7 @@
 
 #include "domain/AirfoilProfile.h"
 #include "domain/PlanformCurves.h"
+#include "domain/WingStructure.h"
 
 #include <QJsonObject>
 #include <QHash>
@@ -88,6 +89,7 @@ struct FixedJoinerData {
   UnitOverride carbonTubeIdUnit{UnitOverride::Global};
   UnitOverride carbonRodOdUnit{UnitOverride::Global};
   UnitOverride steelRodOdUnit{UnitOverride::Global};
+  int ribBays{1};
 };
 
 struct RemovableJoinerData {
@@ -112,9 +114,12 @@ struct RemovableJoinerData {
   UnitOverride adjoiningRodOdUnit{UnitOverride::Global};
   UnitOverride adjoiningSleeveOdUnit{UnitOverride::Global};
   UnitOverride pinOdUnit{UnitOverride::Global};
+  int ribBays{1}; // Sleeve/rod joiners only; alignment pins ignore this.
 };
 
 struct WingPanelData {
+  domain::BuiltUpControlParameters builtUpAileron;
+  domain::BuiltUpControlParameters builtUpFlap;
   domain::PlanformCurves planform;
   QString curveFileName;
   bool aileronHingeParallelY{false};
@@ -256,6 +261,7 @@ public:
   void setDiamondLeadingEdgeWidthMm(double width);
   void setLeadingEdgeHeightMm(double height);
   void setTrailingEdgeHeightMm(double height);
+  void setHingePostHeightMm(bool aileron, double height);
   [[nodiscard]] bool validate(QString& error);
 
 signals:
@@ -309,6 +315,24 @@ private:
     LengthInput *woodHeight{}, *woodWidth{};
     LengthInput *tubeOd{}, *tubeId{}, *rodOd{}, *stripWidth{}, *stripThickness{};
   };
+  struct BuiltUpControlWidgets {
+    QCheckBox* enabled{};
+    QWidget* details{};
+    QCheckBox *top{}, *bottom{};
+    LengthInput *topWidth{}, *topThickness{}, *bottomWidth{}, *bottomThickness{};
+    QWidget *topDetails{}, *bottomDetails{};
+    QRadioButton *hingePost{}, *hingeSpars{};
+    QWidget *hingePostDetails{}, *hingeSparDetails{};
+    LengthInput *hingeSparWidth{}, *hingeSparHeight{};
+    QDoubleSpinBox* hingeAngle{};
+    QVBoxLayout* sparsLayout{};
+    std::vector<SparEditorWidgets> spars;
+  };
+  BuiltUpControlWidgets builtUpAileron_, builtUpFlap_;
+  QWidget* makeBuiltUpControl(const QString& prefix, BuiltUpControlWidgets& widgets);
+  domain::BuiltUpControlParameters builtUpData(const BuiltUpControlWidgets& widgets) const;
+  void setBuiltUpData(BuiltUpControlWidgets& widgets, const domain::BuiltUpControlParameters& data);
+  void createSparEditor(std::vector<SparEditorWidgets>& rows, QVBoxLayout* layout, bool control);
   void applySparDefaults(SparEditorWidgets& row);
   void applySparData(SparEditorWidgets& row, const SparDefaults& spar);
 
@@ -316,6 +340,7 @@ private:
     QWidget* container{};
     QCheckBox* deleteSelection{};
     QDoubleSpinBox* chordLocation{};
+    QSpinBox* ribBays{};
     QRadioButton *wood{}, *carbonFiber{}, *steelRod{}, *tube{}, *rod{};
     QWidget *woodDetails{}, *carbonDetails{}, *tubeDetails{}, *rodDetails{}, *steelDetails{};
     LengthInput *woodThickness{}, *tubeOd{}, *tubeId{}, *rodOd{}, *steelOd{};
@@ -325,6 +350,7 @@ private:
     QCheckBox* deleteSelection{};
     int kind{};
     QDoubleSpinBox* chordLocation{};
+    QSpinBox* ribBays{};
     QRadioButton *sleeve{}, *rod{}, *adjoiningSleeve{}, *adjoiningRod{};
     QRadioButton *alignmentSleevePin{}, *alignmentPinHole{};
     QRadioButton *pinHolePin{}, *pinHoleHole{};

@@ -1,4 +1,6 @@
+#include "TestWingStructure.h"
 #include "domain/AirfoilProfile.h"
+#include "domain/DxfExporter.h"
 #include "domain/WingDesign.h"
 #include "domain/WingStructure.h"
 #include "geometry/OcctRibBuilder.h"
@@ -17,6 +19,10 @@
 #include <BRepExtrema_DistShapeShape.hxx>
 #include <BRep_Builder.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <BRepAlgoAPI_Common.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
 #include <Bnd_Box.hxx>
 #include <gp_Ax1.hxx>
 #include <gp_Trsf.hxx>
@@ -28,12 +34,342 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <QFile>
 #include <QTemporaryDir>
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
+  if (argc > 1 && std::string{argv[1]} == "--hinge-spars") {
+    using namespace designrc::domain;
+    for (int fixture = 0; fixture < 4; ++fixture) {
+      WingParameters p;
+      p.halfSpan = 250; p.rootChord = 200; p.tipChord = 180;
+      p.sweep = 8; p.ribCount = 7; p.dihedralDegrees = 0;
+      if (fixture >= 2) {
+        p.planform = {{{0, 0}, {3, .5}, {0, 1}},
+                     {{200, 0}, {207, .5}, {180, 1}}, 250, 250};
+        p.tipTwistDegrees = 2;
+      }
+      const auto ribs = generateRibs(p, AirfoilProfile::nacaSymmetric(.15), AirfoilProfile::nacaSymmetric(.12));
+      StructureParameters settings;
+      settings.ailerons = settings.flaps = true;
+      settings.flapStartRib = 2; settings.flapStopRib = 4;
+      settings.aileronStartRib = 4; settings.aileronStopRib = 7;
+      settings.flapWidth = settings.aileronWidth = 50;
+      settings.trailingEdgeType = 2; settings.trailingEdgeWidth = 10; settings.trailingEdgeHeight = 30;
+      for (auto* options : {&settings.builtUpAileron, &settings.builtUpFlap}) {
+        options->enabled = options->hingeSpars = true;
+        options->hingeSparWidth = 6; options->hingeSparHeight = 1.5;
+        options->hingeAngleDegrees = fixture == 0 ? 0 : fixture == 1 ? 45 : fixture == 2 ? 30 : 60;
+        options->topSheeting = options->bottomSheeting = (fixture % 2) == 1;
+        options->topSheetingWidth = options->bottomSheetingWidth = 50;
+        options->topSheetingThickness = options->bottomSheetingThickness = .5;
+      }
+      auto wing = applyWingStructure(ribs, settings);
+      for (const auto& control : wing.controlSurfaces) {
+        assert(control.hingeSpars && control.hingePostWidth == 0 && control.builtUpWing);
+        const auto& built = *control.builtUpWing;
+        assert(std::none_of(built.members.begin(), built.members.end(),
+            [](const auto& member) { return member.name == "Movable hinge post"; }));
+        assert(std::count_if(built.profiledMembers.begin(), built.profiledMembers.end(),
+            [](const auto& member) { return member.name.find("hinge spar") != std::string::npos; }) == 4);
+        const auto interpolate = [](const std::vector<Point2>& surface, double x) {
+          const auto high = std::lower_bound(surface.begin(), surface.end(), x,
+              [](Point2 point, double target) { return point.x < target; });
+          assert(high != surface.begin() && high != surface.end());
+          const auto low = std::prev(high);
+          return low->y + (high->y - low->y) * (x - low->x) / (high->x - low->x);
+        };
+        const auto front = [](const auto& profile) {
+          return std::min_element(profile.begin(), profile.end(), [](Point2 a, Point2 b) { return a.x < b.x; })->x;
+        };
+        const double rootX = ribs[control.startRibIndex].leadingEdgeOffset + front(control.profiles.front());
+        const double tipX = ribs[control.stopRibIndex].leadingEdgeOffset + front(control.profiles.back());
+        for (std::size_t i = 0; i < built.ribs.size(); ++i) {
+          const auto& rib = built.ribs[i];
+          const double t = (rib.rib.spanPosition - ribs[control.startRibIndex].spanPosition) /
+              (ribs[control.stopRibIndex].spanPosition - ribs[control.startRibIndex].spanPosition);
+          const double leading = rootX + t * (tipX - rootX) - rib.rib.leadingEdgeOffset;
+          const auto raw = rib.rib.profile.resampled(81);
+          std::vector<Point2> upper;
+          for (int j = 80; j >= 0; --j) upper.push_back({raw[j].x * rib.rib.chord, raw[j].y * rib.rib.chord});
+          const double top = interpolate(upper, leading);
+          const double tangent = std::tan(control.hingeAngleDegrees * std::numbers::pi / 180.0);
+          const auto distance = [&](Point2 point) { return point.x - leading + tangent * (point.y - top); };
+          bool hasBevelEdge = false;
+          for (std::size_t j = 0; j < rib.outerOutline.size(); ++j) {
+            assert(distance(rib.outerOutline[j]) >= -1e-7);
+            if (std::abs(distance(rib.outerOutline[j])) < 1e-7 &&
+                std::abs(distance(rib.outerOutline[(j + 1) % rib.outerOutline.size()])) < 1e-7) hasBevelEdge = true;
+          }
+          assert(hasBevelEdge);
+          const auto drawing = makeStructuredRibPartDrawing(rib, rib.name);
+          for (const auto& path : drawing.paths) {
+            if (path.layer != "RIB_OUTLINE") continue;
+            for (const auto point : path.points) assert(distance(point) >= -1e-7);
+          }
+          for (const auto& member : built.profiledMembers) {
+            if (!member.name.starts_with("Control ")) continue;
+            const auto& profile = member.profiles[i];
+            for (const auto point : profile) assert(distance(point) >= -1e-7);
+            const bool upperSide = member.name.find("Top") != std::string::npos;
+            double aft = profile.front().x, floor = profile.front().y;
+            for (const auto point : profile) {
+              aft = std::max(aft, point.x);
+              floor = upperSide ? std::min(floor, point.y) : std::max(floor, point.y);
+            }
+            assert(std::any_of(rib.outerOutline.begin(), rib.outerOutline.end(), [&](Point2 point) {
+              return std::hypot(point.x - aft, point.y - floor) < 1e-7;
+            }));
+          }
+        }
+      }
+      designrc::geometry::MaterialShapeSet parts;
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(wing, 3, nullptr, &parts));
+      int sparCount = 0;
+      for (const auto& part : parts.parts) {
+        assert(part.name.find("hinge post") == std::string::npos);
+        if (part.name.find("hinge spar") == std::string::npos) continue;
+        ++sparCount;
+        assert(BRepCheck_Analyzer{part.shape}.IsValid());
+        const auto& control = wing.controlSurfaces[part.name.starts_with("Flap") ? 0 : 1];
+        const auto& built = *control.builtUpWing;
+        const auto& first = built.ribs.front().rib;
+        const auto& last = built.ribs.back().rib;
+        const double plane = first.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+        const auto station = [&](double y, double z) { return y * std::cos(plane) + z * std::sin(plane); };
+        double low = std::numeric_limits<double>::max(), high = -low;
+        for (TopExp_Explorer vertices{part.shape, TopAbs_VERTEX}; vertices.More(); vertices.Next()) {
+          const auto point = BRep_Tool::Pnt(TopoDS::Vertex(vertices.Current()));
+          low = std::min(low, station(point.Y(), point.Z()));
+          high = std::max(high, station(point.Y(), point.Z()));
+        }
+        assert(std::abs(low - station(first.spanPosition, first.dihedralHeight) - first.ribThicknessStartFactor * 3) < 1e-6);
+        assert(std::abs(high - station(last.spanPosition, last.dihedralHeight) - (last.ribThicknessStartFactor + 1) * 3) < 1e-6);
+      }
+      assert(sparCount == 8);
+      settings.builtUpAileron.hingeSparHeight = 50;
+      bool invalid = false;
+      try { static_cast<void>(applyWingStructure(ribs, settings)); }
+      catch (const std::invalid_argument&) { invalid = true; }
+      assert(invalid);
+    }
+    return 0;
+  }
+  if (argc > 1 && std::string{argv[1]} == "--builtup") {
+    using namespace designrc::domain;
+    WingParameters p;
+    p.halfSpan = 250; p.rootChord = p.tipChord = 200;
+    p.dihedralDegrees = 0; p.ribCount = 7;
+    const auto foil = AirfoilProfile::nacaSymmetric(.15);
+    for (const bool curved : {false, true}) {
+      if (curved) {
+        p.planform = {{{0, 0}, {3, .5}, {0, 1}},
+                     {{200, 0}, {207, .5}, {200, 1}}, 250, 250};
+        p.tipTwistDegrees = 3;
+      }
+      auto ribs = generateRibs(p, foil, foil);
+      StructureParameters settings;
+      settings.ailerons = settings.flaps = true;
+      settings.flapStartRib = 2; settings.flapStopRib = 4;
+      settings.aileronStartRib = 4; settings.aileronStopRib = 7;
+      settings.flapWidth = settings.aileronWidth = 40;
+      settings.builtUpAileron.enabled = settings.builtUpFlap.enabled = true;
+      settings.builtUpAileron.topSheeting = true;
+      settings.builtUpAileron.topSheetingWidth = 45; // full chord coverage clips at the front
+      settings.builtUpAileron.topSheetingThickness = .5;
+      settings.builtUpFlap.bottomSheeting = true;
+      settings.builtUpFlap.bottomSheetingWidth = 45;
+      settings.builtUpFlap.bottomSheetingThickness = .5;
+      SparParameters spar;
+      spar.verticalLocation = 0; spar.material = 0;
+      spar.woodHeight = 1; spar.woodWidth = 2;
+      settings.builtUpAileron.spars.push_back(spar);
+      auto carbon = spar;
+      carbon.verticalLocation = 1; carbon.material = 1;
+      carbon.type = 0; carbon.tubeOd = 1; carbon.tubeId = .5;
+      settings.builtUpFlap.spars.push_back(carbon);
+      auto wing = testsupport::buildStructure(ribs, settings);
+      assert(wing.controlSurfaces.size() == 2);
+      for (const auto& c : wing.controlSurfaces) {
+        assert(c.builtUpWing && !c.builtUpWing->ribs.empty());
+        assert(c.builtUpWing->sheeting.size() == 1);
+        for (const auto& r : c.builtUpWing->ribs) {
+          assert(!r.outerOutline.empty());
+          for (const auto point : r.outerOutline) assert(point.x > 150);
+        }
+      }
+      designrc::geometry::MaterialShapeSet materials;
+      auto shape = designrc::geometry::buildStructuredWingPreview(wing, settings.ribThickness,
+          nullptr, &materials);
+      assert(!shape.IsNull());
+      bool hasRib = false, hasSpar = false, hasSheet = false;
+      for (const auto& part : materials.parts) {
+        assert(part.name != "Aileron" && part.name != "Flap");
+        assert(BRepCheck_Analyzer{part.shape}.IsValid());
+        hasRib = hasRib || part.name.starts_with("AR");
+        assert(!part.name.starts_with("Aileron R") && !part.name.starts_with("Flap R"));
+        hasSpar = hasSpar || part.name.find("Aileron Spar") != std::string::npos;
+        hasSheet = hasSheet || part.name.find("sheeting") != std::string::npos;
+      }
+      assert(hasRib && hasSpar && hasSheet);
+      // Whole-wing TE options are independent of control settings.
+      settings.topTeSheeting = true; settings.topTeSheetingWidth = 10;
+      settings.topTeSheetingThickness = .5;
+      const auto withWingSheet = testsupport::buildStructure(ribs, settings);
+      assert(!withWingSheet.sheeting.empty());
+      assert(withWingSheet.controlSurfaces.back().builtUpWing->sheeting.size() == 2);
+      designrc::geometry::MaterialShapeSet sheetParts;
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(withWingSheet,settings.ribThickness,nullptr,&sheetParts));
+      for(const auto& boundary : withWingSheet.controlSurfaces) {
+        const auto& rib=withWingSheet.ribs[boundary.startRibIndex].rib;
+        const double fixedEnd=rib.spanPosition+(rib.ribThicknessStartFactor+1)*settings.ribThickness;
+        const double x=rib.leadingEdgeOffset+rib.chord-5;
+        const auto sheetVolumeAt=[&](const double span) {
+          const auto probe=BRepPrimAPI_MakeBox{gp_Pnt{x,span-.1,-50},2,.2,100}.Shape();
+          double volume=0;
+          for(const auto& part:sheetParts.parts) {
+            if(part.name.find("sheeting")==std::string::npos) continue;
+            assert(BRepCheck_Analyzer{part.shape}.IsValid());
+            BRepAlgoAPI_Common common{part.shape,probe};
+            assert(common.IsDone());
+            GProp_GProps properties;
+            BRepGProp::VolumeProperties(common.Shape(),properties);
+            volume+=properties.Mass();
+          }
+          return volume;
+        };
+        assert(sheetVolumeAt(fixedEnd+boundary.gap*.5)<1e-6);
+        assert(sheetVolumeAt(fixedEnd-.5)>1e-4);
+        assert(sheetVolumeAt(fixedEnd+boundary.gap+.5)>1e-4);
+      }
+      settings.topTeSheeting = false;
+      settings.builtUpFlap.topSheeting = true;
+      settings.builtUpFlap.topSheetingWidth = 20;
+      settings.builtUpFlap.topSheetingThickness = .5;
+      settings.trailingEdgeType = 2; settings.trailingEdgeWidth = 12; settings.trailingEdgeHeight = 20;
+      const auto stockWing = testsupport::buildStructure(ribs, settings);
+      assert(!stockWing.controlSurfaces.back().builtUpWing->sheetStockParts.empty());
+      designrc::geometry::MaterialShapeSet stockParts;
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(stockWing, settings.ribThickness, nullptr, &stockParts));
+      for(const auto& name:{"ATE1","FTE1"}) {
+        assert(std::any_of(stockParts.parts.begin(),stockParts.parts.end(),[&](const auto& part){return part.name==name;}));
+      }
+      settings.trailingEdgeWidth = 45;
+      bool noGap = false;
+      try { static_cast<void>(testsupport::buildStructure(ribs, settings)); }
+      catch (const std::invalid_argument& error) { noGap = std::string{error.what()}.find("No gap") != std::string::npos; }
+      assert(noGap);
+      settings.trailingEdgeType = 0;
+      settings.builtUpAileron.spars.front().verticalLocation = 2;
+      bool rejected = false;
+      try { static_cast<void>(testsupport::buildStructure(ribs, settings)); }
+      catch (const std::invalid_argument&) { rejected = true; }
+      assert(rejected);
+    }
+
+    // Regression: Built-upAilerons.designrc has no imported curves or sheeting,
+    // but morphing airfoils and twist made its bottom spar fail a tangent test.
+    for (const bool top : {false, true}) for (const double twist : {-2.0, 2.0}) {
+      WingParameters exact;
+      exact.halfSpan = 400; exact.rootChord = exact.tipChord = 200;
+      exact.sweep = 15; exact.tipTwistDegrees = twist; exact.dihedralDegrees = 0;
+      exact.ribCount = 9;
+      const auto ribs = generateRibs(exact, AirfoilProfile::nacaSymmetric(.15),
+                                     AirfoilProfile::nacaSymmetric(.10));
+      StructureParameters settings;
+      settings.leadingEdgeType = 2; settings.leadingEdgeWidth = 5; settings.leadingEdgeHeight = 17.06;
+      settings.trailingEdgeType = 2; settings.trailingEdgeWidth = 12; settings.trailingEdgeHeight = 12;
+      settings.ailerons = settings.flaps = true;
+      settings.aileronWidth = settings.flapWidth = 40;
+      settings.aileronStartRib = 5; settings.aileronStopRib = 9;
+      settings.flapStartRib = 2; settings.flapStopRib = 5;
+      settings.aileronHingePostWidth = settings.flapHingePostWidth = 4;
+      settings.aileronHingePostHeight = settings.flapHingePostHeight = 4;
+      settings.builtUpAileron.enabled = settings.builtUpFlap.enabled = true;
+      SparParameters spar;
+      spar.material = 0; spar.verticalLocation = top ? 0 : 1;
+      spar.woodHeight = 1.5875; spar.woodWidth = 3.175;
+      spar.chordLocationPercent = spar.tipChordLocationPercent = 25;
+      settings.builtUpAileron.spars.push_back(spar);
+      const auto wing = testsupport::buildStructure(ribs, settings);
+      for (const auto& control : wing.controlSurfaces) {
+        const auto& members = control.builtUpWing->members;
+        const auto post = std::find_if(members.begin(), members.end(),
+            [](const auto& m) { return m.name == "Movable hinge post"; });
+        assert(post != members.end());
+        assert(post->width == control.hingePostWidth && post->height == control.hingePostHeight);
+      }
+      const auto& built = *wing.controlSurfaces.back().builtUpWing;
+      const auto sparPart = std::find_if(built.members.begin(), built.members.end(),
+          [](const auto& m) { return m.name == "Spar 1"; });
+      assert(sparPart != built.members.end());
+      const auto world = [](const RibDefinition& rib, Point2 center) {
+        const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
+        const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+        const auto shift = ribTwistTranslation(rib);
+        return Point2{rib.leadingEdgeOffset + std::cos(angle) * center.x - std::sin(angle) * center.y + shift.x,
+          rib.dihedralHeight + std::cos(plane) * (std::sin(angle) * center.x + std::cos(angle) * center.y + shift.y)};
+      };
+      const auto first = world(built.ribs.front().rib, sparPart->centers.front());
+      const auto last = world(built.ribs.back().rib, sparPart->centers.back());
+      for (std::size_t i = 0; i < built.ribs.size(); ++i) {
+        const double t = (built.ribs[i].rib.spanPosition - built.ribs.front().rib.spanPosition) /
+            (built.ribs.back().rib.spanPosition - built.ribs.front().rib.spanPosition);
+        const auto point = world(built.ribs[i].rib, sparPart->centers[i]);
+        assert(std::abs(point.x - (first.x + t * (last.x - first.x))) < 1e-8);
+        assert(std::abs(point.y - (first.y + t * (last.y - first.y))) < 1e-8);
+        const auto& rib = built.ribs[i].rib;
+        const auto outline = rib.profile.resampled(81);
+        std::vector<Point2> upper, lower;
+        for (std::size_t j = 0; j <= 80; ++j)
+          upper.push_back({outline[80 - j].x * rib.chord, outline[80 - j].y * rib.chord});
+        for (std::size_t j = 80; j < outline.size(); ++j)
+          lower.push_back({outline[j].x * rib.chord, outline[j].y * rib.chord});
+        const auto at = [](const std::vector<Point2>& surface, double x) {
+          const auto high = std::lower_bound(surface.begin(), surface.end(), x,
+              [](const auto p, double value) { return p.x < value; });
+          assert(high != surface.begin() && high != surface.end());
+          const auto low = std::prev(high);
+          return low->y + (high->y - low->y) * (x - low->x) / (high->x - low->x);
+        };
+        const double angle = rib.twistDegrees * std::numbers::pi / 180.0;
+        const auto shift = ribTwistTranslation(rib);
+        for (const double dx : {-spar.woodWidth * .5, spar.woodWidth * .5})
+          for (const double dz : {-spar.woodHeight * .5, spar.woodHeight * .5}) {
+            const double x = point.x + dx - rib.leadingEdgeOffset - shift.x;
+            const double z = point.y + dz - rib.dihedralHeight - shift.y;
+            const Point2 corner{std::cos(angle) * x + std::sin(angle) * z,
+                                -std::sin(angle) * x + std::cos(angle) * z};
+            assert(corner.y <= at(upper, corner.x) + .01);
+            assert(corner.y >= at(lower, corner.x) - .01);
+          }
+      }
+      designrc::geometry::MaterialShapeSet parts;
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(wing, 3, nullptr, &parts));
+      for (const auto& name : {"Aileron Movable hinge post", "Flap Movable hinge post"}) {
+        const auto post = std::find_if(parts.parts.begin(), parts.parts.end(),
+            [&](const auto& part) { return part.name == name; });
+        assert(post != parts.parts.end());
+        assert(BRepCheck_Analyzer{post->shape}.IsValid());
+        const auto fixed = std::find_if(parts.parts.begin(), parts.parts.end(),
+            [](const auto& part) { return part.name == "Flap/Aileron hinge post"; });
+        assert(fixed != parts.parts.end());
+        BRepExtrema_DistShapeShape gap{post->shape, fixed->shape};
+        gap.Perform();
+        assert(gap.IsDone() && gap.Value() > .5 && gap.Value() < settings.controlSurfaceGap + 1);
+      }
+      settings.builtUpAileron.spars.front().woodHeight = 50;
+      bool invalid = false;
+      try { static_cast<void>(testsupport::buildStructure(ribs, settings)); }
+      catch (const std::invalid_argument&) { invalid = true; }
+      assert(invalid);
+    }
+    return 0;
+  }
+
   const auto stage = [](const char* name) {
     std::cerr << "Geometry regression stage: " << name << '\n';
   };
@@ -79,7 +415,7 @@ int runTest(int argc, char* argv[]) {
           ribs[i].ribThicknessStartFactor = i == 0 ? 0 : i + 1 == ribs.size() ? -1 : -.5;
         }
       }
-      auto wing = applyWingStructure(ribs, settings);
+      auto wing = testsupport::buildStructure(ribs, settings);
       designrc::geometry::PanelBuildTimings timing;
       designrc::geometry::MaterialShapeSet materials;
       const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, &timing, &materials);
@@ -160,7 +496,7 @@ int runTest(int argc, char* argv[]) {
       settings.leadingEdgeRodOd = 3;
       settings.notchedLeadingEdgeWidth = 8;
       settings.notchedLeadingEdgeHeight = 4;
-      auto wing = applyWingStructure(ribs, settings);
+      auto wing = testsupport::buildStructure(ribs, settings);
       assert(wing.ribs.size() == 3 && wing.surfaceWing);
       designrc::geometry::MaterialShapeSet materials;
       designrc::geometry::PanelBuildTimings timing;
@@ -202,7 +538,7 @@ int runTest(int argc, char* argv[]) {
       settings.trailingEdgeType = 2;
       settings.trailingEdgeWidth = 20;
       settings.trailingEdgeHeight = 6;
-      auto wing = applyWingStructure(generateRibs(mixed, foil, foil), settings);
+      auto wing = testsupport::buildStructure(generateRibs(mixed, foil, foil), settings);
       designrc::geometry::MaterialShapeSet materials;
       const auto shape = designrc::geometry::buildStructuredWingPreview(wing, mixed.ribThickness, nullptr, &materials);
       assert(!shape.IsNull());
@@ -235,7 +571,7 @@ int runTest(int argc, char* argv[]) {
       spar.type = 1;
       spar.rodOd = 3;
       settings.spars = {spar};
-      auto wing = applyWingStructure(generateRibs(p, foil, foil), settings);
+      auto wing = testsupport::buildStructure(generateRibs(p, foil, foil), settings);
       designrc::geometry::MaterialShapeSet materials;
       const auto shape =
           designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, nullptr, &materials);
@@ -263,7 +599,7 @@ int runTest(int argc, char* argv[]) {
     detail.ribletStartRib = 1;
     detail.ribletEndRib = 5;
     detail.ribletsPerBay = 1;
-    auto detailed = applyWingStructure(generateRibs(p, foil, foil), detail);
+    auto detailed = testsupport::buildStructure(generateRibs(p, foil, foil), detail);
     addRiblets(detailed, detail);
     assert(detailed.riblets.size() == 4 && !detailed.ribCaps.empty());
     const auto detailShape =
@@ -288,7 +624,7 @@ int runTest(int argc, char* argv[]) {
     sheet.spoilerImmediatelyBehindSpar = true;
     sheet.spoilerWidth = 15;
     sheet.spoilerThickness = 1;
-    auto sheeted = applyWingStructure(generateRibs(p, foil, foil), sheet);
+    auto sheeted = testsupport::buildStructure(generateRibs(p, foil, foil), sheet);
     const auto sheetShape = designrc::geometry::buildStructuredWingPreview(sheeted, p.ribThickness);
     assert(!sheetShape.IsNull());
     if (planformOnly) return 0;
@@ -304,7 +640,7 @@ int runTest(int argc, char* argv[]) {
     s.ribLighteningStartRib = 1; s.ribLighteningStopRib = 3;
     s.ribLighteningMinimumWoodMargin = 3.0;
     s.ribLighteningMinimumHoleDistance = 5.0;
-    auto wing = applyWingStructure(generateRibs(p, foil, foil), s);
+    auto wing = testsupport::buildStructure(generateRibs(p, foil, foil), s);
     addRibLighteningHoles(wing, s);
     if (wing.ribs.front().internalCutouts.empty()) return 120;
     for (const std::size_t workers : {std::size_t{1}, std::size_t{3}}) {
@@ -361,7 +697,7 @@ int runTest(int argc, char* argv[]) {
       s.buildTabHeightAboveTable = 12.7;
       s.buildTabWidth = 8.0;
       s.spars = {{25, 1, 0, 2, 3.0, 8.0}};
-      auto wing = applyWingStructure(tabRibs, s);
+      auto wing = testsupport::buildStructure(tabRibs, s);
       // Inject a residual lip, or a curve dipping below its end points, to
       // verify the independent completed-solid correction actually runs.
       if (twist != 0.0) {
@@ -441,7 +777,7 @@ int runTest(int argc, char* argv[]) {
           {45, 2, 1, 0, 5, 9, 4, 3},
           {60, 2, 1, 1, 5, 9, 6, 5, 3},
           {75, 2, 1, 2, 5, 9, 6, 5, 6, 3, 1}};
-      const auto wing = applyWingStructure(endRibs, s);
+      const auto wing = testsupport::buildStructure(endRibs, s);
       designrc::geometry::MaterialShapeSet materials;
       const auto shape = designrc::geometry::buildStructuredWingPreview(
           wing, p.ribThickness, nullptr, &materials);
@@ -489,7 +825,7 @@ int runTest(int argc, char* argv[]) {
     structure.topSpar = true;
     structure.bottomSpar = true;
     structure.centerSparWoodJoiner = true;
-    auto wing = designrc::domain::applyWingStructure(ribs, structure);
+    auto wing = testsupport::buildStructure(ribs, structure);
     if (wing.joiners.size() != 1) return 116;
     wing.joiners.front().name = "Joiner 1";
     auto second = wing.joiners.front();
@@ -521,7 +857,7 @@ int runTest(int argc, char* argv[]) {
     structure.leBottomSheet = structure.teBottomSheet = true;
     structure.leTopSheetStopRib = structure.teTopSheetStopRib = 3;
     structure.leBottomSheetStopRib = structure.teBottomSheetStopRib = 3;
-    const auto wing = designrc::domain::applyWingStructure(ribs, structure);
+    const auto wing = testsupport::buildStructure(ribs, structure);
     designrc::geometry::MaterialShapeSet materials;
     const auto shape = designrc::geometry::buildStructuredWingPreview(
         wing, parameters.ribThickness, nullptr, &materials);
@@ -588,7 +924,7 @@ int runTest(int argc, char* argv[]) {
     structure.topTeSheetingWidth = 76.2;
     structure.topTeSheetingThickness = 1.5875;
     structure.topTeSheetingTaper = false;
-    auto wing = designrc::domain::applyWingStructure(teRibs, structure);
+    auto wing = testsupport::buildStructure(teRibs, structure);
     // Exercise the same repeated V-joiner cut found in
     // TESheetingTest.designrc: it connects the inner faces of matching top
     // and bottom spars and separates the root rib into two solids.
@@ -680,7 +1016,7 @@ int runTest(int argc, char* argv[]) {
       variant.bottomTeSheetingThickness = 1.5875;
       variant.topTeSheetingTaper = false;
       variant.bottomTeSheetingTaper = false;
-      const auto variantWing = designrc::domain::applyWingStructure(
+      const auto variantWing = testsupport::buildStructure(
           teRibs, variant);
       designrc::geometry::MaterialShapeSet variantMaterials;
       const auto variantShape = designrc::geometry::buildStructuredWingPreview(
@@ -709,7 +1045,7 @@ int runTest(int argc, char* argv[]) {
   earlyCfLeadingSheeting.leBottomSheet = true;
   earlyCfLeadingSheeting.leTopSheetStopRib = 3;
   earlyCfLeadingSheeting.leBottomSheetStopRib = 3;
-  const auto earlyCfSheeted = designrc::domain::applyWingStructure(ribs, earlyCfLeadingSheeting);
+  const auto earlyCfSheeted = testsupport::buildStructure(ribs, earlyCfLeadingSheeting);
   const auto carbonLeadingEdge = std::find_if(
       earlyCfSheeted.members.begin(), earlyCfSheeted.members.end(),
       [](const auto& member) {
@@ -747,7 +1083,7 @@ int runTest(int argc, char* argv[]) {
   designrc::domain::StructureParameters controlSheeting;
   controlSheeting.teTopSheet = true;
   controlSheeting.teTopSheetStopRib = static_cast<int>(ribs.size());
-  const auto controlSheetedWing = designrc::domain::applyWingStructure(ribs, controlSheeting);
+  const auto controlSheetedWing = testsupport::buildStructure(ribs, controlSheeting);
   designrc::geometry::MaterialShapeSet controlSheetingMaterials;
   stage("rear sheeting spline loft");
   const auto controlSheetedShape = designrc::geometry::buildStructuredWingPreview(
@@ -791,7 +1127,7 @@ int runTest(int argc, char* argv[]) {
   savedProjectStructure.teTopSheetThickness = savedProjectStructure.teBottomSheetThickness = 2.38125;
   savedProjectStructure.leTopSheetStopRib = savedProjectStructure.leBottomSheetStopRib = 2;
   savedProjectStructure.teTopSheetStopRib = savedProjectStructure.teBottomSheetStopRib = 2;
-  const auto savedProjectWing = designrc::domain::applyWingStructure(
+  const auto savedProjectWing = testsupport::buildStructure(
       savedProjectRibs, savedProjectStructure);
   if (!savedProjectWing.ribs[0].booleanHoles.empty() ||
       !savedProjectWing.ribs[1].booleanHoles.empty() ||
@@ -867,7 +1203,7 @@ int runTest(int argc, char* argv[]) {
   structureParameters.teTopSheet = true;
   structureParameters.teTopSheetStopRib = 3;
   structureParameters.teBottomSheetStopRib = 3;
-  const auto structured = designrc::domain::applyWingStructure(ribs, structureParameters);
+  const auto structured = testsupport::buildStructure(ribs, structureParameters);
   designrc::geometry::MaterialShapeSet structuredMaterials;
   std::atomic_bool reportedRibs{false};
   std::atomic_bool reportedSheeting{false};
@@ -941,7 +1277,7 @@ int runTest(int argc, char* argv[]) {
   designrc::domain::StructureParameters carbonParameters;
   carbonParameters.carbonSpar = 1;
   carbonParameters.leadingEdgeType = 3;
-  const auto carbon = designrc::domain::applyWingStructure(ribs, carbonParameters);
+  const auto carbon = testsupport::buildStructure(ribs, carbonParameters);
   auto numberedCarbon = carbon;
   for (auto& member : numberedCarbon.members)
     if (member.name.find("leading edge") != std::string::npos) member.name = "LE1";
@@ -985,7 +1321,7 @@ int runTest(int argc, char* argv[]) {
   multiSparParameters.leBottomSheet = multiSparParameters.teBottomSheet = true;
   multiSparParameters.leTopSheetStopRib = multiSparParameters.teTopSheetStopRib = 3;
   multiSparParameters.leBottomSheetStopRib = multiSparParameters.teBottomSheetStopRib = 3;
-  const auto multiSparWing = designrc::domain::applyWingStructure(
+  const auto multiSparWing = testsupport::buildStructure(
       ribs, multiSparParameters);
   stage("multiple spars and sheeting");
   const auto multiSparShape = designrc::geometry::buildStructuredWingPreview(
@@ -998,7 +1334,7 @@ int runTest(int argc, char* argv[]) {
       {40, 2, 1, 1, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0}};
   bool namedCollision = false;
   try {
-    const auto collidingWing = designrc::domain::applyWingStructure(
+    const auto collidingWing = testsupport::buildStructure(
         ribs, collidingSpars);
     static_cast<void>(designrc::geometry::buildStructuredWingPreview(
         collidingWing, parameters.ribThickness));
@@ -1011,7 +1347,7 @@ int runTest(int argc, char* argv[]) {
   designrc::domain::StructureParameters joinerCollisionParameters;
   joinerCollisionParameters.spars = {
       {40, 2, 1, 1, 5.0, 9.0, 6.0, 5.0, 8.0, 6.0, 1.0}};
-  auto joinerCollisionWing = designrc::domain::applyWingStructure(
+  auto joinerCollisionWing = testsupport::buildStructure(
       ribs, joinerCollisionParameters);
   const auto& spar = joinerCollisionWing.members.front();
   designrc::domain::JoinerPart collidingJoiner;
@@ -1037,7 +1373,7 @@ int runTest(int argc, char* argv[]) {
   }
   if (!namedJoinerCollision) return 15;
 
-  auto overlappingJoinerWing = designrc::domain::applyWingStructure(ribs, {});
+  auto overlappingJoinerWing = testsupport::buildStructure(ribs, {});
   collidingJoiner.name = "Fixed Joiner 1 CF Tube";
   collidingJoiner.kind = designrc::domain::SpanMemberKind::Tube;
   collidingJoiner.outerDiameter = 6.0;
@@ -1064,7 +1400,7 @@ int runTest(int argc, char* argv[]) {
   woodJoinerPairParameters.topSpar = true;
   woodJoinerPairParameters.bottomSpar = true;
   woodJoinerPairParameters.centerSparWoodJoiner = true;
-  auto overlappingWoodJoinerWing = designrc::domain::applyWingStructure(
+  auto overlappingWoodJoinerWing = testsupport::buildStructure(
       ribs, woodJoinerPairParameters);
   if (overlappingWoodJoinerWing.joiners.size() != 1) return 116;
   overlappingWoodJoinerWing.joiners.front().name = "Joiner 1";
@@ -1090,7 +1426,7 @@ int runTest(int argc, char* argv[]) {
       woodJoinerContactWing, parameters.ribThickness);
   if (woodJoinerContactShape.IsNull()) return 16;
 
-  auto unmirroredJoinerWing = designrc::domain::applyWingStructure(ribs, {});
+  auto unmirroredJoinerWing = testsupport::buildStructure(ribs, {});
   collidingJoiner.name = "Alignment Pin 1 CF";
   collidingJoiner.innerEndpoint = {0.80 * ribs[0].chord, ribs[0].spanPosition, 0.0};
   collidingJoiner.outerEndpoint = {0.80 * ribs[1].chord, ribs[1].spanPosition, 0.0};
@@ -1130,7 +1466,7 @@ int runTest(int argc, char* argv[]) {
   spoilerParameters.teTopSheet = true;
   spoilerParameters.leTopSheetStopRib = static_cast<int>(ribs.size());
   spoilerParameters.teTopSheetStopRib = static_cast<int>(ribs.size());
-  const auto spoilerWing = designrc::domain::applyWingStructure(ribs, spoilerParameters);
+  const auto spoilerWing = testsupport::buildStructure(ribs, spoilerParameters);
   const auto spoilerShape = designrc::geometry::buildStructuredWingPreview(
       spoilerWing, parameters.ribThickness);
   if (spoilerShape.IsNull()) return 18;
@@ -1138,7 +1474,7 @@ int runTest(int argc, char* argv[]) {
   lightenedSpoilerParameters.spoilerLighteningHoles = true;
   lightenedSpoilerParameters.spoilerMinimumWoodMargin = 6.0;
   lightenedSpoilerParameters.spoilerMinimumCircleDistance = 12.0;
-  const auto lightenedSpoilerWing = designrc::domain::applyWingStructure(
+  const auto lightenedSpoilerWing = testsupport::buildStructure(
       ribs, lightenedSpoilerParameters);
   designrc::geometry::MaterialShapeSet lightenedSpoilerMaterials;
   const auto lightenedSpoilerShape =
@@ -1165,7 +1501,7 @@ int runTest(int argc, char* argv[]) {
   ribLighteningParameters.ribLighteningStopRib = 5;
   ribLighteningParameters.ribLighteningMinimumWoodMargin = 3.0;
   ribLighteningParameters.ribLighteningMinimumHoleDistance = 8.0;
-  auto ribLightenedWing = designrc::domain::applyWingStructure(
+  auto ribLightenedWing = testsupport::buildStructure(
       ribs, ribLighteningParameters);
   designrc::domain::addRibLighteningHoles(
       ribLightenedWing, ribLighteningParameters);
@@ -1185,7 +1521,7 @@ int runTest(int argc, char* argv[]) {
   centerSpoilerParameters.spoilerLighteningHoles = true;
   centerSpoilerParameters.spoilerMinimumWoodMargin = 6.0;
   centerSpoilerParameters.spoilerMinimumCircleDistance = 12.0;
-  const auto centerSpoilerWing = designrc::domain::applyWingStructure(
+  const auto centerSpoilerWing = testsupport::buildStructure(
       ribs, centerSpoilerParameters);
   designrc::geometry::MaterialShapeSet centerSpoilerMaterials;
   const auto centerSpoilerShape =
@@ -1213,7 +1549,7 @@ int runTest(int argc, char* argv[]) {
   wiringSparCollision.wiringHoleChordLocationPercent = 45;
   bool namedWiringSparCollision = false;
   try {
-    const auto wired = designrc::domain::applyWingStructure(ribs, wiringSparCollision);
+    const auto wired = testsupport::buildStructure(ribs, wiringSparCollision);
     static_cast<void>(designrc::geometry::buildStructuredWingPreview(
         wired, parameters.ribThickness));
   } catch (const std::invalid_argument& error) {
@@ -1228,7 +1564,7 @@ int runTest(int argc, char* argv[]) {
   wiringJoinerParameters.wiringHoleStartRib = 1;
   wiringJoinerParameters.wiringHoleEndRib = 2;
   wiringJoinerParameters.wiringHoleChordLocationPercent = 70;
-  auto wiringJoinerWing = designrc::domain::applyWingStructure(
+  auto wiringJoinerWing = testsupport::buildStructure(
       ribs, wiringJoinerParameters);
   designrc::domain::JoinerPart wiringJoiner;
   wiringJoiner.name = "Fixed Joiner 1 CF Rod";
@@ -1265,7 +1601,7 @@ int runTest(int argc, char* argv[]) {
   ribletParameters.ribletEndRib = 5;
   ribletParameters.ribletsPerBay = 2;
   auto ribletWing =
-      designrc::domain::applyWingStructure(ribs, ribletParameters);
+      testsupport::buildStructure(ribs, ribletParameters);
   for (std::size_t index = 0; index < ribletWing.ribs.size(); ++index)
     ribletWing.ribs[index].name = "R" + std::to_string(index + 1);
   designrc::domain::addRiblets(ribletWing, ribletParameters);

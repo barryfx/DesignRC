@@ -48,7 +48,7 @@ private:
   void updateMetrics();
   void markPreviewPending();
   void generatePlan();
-  void exportPlanPdf();
+  void exportPlan();
   void exportStep();
   void invalidatePlan();
   void regeneratePreview();

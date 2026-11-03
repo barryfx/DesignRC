@@ -191,10 +191,11 @@ QString formatEdgeHeightError(const domain::EdgeHeightError& error,
                               const DisplayUnit globalUnit,
                               const std::size_t panelIndex) {
   const QString edge = QString::fromStdString(error.edgeName());
-  const QString parameterKey = edge == "LE"
-      ? QString{"leadingEdgeHeight"} : QString{"trailingEdgeHeight"};
+  const QString parameterKey = edge == "LE" ? "leadingEdgeHeight" :
+      edge == "TE" ? "trailingEdgeHeight" : edge.startsWith("Aileron") ?
+      "aileronHingePostHeight" : "flapHingePostHeight";
   const DisplayUnit unit = effectiveParameterUnit(panel, parameterKey, globalUnit);
-  return QString{"Panel %1: %2 cut edge at rib %3 is %4, not smaller than "
+  return QString{"Panel %1: %2 cut edge at rib %3 is %4, greater than "
                  "the specified %2 Height of %5"}
       .arg(static_cast<qulonglong>(panelIndex + 1)).arg(edge)
       .arg(static_cast<qulonglong>(error.ribIndex()))
@@ -219,7 +220,7 @@ private:
 
 struct EdgeHeightCorrection {
   std::size_t panelIndex{};
-  bool leadingEdge{};
+  std::string edgeName;
   double heightMm{};
 };
 
@@ -267,6 +268,8 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.trailingEdgeType = d.trailingEdgeType; s.trailingEdgeWidth = d.trailingEdgeWidth; s.trailingEdgeHeight = d.trailingEdgeHeight;
   s.trailingEdgeSlotted = d.slottedForRibs;
   s.trailingEdgeSlotDepth = unit == DisplayUnit::Inches ? 25.4 / 4.0 : 6.0;
+  s.builtUpAileron = d.builtUpAileron;
+  s.builtUpFlap = d.builtUpFlap;
   s.topTeSheeting = d.topTeSheeting;
   s.topTeSheetingWidth = d.topTeSheetingWidth;
   s.topTeSheetingThickness = d.topTeSheetingThickness;
@@ -609,6 +612,74 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     }
   };
   enum class JoinerHoleHalf { Both, Positive, Negative };
+  const auto checkedBayCount = [&](const std::size_t panelIndex, const int count) {
+    const auto maximum = panels[panelIndex].ribs.size() - 1;
+    if (count < 1 || static_cast<std::size_t>(count) > maximum)
+      throw std::invalid_argument("Panel " + std::to_string(panelIndex + 1) +
+          ": Number of Rib Bays must be between 1 and " + std::to_string(maximum));
+    return static_cast<std::size_t>(count);
+  };
+  const auto exitsRib = [&](const domain::StructuredWing& wing, const std::size_t ribIndex,
+                            const std::string& name) {
+    const auto panelIndex = static_cast<std::size_t>(&wing - panels.data());
+    std::size_t number = 1;
+    for (std::size_t i=0; i<panelIndex; ++i)
+      number += panels[i].ribs.size() - (i==0 && panelData[0].addRib1a ? 1 : 0);
+    const bool rib1a = panelIndex==0 && panelData[0].addRib1a;
+    const auto ribName = rib1a && ribIndex==1 ? std::string{"R1a"}
+        : "R" + std::to_string(number + ribIndex - (rib1a && ribIndex>1 ? 1 : 0));
+    const auto start = name.find("Joiner ");
+    const auto digit = start==std::string::npos ? std::string::npos : start+7;
+    const auto end = digit==std::string::npos ? digit : name.find_first_not_of("0123456789",digit);
+    const auto joinerNumber = digit==std::string::npos ? "1" : name.substr(digit,end-digit);
+    throw std::invalid_argument("Joiner " + joinerNumber + " exits rib " + ribName +
+        ".  Decrease dihedral or joiner length.");
+  };
+  const auto containsRibPoint = [](const domain::StructuredRib& rib, const domain::Point2 point) {
+    // Check the airfoil envelope before spar notches and joiner split cuts.
+    // Interference with stock/spars is reported by the separate solid checks.
+    std::vector<domain::Point2> outline;
+    for (const auto p:rib.rib.profile.outline()) outline.push_back({p.x*rib.rib.chord,p.y*rib.rib.chord});
+    if (outline.size()<3) return false;
+    bool inside = false;
+    constexpr double tolerance = .005;
+    for (std::size_t i=0,j=outline.size()-1; i<outline.size(); j=i++) {
+      const auto a=outline[j],b=outline[i];
+      const double dx=b.x-a.x,dy=b.y-a.y;
+      const double length=dx*dx+dy*dy;
+      const double t=length>1e-16 ? std::clamp(((point.x-a.x)*dx+(point.y-a.y)*dy)/length,0.0,1.0) : 0.0;
+      if (std::hypot(point.x-a.x-t*dx,point.y-a.y-t*dy)<=tolerance) return true;
+      if ((a.y>point.y)!=(b.y>point.y) && point.x<(b.x-a.x)*(point.y-a.y)/(b.y-a.y)+a.x)
+        inside=!inside;
+    }
+    return inside;
+  };
+  const auto validateCircularJoiner = [&](const domain::StructuredWing& wing, const std::size_t ribIndex,
+      const ModelPoint origin, const ModelPoint axis, const double diameter,
+      const double thickness, const std::string& name) {
+    const auto& rib=wing.ribs[ribIndex].rib;
+    const double plane=rib.ribPlaneAngleDegrees*std::numbers::pi/180.0;
+    const double ny=std::cos(plane),nz=std::sin(plane);
+    const double projection=axis.y*ny+axis.z*nz;
+    if (std::abs(projection)<1e-9) exitsRib(wing,ribIndex,name);
+    // Configured circular joiner axes lie in the model Y/Z plane. Project
+    // the cylinder, rather than a circle enlarged in both directions, onto
+    // each rib face and its center plane (including twist and rib angle).
+    for (const double offset:{rib.ribThicknessStartFactor*thickness,0.0,
+         (rib.ribThicknessStartFactor+1.0)*thickness}) {
+      for (int sample=-1; sample<256; ++sample) {
+        const double angle=sample*2*std::numbers::pi/256.0;
+        const double radius=sample<0 ? 0.0 : diameter*.5;
+        const ModelPoint radial{radius*std::cos(angle),radius*std::sin(angle)*axis.z,
+            -radius*std::sin(angle)*axis.y};
+        const double t=(ny*(rib.spanPosition-origin.y-radial.y)+
+            nz*(rib.dihedralHeight-origin.z-radial.z)+offset)/projection;
+        const auto local=localSectionPoint(rib,{origin.x+radial.x+axis.x*t,
+            origin.y+radial.y+axis.y*t,origin.z+radial.z+axis.z*t});
+        if (!containsRibPoint(wing.ribs[ribIndex],local)) exitsRib(wing,ribIndex,name);
+      }
+    }
+  };
   const auto axisIntersection = [](const domain::RibDefinition& rib,
                                    const ModelPoint origin,
                                    const ModelPoint unit) {
@@ -624,7 +695,8 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
   const auto addHole = [&](domain::StructuredWing& wing, const std::size_t ribIndex,
                            const ModelPoint origin, const ModelPoint unit,
                            const double diameter,
-                           const JoinerHoleHalf half = JoinerHoleHalf::Both) {
+                           const JoinerHoleHalf half = JoinerHoleHalf::Both,
+                           const bool exactCylinderSection = false) {
     auto& structuredRib = wing.ribs[ribIndex];
     const auto center = axisIntersection(structuredRib.rib, origin, unit);
     const double plane = structuredRib.rib.ribPlaneAngleDegrees *
@@ -633,6 +705,18 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
         unit.y * std::cos(plane) + unit.z * std::sin(plane);
     auto hole = circularCut(
         center, diameter / std::max(0.25, std::abs(projection)));
+    if (exactCylinderSection) {
+      hole.clear();
+      for (int sample=0; sample<96; ++sample) {
+        const double angle=sample*2*std::numbers::pi/96.0;
+        const ModelPoint radial{diameter*.5*std::cos(angle),
+            diameter*.5*std::sin(angle)*unit.z,-diameter*.5*std::sin(angle)*unit.y};
+        const double t=(std::cos(plane)*(structuredRib.rib.spanPosition-origin.y-radial.y)+
+            std::sin(plane)*(structuredRib.rib.dihedralHeight-origin.z-radial.z))/projection;
+        hole.push_back(localSectionPoint(structuredRib.rib,{origin.x+radial.x+unit.x*t,
+            origin.y+radial.y+unit.y*t,origin.z+radial.z+unit.z*t}));
+      }
+    }
     if (half == JoinerHoleHalf::Positive)
       structuredRib.positiveHalfBooleanHoles.push_back(std::move(hole));
     else if (half == JoinerHoleHalf::Negative)
@@ -713,8 +797,11 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
       throw std::invalid_argument(name + " requires OD greater than ID");
     const auto firstCutRib = std::min(jointRib, secondRib);
     const auto lastCutRib = std::max(jointRib, secondRib);
-    for (std::size_t ribIndex = firstCutRib; ribIndex <= lastCutRib; ++ribIndex)
-      addHole(wing, ribIndex, jointPoint, unit, od, holeHalf);
+    for (std::size_t ribIndex = firstCutRib; ribIndex <= lastCutRib; ++ribIndex) {
+      if (!name.starts_with("Alignment Pin "))
+        validateCircularJoiner(wing,ribIndex,jointPoint,unit,od,ribThickness,name);
+      addHole(wing, ribIndex, jointPoint, unit, od, holeHalf, !name.starts_with("Alignment Pin "));
+    }
     const auto& second = wing.ribs[secondRib].rib;
     const double plane = second.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
     const double projection = unit.y * std::cos(plane) + unit.z * std::sin(plane);
@@ -774,8 +861,10 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     const auto jointPoint = balancedJointPoint(
         wing, 0, secondRibIndex,
         modelSectionPoint(joint, joinerCamberCenter(joint, fraction)), axis);
-    for (std::size_t ribIndex = 0; ribIndex <= secondRibIndex; ++ribIndex)
-      addHole(wing, ribIndex, jointPoint, axis, od);
+    for (std::size_t ribIndex = 0; ribIndex <= secondRibIndex; ++ribIndex) {
+      validateCircularJoiner(wing,ribIndex,jointPoint,axis,od,ribThickness,name);
+      addHole(wing, ribIndex, jointPoint, axis, od, JoinerHoleHalf::Both, true);
+    }
     const double plane = second.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
     const double projection = std::cos(plane);
     const double centerT =
@@ -934,116 +1023,81 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     }
     return result;
   };
-  const auto removeJointWeb = [](domain::StructuredWing& wing, const bool atRoot) {
+  const auto removeJoinerWebs = [](domain::StructuredWing& wing, const std::size_t firstRib, const std::size_t lastRib) {
     if (wing.ribs.size() < 2) return;
-    const std::size_t bay = atRoot ? 1 : wing.ribs.size() - 1;
     wing.shearWebs.erase(std::remove_if(wing.shearWebs.begin(), wing.shearWebs.end(),
-        [bay](const domain::ShearWebPart& web) { return web.bayIndex == bay; }),
+        [firstRib,lastRib](const domain::ShearWebPart& web) { return web.bayIndex > firstRib && web.bayIndex <= lastRib; }),
         wing.shearWebs.end());
   };
   const auto addWood = [&](const std::size_t panelIndex,
                            const FixedJoinerData& data,
-                           const std::size_t number) {
+                           const std::size_t number, const std::size_t collisionNumber) {
     auto& outer = panels[panelIndex];
-    if (outer.ribs.size() < 2) throw std::invalid_argument("Wood fixed joiner requires two ribs");
-    const std::size_t secondRibIndex =
-        panelIndex == 0 && panelData[0].addRib1a ? 2 : 1;
-    if (secondRibIndex >= outer.ribs.size())
-      throw std::invalid_argument("Wood fixed joiner requires Rib 2");
+    const auto terminal = checkedBayCount(panelIndex, data.ribBays);
     const double fraction = data.chordLocationPercent / 100.0;
     const auto* outerTop = findWoodSpar(outer, 0, fraction);
     const auto* outerBottom = findWoodSpar(outer, 1, fraction);
     if (!outerTop || !outerBottom)
       throw std::invalid_argument("Joiner " + std::to_string(number) +
           " requires matching top and bottom wood spars");
+    const auto cutRib = [&](domain::StructuredWing& wing, const std::size_t index,
+                           const std::array<domain::Point2,4>& profile) {
+      for (std::size_t edge=0; edge<profile.size(); ++edge)
+        for (int sample=0; sample<=32; ++sample) {
+          const auto a=profile[edge],b=profile[(edge+1)%profile.size()];
+          const double t=sample/32.0;
+          if (!containsRibPoint(wing.ribs[index],{a.x+(b.x-a.x)*t,a.y+(b.y-a.y)*t}))
+            exitsRib(wing,index,"Joiner "+std::to_string(collisionNumber));
+        }
+      std::vector<domain::Point2> cutout{profile.begin(),profile.end()};
+      wing.ribs[index].ribSplitCutouts.push_back(cutout);
+      wing.ribs[index].booleanCutouts.push_back(std::move(cutout));
+    };
     domain::JoinerPart joiner;
     joiner.name = "Joiner " + std::to_string(number);
     joiner.kind = domain::SpanMemberKind::Rectangular;
     joiner.outerDiameter = data.woodThickness;
-    joiner.stopRibIndex = secondRibIndex;
+    joiner.stopRibIndex = terminal;
     joiner.annotateOnBothPlanHalves = panelIndex == 0;
-    for (std::size_t ribIndex = 0; ribIndex <= secondRibIndex; ++ribIndex) {
+    for (std::size_t i=0; i<=terminal; ++i) {
       joiner.rectangularProfiles.push_back(woodProfile(
-          outer, *outerTop, *outerBottom, ribIndex, fraction, data.woodThickness));
-      // The joiner passes through the joint rib and, when present at the
-      // center, Rib 1a. It terminates against the inner face of Rib 2, so the
-      // terminal rib must remain whole.
-      if (ribIndex < secondRibIndex) {
-        const auto& profile = joiner.rectangularProfiles.back();
-        std::vector<domain::Point2> splitCutout{
-            profile.begin(), profile.end()};
-        outer.ribs[ribIndex].ribSplitCutouts.push_back(splitCutout);
-        outer.ribs[ribIndex].booleanCutouts.push_back(
-            std::move(splitCutout));
-      }
+          outer,*outerTop,*outerBottom,i,fraction,data.woodThickness));
+      cutRib(outer,i,joiner.rectangularProfiles.back());
     }
-    removeJointWeb(outer, true);
+    removeJoinerWebs(outer,0,terminal);
     if (panelIndex == 0) {
-      const auto second = globalProfile(outer.ribs[secondRibIndex].rib,
-          joiner.rectangularProfiles[secondRibIndex],
-          (outer.ribs[secondRibIndex].rib.ribThicknessStartFactor + 1.0) *
-              ribThicknesses[0]);
-      const auto joint = globalProfile(outer.ribs[0].rib, joiner.rectangularProfiles[0], 0.0);
-      std::array<domain::Point3, 4> mirroredSecond{};
-      std::array<domain::Point3, 4> mirroredJoint{};
-      for (std::size_t i = 0; i < 4; ++i) {
-        mirroredSecond[i] = {second[i].x, -second[i].y, second[i].z};
-        mirroredJoint[i] = {joint[i].x, -joint[i].y, joint[i].z};
+      for (std::size_t i=terminal+1; i-- > 0;) {
+        auto profile = globalProfile(outer.ribs[i].rib,joiner.rectangularProfiles[i],
+            i==terminal ? (outer.ribs[i].rib.ribThicknessStartFactor+1)*ribThicknesses[0] : 0.0);
+        for (auto& point:profile) point.y=-point.y;
+        joiner.innerRectangularProfiles.push_back(profile);
       }
-      joiner.innerRectangularProfiles = {mirroredSecond, mirroredJoint};
-      joiner.mirrorInAssembly = false;
-      const auto bottom = [](const std::array<domain::Point3, 4>& profile) {
-        return 0.5 * (profile[0].z + profile[1].z);
-      };
-      const auto top = [](const std::array<domain::Point3, 4>& profile) {
-        return 0.5 * (profile[2].z + profile[3].z);
-      };
-      joiner.dxfOutline = {{mirroredSecond[0].y, bottom(mirroredSecond)},
-          {joint[0].y, bottom(joint)}, {second[0].y, bottom(second)},
-          {second[0].y, top(second)}, {joint[0].y, top(joint)},
-          {mirroredSecond[0].y, top(mirroredSecond)}};
+      joiner.mirrorInAssembly=false;
     } else {
-      auto& inner = panels[panelIndex - 1];
-      const auto* innerTop = findWoodSpar(inner, 0, fraction);
-      const auto* innerBottom = findWoodSpar(inner, 1, fraction);
+      auto& inner=panels[panelIndex-1];
+      const auto innerTerminal=inner.ribs.size()-1-checkedBayCount(panelIndex-1,data.ribBays);
+      const auto* innerTop=findWoodSpar(inner,0,fraction);
+      const auto* innerBottom=findWoodSpar(inner,1,fraction);
       if (!innerTop || !innerBottom)
         throw std::invalid_argument("Joiner " + std::to_string(number) +
             " requires matching adjoining-panel wood spars");
-      const std::size_t jointIndex = inner.ribs.size() - 1;
-      const std::size_t secondIndex = inner.ribs.size() - 2;
-      const auto jointProfile = woodProfile(inner, *innerTop, *innerBottom,
-          jointIndex, fraction, data.woodThickness);
-      const auto secondProfile = woodProfile(inner, *innerTop, *innerBottom,
-          secondIndex, fraction, data.woodThickness);
-      std::vector<domain::Point2> splitCutout{
-          jointProfile.begin(), jointProfile.end()};
-      inner.ribs[jointIndex].ribSplitCutouts.push_back(splitCutout);
-      inner.ribs[jointIndex].booleanCutouts.push_back(
-          std::move(splitCutout));
-      removeJointWeb(inner, false);
-      const auto innerSecond = globalProfile(inner.ribs[secondIndex].rib, secondProfile,
-          (inner.ribs[secondIndex].rib.ribThicknessStartFactor + 1.0) *
-              ribThicknesses[panelIndex - 1]);
-      const auto innerJoint = globalProfile(inner.ribs[jointIndex].rib, jointProfile, 0.0);
-      const auto outerSecond = globalProfile(outer.ribs[secondRibIndex].rib,
-          joiner.rectangularProfiles[secondRibIndex],
-          outer.ribs[secondRibIndex].rib.ribThicknessStartFactor *
-              ribThicknesses[panelIndex]);
-      joiner.innerRectangularProfiles = {innerSecond, innerJoint};
-      joiner.mirrorInAssembly = true;
-      const auto bottom = [](const std::array<domain::Point3, 4>& profile) {
-        return 0.5 * (profile[0].z + profile[1].z);
-      };
-      const auto top = [](const std::array<domain::Point3, 4>& profile) {
-        return 0.5 * (profile[2].z + profile[3].z);
-      };
-      joiner.dxfOutline = {{innerSecond[0].y, bottom(innerSecond)},
-          {innerJoint[0].y, bottom(innerJoint)},
-          {outerSecond[0].y, bottom(outerSecond)},
-          {outerSecond[0].y, top(outerSecond)},
-          {innerJoint[0].y, top(innerJoint)},
-          {innerSecond[0].y, top(innerSecond)}};
+      for (std::size_t i=innerTerminal; i<inner.ribs.size(); ++i) {
+        const auto profile=woodProfile(inner,*innerTop,*innerBottom,i,fraction,data.woodThickness);
+        cutRib(inner,i,profile);
+        joiner.innerRectangularProfiles.push_back(globalProfile(inner.ribs[i].rib,profile,
+            i==innerTerminal ? inner.ribs[i].rib.ribThicknessStartFactor*ribThicknesses[panelIndex-1] : 0.0));
+      }
+      removeJoinerWebs(inner,innerTerminal,inner.ribs.size()-1);
+      joiner.mirrorInAssembly=true;
     }
+    auto sections=joiner.innerRectangularProfiles;
+    for (std::size_t i=1; i<=terminal; ++i)
+      sections.push_back(globalProfile(outer.ribs[i].rib,joiner.rectangularProfiles[i],
+          i==terminal ? (outer.ribs[i].rib.ribThicknessStartFactor+1)*ribThicknesses[panelIndex] : 0.0));
+    for (const auto& profile:sections)
+      joiner.dxfOutline.push_back({profile[0].y,.5*(profile[0].z+profile[1].z)});
+    for (auto i=sections.rbegin(); i!=sections.rend(); ++i)
+      joiner.dxfOutline.push_back({(*i)[0].y,.5*((*i)[2].z+(*i)[3].z)});
     outer.joiners.push_back(std::move(joiner));
   };
 
@@ -1074,7 +1128,10 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
                              const std::string& thisAnnotation,
                              const std::string& adjoiningAnnotation,
                              const double extension,
+                             const std::size_t bayCount,
                              const bool mirrorIdenticalCenterPair = false) {
+      const auto terminalRib = checkedBayCount(panelIndex, static_cast<int>(bayCount));
+      const auto innerTerminal = centerJoint ? terminalRib : panels[panelIndex - 1].ribs.size() - 1 - checkedBayCount(panelIndex - 1, static_cast<int>(bayCount));
       const auto localCenter = joinerCamberCenter(rootRib, fraction);
       const auto baseJoint = modelSectionPoint(rootRib, localCenter);
       // At the wing center the two panel halves rise away from a horizontal
@@ -1085,22 +1142,22 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
       ModelPoint joint;
       if (centerJoint) {
         joint = balancedJointPoint(
-            outer, 0, structuralSecondRib, baseJoint, pairAxis);
+            outer, 0, terminalRib, baseJoint, pairAxis);
       } else {
         auto& inner = panels[panelIndex - 1];
         const ModelPoint inward{-outward.x, -outward.y, -outward.z};
         joint = averagePoint(
             balancedJointPoint(
-                outer, 0, structuralSecondRib, baseJoint, outward),
+                outer, 0, terminalRib, baseJoint, outward),
             balancedJointPoint(
-                inner, inner.ribs.size() - 1, inner.ribs.size() - 2,
+                inner, inner.ribs.size() - 1, innerTerminal,
                 baseJoint, inward));
       }
       if (centerJoint && !mirrorIdenticalCenterPair)
         for (std::size_t ribIndex = 0;
-             ribIndex <= structuralSecondRib; ++ribIndex)
+             ribIndex <= terminalRib; ++ribIndex)
           outer.ribs[ribIndex].uniqueHalfPartVariants = true;
-      addCircularSide(outer, 0, structuralSecondRib, ribThicknesses[panelIndex],
+      addCircularSide(outer, 0, terminalRib, ribThicknesses[panelIndex],
           joint, pairAxis,
           thisOd, thisId, thisKind, thisName, thisAnnotation, extension,
           !centerJoint || mirrorIdenticalCenterPair, false, false, false,
@@ -1109,7 +1166,7 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
       if (centerJoint && mirrorIdenticalCenterPair) return;
       if (centerJoint) {
         const std::size_t thisPartIndex = outer.joiners.size() - 1;
-        addCircularSide(outer, 0, structuralSecondRib,
+        addCircularSide(outer, 0, terminalRib,
             ribThicknesses[panelIndex], joint, pairAxis,
             adjoiningOd, adjoiningId, adjoiningKind, adjoiningName,
             adjoiningAnnotation, extension, false, true, false, true,
@@ -1126,7 +1183,7 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
         auto& inner = panels[panelIndex - 1];
         const ModelPoint inward{-outward.x, -outward.y, -outward.z};
         const std::size_t thisPartIndex = outer.joiners.size() - 1;
-        addCircularSide(inner, inner.ribs.size() - 1, inner.ribs.size() - 2,
+        addCircularSide(inner, inner.ribs.size() - 1, innerTerminal,
             ribThicknesses[panelIndex - 1], joint, inward,
             adjoiningOd, adjoiningId, adjoiningKind, adjoiningName,
             adjoiningAnnotation, extension, true);
@@ -1142,9 +1199,11 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     };
     if (data.joinerPanelMode == 1) {
       for (const auto& fixed : data.fixedJoiners) {
+        const auto terminalRib = checkedBayCount(panelIndex, fixed.ribBays);
+        const auto innerTerminal = centerJoint ? terminalRib : panels[panelIndex - 1].ribs.size() - 1 - checkedBayCount(panelIndex - 1, fixed.ribBays);
         ++fixedNumber;
         if (fixed.material == 0) {
-          addWood(panelIndex, fixed, ++woodNumber);
+          addWood(panelIndex, fixed, ++woodNumber, fixedNumber);
           continue;
         }
         const double fraction = fixed.chordLocationPercent / 100.0;
@@ -1157,26 +1216,26 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
             (fixed.material == 2 ? "Steel" : "CF") + (tube ? " Tube" : " Rod");
         if (centerJoint)
           addStraightCenterFixed(outer, ribThicknesses[panelIndex],
-              structuralSecondRib, fraction, od, id, kind, name);
+              terminalRib, fraction, od, id, kind, name);
         else {
           const auto localCenter = joinerCamberCenter(rootRib, fraction);
           const auto baseJoint = modelSectionPoint(rootRib, localCenter);
           auto& inner = panels[panelIndex - 1];
           const ModelPoint inward{-outward.x, -outward.y, -outward.z};
           const auto joint = averagePoint(
-              balancedJointPoint(outer, 0, 1, baseJoint, outward),
+              balancedJointPoint(outer, 0, terminalRib, baseJoint, outward),
               balancedJointPoint(
-                  inner, inner.ribs.size() - 1, inner.ribs.size() - 2,
+                  inner, inner.ribs.size() - 1, innerTerminal,
                   baseJoint, inward));
           const std::size_t outerCount = outer.joiners.size();
-          addCircularSide(outer, 0, 1, ribThicknesses[panelIndex],
+          addCircularSide(outer, 0, terminalRib, ribThicknesses[panelIndex],
               joint, outward, od, id, kind, name, {}, 0.0, true);
           auto outerHalf = std::move(outer.joiners.back());
           outer.joiners.resize(outerCount);
 
           const std::size_t innerCount = inner.joiners.size();
           addCircularSide(inner, inner.ribs.size() - 1,
-              inner.ribs.size() - 2, ribThicknesses[panelIndex - 1],
+              innerTerminal, ribThicknesses[panelIndex - 1],
               joint, inward, od, id, kind, name, {}, 0.0, true);
           auto innerHalf = std::move(inner.joiners.back());
           inner.joiners.resize(innerCount);
@@ -1236,7 +1295,7 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
         if (!alignment) {
           addPair(fraction, thisKind, thisOd, thisId, thisName,
               adjoiningKind, adjoiningOd, adjoiningId, adjoiningName,
-              thisAnnotation, adjoiningAnnotation, 0.0);
+              thisAnnotation, adjoiningAnnotation, 0.0, checkedBayCount(panelIndex, removable.ribBays));
         } else if (centerJoint) {
           for (std::size_t ribIndex = 0;
                ribIndex <= structuralSecondRib; ++ribIndex)
@@ -1414,8 +1473,10 @@ PreviewComputation computePreview(std::vector<WingPanelData> panels,
   addConfiguredJoiners(panels, result.structuredPanels, result.thicknesses);
   std::size_t ribNumber = 1;
   std::size_t shearWebNumber = 1;
+  std::size_t aileronTeNumber = 1, flapTeNumber = 1;
   for (std::size_t panelIndex = 0; panelIndex < result.structuredPanels.size(); ++panelIndex) {
     auto& structured = result.structuredPanels[panelIndex];
+    domain::nameControlTrailingEdgeStock(structured, aileronTeNumber, flapTeNumber);
     const auto panelPartNumber = std::to_string(panelIndex + 1);
     const bool hasRib1a = panelIndex == 0 && panels[panelIndex].addRib1a;
     for (std::size_t ribIndex = 0; ribIndex < structured.ribs.size(); ++ribIndex) {
@@ -1429,6 +1490,11 @@ PreviewComputation computePreview(std::vector<WingPanelData> panels,
         structured.ribs[ribIndex].negativeHalfName =
             structured.ribs[ribIndex].name + " Left";
       }
+    }
+    for (auto& control : structured.controlSurfaces) {
+      if (!control.builtUpWing) continue;
+      for (std::size_t i = 0; i < control.builtUpWing->ribs.size(); ++i)
+        control.builtUpWing->ribs[i].name = std::string{control.name == "Aileron" ? "A" : "F"} + structured.ribs[control.startRibIndex + i].name;
     }
     const auto& angles = assemblyAngles[panelIndex];
     domain::addRiblets(structured, structureParametersFor(
@@ -1845,6 +1911,7 @@ int runJoinerBackendRegression() {
 
     WingPanelData fixedWithRib1a = fixed;
     fixedWithRib1a.addRib1a = true;
+    fixedWithRib1a.fixedJoiners.front().ribBays = 2;
     const auto fixedWithRib1aPreview = build(fixedWithRib1a);
     const auto& fixedWithRib1aWing =
         fixedWithRib1aPreview.structuredPanels.front();
@@ -1956,6 +2023,7 @@ int runJoinerBackendRegression() {
     WingPanelData removableWithRib1a = removable;
     removableWithRib1a.addRib1a = true;
     removableWithRib1a.removableJoiners = {sleeveRod};
+    removableWithRib1a.removableJoiners.front().ribBays = 2;
     const auto removableWithRib1aPreview = build(removableWithRib1a);
     const auto& removableWithRib1aWing =
         removableWithRib1aPreview.structuredPanels.front();
@@ -2035,6 +2103,129 @@ int runJoinerBackendRegression() {
         twoSleevePreview.structuredPanels.front().joiners[1].kind != domain::SpanMemberKind::Tube)
       return 21;
 
+    // Bay counts select the terminal physical rib for every fixed material.
+    WingPanelData bayPanel=fixed;
+    bayPanel.ribCount=5; bayPanel.dihedral=0;
+    for (const int type : {0,1,2}) for (const int bays : {1,2,4}) {
+      auto definition=FixedJoinerData{};
+      definition.material=type==2?2:1; definition.carbonType=type==1?1:0; definition.ribBays=bays;
+      bayPanel.fixedJoiners={definition};
+      const auto preview=build(bayPanel);
+      const auto& wing=preview.structuredPanels.front();
+      for (std::size_t i=0;i<wing.ribs.size();++i)
+        if (wing.ribs[i].booleanHoles.empty() != (i>static_cast<std::size_t>(bays))) return 60;
+      if (std::abs(wing.joiners.front().outerEndpoint.y-
+            wing.ribs[bays].rib.spanPosition)>bayPanel.ribThickness+1e-5) return 61;
+    }
+    for (const int sleeveMaterial : {0,1,2,3}) {
+      auto panel=bayPanel; panel.joinerPanelMode=0; panel.fixedJoiners.clear();
+      auto definition=sleeveRod;
+      definition.ribBays=2; definition.thisPanelPart=sleeveMaterial%2;
+      definition.adjoiningPanelPart=1-definition.thisPanelPart;
+      definition.thisSleeveMaterial=definition.adjoiningSleeveMaterial=sleeveMaterial;
+      definition.thisRodMaterial=definition.adjoiningRodMaterial=sleeveMaterial%2;
+      panel.removableJoiners={definition};
+      const auto preview=build(panel);
+      const auto& wing=preview.structuredPanels.front();
+      for (std::size_t i=0;i<wing.ribs.size();++i)
+        if (wing.ribs[i].positiveHalfBooleanHoles.empty() != (i>2) ||
+            wing.ribs[i].negativeHalfBooleanHoles.empty() != (i>2)) return 62;
+    }
+    auto jointOuter=bayPanel;
+    jointOuter.fixedJoiners.front().ribBays=2;
+    auto jointInner=jointOuter; jointInner.joinerPanelMode=-1; jointInner.fixedJoiners.clear();
+    const auto bayJoint=buildPanels({jointInner,jointOuter});
+    for (std::size_t i=0;i<5;++i)
+      if (bayJoint.structuredPanels[0].ribs[i].booleanHoles.empty() != (i<2) ||
+          bayJoint.structuredPanels[1].ribs[i].booleanHoles.empty() != (i>2)) return 63;
+    for (const int invalid : {0,5}) {
+      auto panel=bayPanel; panel.fixedJoiners.front().ribBays=invalid;
+      bool rejected=false;
+      try { static_cast<void>(build(panel)); }
+      catch (const std::exception& error) { rejected=std::string{error.what()}.find("Number of Rib Bays")!=std::string::npos; }
+      if (!rejected) return 64;
+    }
+    auto rib1aPanel=bayPanel; rib1aPanel.addRib1a=true; rib1aPanel.fixedJoiners.front().ribBays=1;
+    const auto rib1aPreview=build(rib1aPanel);
+    if (rib1aPreview.structuredPanels.front().ribs[0].booleanHoles.empty() ||
+        rib1aPreview.structuredPanels.front().ribs[1].booleanHoles.empty() ||
+        !rib1aPreview.structuredPanels.front().ribs[2].booleanHoles.empty()) return 65;
+
+    const auto expectExit=[&](const WingPanelData& panel,const std::string& ribName) {
+      const auto expected="Joiner 1 exits rib "+ribName+".  Decrease dihedral or joiner length.";
+      try { static_cast<void>(build(panel)); }
+      catch (const std::invalid_argument& error) {
+        if (error.what()==expected) return true;
+        std::fprintf(stderr,"Expected %s; received %s\n",expected.c_str(),error.what());
+      }
+      std::fprintf(stderr,"Expected joiner clearance rejection: %s\n",expected.c_str());
+      return false;
+    };
+    auto longJoiner=bayPanel;
+    longJoiner.dihedral=20;
+    longJoiner.fixedJoiners={FixedJoinerData{}};
+    longJoiner.fixedJoiners.front().ribBays=4;
+    if (!expectExit(longJoiner,"R1")) return 70;
+    auto shorter=longJoiner; shorter.fixedJoiners.front().ribBays=1;
+    static_cast<void>(build(shorter));
+    auto flatter=longJoiner; flatter.dihedral=0;
+    static_cast<void>(build(flatter));
+    auto thinTip=longJoiner;
+    thinTip.dihedral=6;
+    thinTip.rootAirfoil=domain::AirfoilProfile::nacaSymmetric(.30);
+    thinTip.tipAirfoil=domain::AirfoilProfile::nacaSymmetric(.08);
+    if (!expectExit(thinTip,"R5")) return 71;
+    auto pinched=flatter;
+    pinched.planform={{{0,0},{0,1}},{{180,0},{70,.5},{180,1}},160,160};
+    if (!expectExit(pinched,"R3")) return 72;
+    for (const int type:{0,1,2}) {
+      auto oversized=flatter;
+      auto& joiner=oversized.fixedJoiners.front();
+      joiner.ribBays=1; joiner.material=type==2?2:1; joiner.carbonType=type==1?1:0;
+      joiner.carbonTubeOd=joiner.carbonRodOd=joiner.steelRodOd=40;
+      if (!expectExit(oversized,"R1")) return 73;
+    }
+    for (const bool sleeve:{false,true}) {
+      auto panel=longJoiner; panel.joinerPanelMode=0; panel.fixedJoiners.clear();
+      auto joiner=sleeveRod; joiner.ribBays=4;
+      joiner.thisPanelPart=sleeve?0:1; joiner.adjoiningPanelPart=1-joiner.thisPanelPart;
+      panel.removableJoiners={joiner};
+      if (!expectExit(panel,"R1")) return 74;
+    }
+    auto outerExit=flatter;
+    outerExit.fixedJoiners.front().carbonTubeOd=40;
+    auto innerSafe=flatter; innerSafe.joinerPanelMode=-1; innerSafe.fixedJoiners.clear();
+    bool namedOuterExit=false;
+    try { static_cast<void>(buildPanels({innerSafe,outerExit})); }
+    catch (const std::invalid_argument& error) {
+      namedOuterExit=std::string{error.what()}=="Joiner 1 exits rib R6.  Decrease dihedral or joiner length.";
+    }
+    if (!namedOuterExit) return 75;
+
+    // These sections fit at the rib centers, but the tilted terminal rib's
+    // outside face is pierced. Center-plane-only checks must not accept it.
+    auto faceOnly=flatter;
+    faceOnly.dihedral=30; faceOnly.fixedJoiners.front().ribBays=1; // 15-degree inclination per half
+    faceOnly.fixedJoiners.front().carbonTubeOd=2; faceOnly.fixedJoiners.front().carbonTubeId=1;
+    const auto smallJoiner=build(faceOnly);
+    const auto& faceWing=smallJoiner.structuredPanels.front();
+    for (std::size_t i=0;i<=1;++i) {
+      const auto& rib=faceWing.ribs[i];
+      const auto center=holeCenter(rib.booleanHoles.front());
+      const double projection=std::cos(rib.rib.ribPlaneAngleDegrees*std::numbers::pi/180);
+      for (int sample=0;sample<256;++sample) {
+        const double angle=sample*2*std::numbers::pi/256;
+        const double x=center.x+6.45*std::cos(angle),y=center.y+6.45*std::sin(angle)/projection;
+        if (y>joinerSurfaceY(rib.rib,x,true)+.005 || y<joinerSurfaceY(rib.rib,x,false)-.005) {
+          std::fprintf(stderr,"Face fixture center section does not fit rib %zu at %.6f, %.6f (bounds %.6f, %.6f)\n",
+              i,x,y,joinerSurfaceY(rib.rib,x,false),joinerSurfaceY(rib.rib,x,true));
+          return 76;
+        }
+      }
+    }
+    faceOnly.fixedJoiners.front().carbonTubeOd=12.9;
+    if (!expectExit(faceOnly,"R2")) return 77;
+
     WingPanelData wood = fixed;
     wood.spars = {
         {35, 0, 0, 0, 5.0, 9.0, 6.0, 5.0, 6.0, 6.0, 1.0},
@@ -2045,6 +2236,7 @@ int runJoinerBackendRegression() {
     wood.sparShearWebs = true;
     wood.addRib1a = true;
     wood.fixedJoiners.front().material = 0;
+    wood.fixedJoiners.front().ribBays = 2;
     const auto woodPreview = build(wood);
     const auto& woodWing = woodPreview.structuredPanels.front();
     if (woodWing.joiners.size() != 1) return 31;
@@ -2052,12 +2244,12 @@ int runJoinerBackendRegression() {
         woodWing.joiners.front().rectangularProfiles.size() != 3 ||
         woodWing.ribs[0].ribSplitCutouts.size() != 1 ||
         woodWing.ribs[1].ribSplitCutouts.size() != 1 ||
-        !woodWing.ribs[2].ribSplitCutouts.empty() ||
+        woodWing.ribs[2].ribSplitCutouts.size() != 1 ||
         woodWing.ribs[0].booleanCutouts.size() <=
             woodWing.ribs[0].ribSplitCutouts.size())
       return 32;
-    if (woodWing.joiners.front().innerRectangularProfiles.size() != 2) return 33;
-    if (woodWing.joiners.front().dxfOutline.size() != 6 ||
+    if (woodWing.joiners.front().innerRectangularProfiles.size() != 3) return 33;
+    if (woodWing.joiners.front().dxfOutline.size() != 10 ||
         woodWing.joiners.front().name != "Joiner 1") return 34;
 
     const auto exportsAsTwoPieces =
@@ -2103,13 +2295,14 @@ int runJoinerBackendRegression() {
 
     WingPanelData oneBayWood = wood;
     oneBayWood.addRib1a = false;
+    oneBayWood.fixedJoiners.front().ribBays = 1;
     const auto oneBayPreview = build(oneBayWood);
     const auto& oneBayWing = oneBayPreview.structuredPanels.front();
     if (oneBayWing.joiners.size() != 1 ||
         oneBayWing.joiners.front().stopRibIndex != 1 ||
         oneBayWing.joiners.front().rectangularProfiles.size() != 2 ||
         oneBayWing.ribs[0].ribSplitCutouts.size() != 1 ||
-        !oneBayWing.ribs[1].ribSplitCutouts.empty() ||
+        oneBayWing.ribs[1].ribSplitCutouts.size() != 1 ||
         !exportsAsTwoPieces(oneBayWing.ribs[0], 1))
       return 36;
 
@@ -2128,10 +2321,10 @@ int runJoinerBackendRegression() {
         panelWoodOuter.joiners.front().innerRectangularProfiles.size() != 2 ||
         !panelWoodOuter.joiners.front().mirrorInAssembly ||
         panelWoodInner.ribs.back().ribSplitCutouts.size() != 1 ||
-        !panelWoodInner.ribs[panelWoodInner.ribs.size() - 2]
-             .ribSplitCutouts.empty() ||
+        panelWoodInner.ribs[panelWoodInner.ribs.size() - 2]
+             .ribSplitCutouts.size() != 1 ||
         panelWoodOuter.ribs.front().ribSplitCutouts.size() != 1 ||
-        !panelWoodOuter.ribs[1].ribSplitCutouts.empty() ||
+        panelWoodOuter.ribs[1].ribSplitCutouts.size() != 1 ||
         !exportsAsTwoPieces(panelWoodInner.ribs.back(), 1) ||
         !exportsAsTwoPieces(panelWoodOuter.ribs.front(), 1))
       return 37;
@@ -2182,7 +2375,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
       addToolBarButton("Generate Plan", "generatePlanButton");
   generatePlanButton_->setEnabled(false);
   exportPlanButton_ =
-      addToolBarButton("Export Plan PDF", "exportPlanPdfButton");
+      addToolBarButton("Export Plan", "exportPlanButton");
   exportPlanButton_->setEnabled(false);
   exportPartsButton_ =
       addToolBarButton("Export Parts", "exportPartsButton");
@@ -2271,7 +2464,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
     else viewport_->fitAll();
   });
   connect(generatePlanButton_, &QPushButton::clicked, this, [this] { generatePlan(); });
-  connect(exportPlanButton_, &QPushButton::clicked, this, [this] { exportPlanPdf(); });
+  connect(exportPlanButton_, &QPushButton::clicked, this, [this] { exportPlan(); });
   connect(exportPartsButton_, &QPushButton::clicked, this, [this] { exportRibs(); });
   connect(exportStepButton_, &QPushButton::clicked, this, [this] { exportStep(); });
   connect(graphicsTabs_, &QTabWidget::currentChanged, this, [this](const int index) {
@@ -2671,26 +2864,45 @@ void MainWindow::generatePlan() {
   statusBar()->showMessage("Flattened full-scale plan generated", 3000);
 }
 
-void MainWindow::exportPlanPdf() {
+void MainWindow::exportPlan() {
   if (!exportPlanButton_->isEnabled()) return;
+  QDialog dialog{this};
+  dialog.setWindowTitle("Export Plan");
+  auto* layout = new QVBoxLayout{&dialog};
+  layout->addWidget(new QLabel{"Choose the plan format:"});
+  auto* format = new QComboBox{&dialog};
+  format->setObjectName("planExportFormat");
+  format->addItems({"PDF", "DXF", "SVG"});
+  layout->addWidget(format);
+  auto* buttons = new QDialogButtonBox{QDialogButtonBox::Ok | QDialogButtonBox::Cancel};
+  layout->addWidget(buttons);
+  connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+  connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+  if (dialog.exec() != QDialog::Accepted) return;
+  const QString formatName = format->currentText();
+  const QString extension = "." + formatName.toLower();
   QSettings settings;
   const QString directory = settings.value("lastDirectory").toString();
   const QString projectName = currentFile_.isEmpty()
       ? QString{"Untitled"} : QFileInfo{currentFile_}.completeBaseName();
   QString path = QFileDialog::getSaveFileName(
-      this, "Export Full-Scale Plan PDF",
-      QDir{directory}.filePath(projectName + ".pdf"), "PDF files (*.pdf)");
+      this, "Export Full-Scale Plan " + formatName,
+      QDir{directory}.filePath(projectName + extension),
+      formatName + " files (*" + extension + ")");
   if (path.isEmpty()) return;
-  if (QFileInfo{path}.suffix().isEmpty()) path += ".pdf";
+  if (QFileInfo{path}.suffix().isEmpty()) path += extension;
 
   const BusyCursor busy;
   QString error;
-  if (!planViewport_->exportPdf(path, error)) {
-    QMessageBox::critical(this, "Plan PDF export failed", error);
+  const bool exported = formatName == "DXF" ? planViewport_->exportDxf(path, error)
+      : formatName == "SVG" ? planViewport_->exportSvg(path, error)
+                             : planViewport_->exportPdf(path, error);
+  if (!exported) {
+    QMessageBox::critical(this, "Plan " + formatName + " export failed", error);
     return;
   }
   settings.setValue("lastDirectory", QFileInfo{path}.absolutePath());
-  statusBar()->showMessage("Full-scale plan PDF exported", 3000);
+  statusBar()->showMessage("Full-scale plan " + formatName + " exported", 3000);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
@@ -2801,9 +3013,10 @@ void MainWindow::regeneratePreview() {
             panels[exception.panelIndex()].leadingEdgeType == 2) ||
            (isTrailingEdge &&
             panels[exception.panelIndex()].trailingEdgeType == 2));
-      if (adjustableBlockStock) {
+      if (adjustableBlockStock || exception.edgeName() == "Aileron Hinge Post" ||
+          exception.edgeName() == "Flap Hinge Post") {
         edgeHeightCorrection = EdgeHeightCorrection{
-            exception.panelIndex(), isLeadingEdge,
+            exception.panelIndex(), exception.edgeName(),
             exception.cutHeightMm()};
       }
     } catch (const std::exception& exception) {
@@ -2834,15 +3047,20 @@ void MainWindow::regeneratePreview() {
       if (!error.isEmpty()) {
         finishUi();
         window->statusBar()->showMessage("Update View failed", 3000);
-        QMessageBox::critical(window, "Preview update failed", error);
+        if (error.contains("No gap between the hinge post and the TE"))
+          QMessageBox::warning(window, "Invalid built-up control", error);
+        else
+          QMessageBox::critical(window, "Preview update failed", error);
         if (edgeHeightCorrection &&
             edgeHeightCorrection->panelIndex < window->panelEditors_.size()) {
           auto* editor =
               window->panelEditors_[edgeHeightCorrection->panelIndex];
-          if (edgeHeightCorrection->leadingEdge)
+          if (edgeHeightCorrection->edgeName == "LE")
             editor->setLeadingEdgeHeightMm(edgeHeightCorrection->heightMm);
-          else
+          else if (edgeHeightCorrection->edgeName == "TE")
             editor->setTrailingEdgeHeightMm(edgeHeightCorrection->heightMm);
+          else
+            editor->setHingePostHeightMm(edgeHeightCorrection->edgeName == "Aileron Hinge Post", edgeHeightCorrection->heightMm);
         }
         return;
       }
@@ -3014,6 +3232,8 @@ void MainWindow::regeneratePreviewSynchronous() {
         else if (exception.edgeName() == "TE" && d.trailingEdgeType == 2)
           panelEditors_[panelIndex]->setTrailingEdgeHeightMm(
               exception.cutHeightMm());
+        else if (exception.edgeName() == "Aileron Hinge Post" || exception.edgeName() == "Flap Hinge Post")
+          panelEditors_[panelIndex]->setHingePostHeightMm(exception.edgeName() == "Aileron Hinge Post", exception.cutHeightMm());
         return;
       }
       ribSets.push_back(ribs);
@@ -3030,8 +3250,10 @@ void MainWindow::regeneratePreviewSynchronous() {
     addConfiguredJoiners(panels, structuredPanels, thicknesses);
     std::size_t ribNumber = 1;
     std::size_t shearWebNumber = 1;
+    std::size_t aileronTeNumber = 1, flapTeNumber = 1;
     for (std::size_t panelIndex = 0; panelIndex < structuredPanels.size(); ++panelIndex) {
       auto& structured = structuredPanels[panelIndex];
+      domain::nameControlTrailingEdgeStock(structured, aileronTeNumber, flapTeNumber);
       const auto panelPartNumber = std::to_string(panelIndex + 1);
       const bool hasRib1a = panelIndex == 0 && panels[panelIndex].addRib1a;
       for (std::size_t ribIndex = 0; ribIndex < structured.ribs.size(); ++ribIndex) {
@@ -3314,6 +3536,14 @@ void MainWindow::regeneratePreviewLegacy() {
 
 void MainWindow::exportRibs() {
   if (currentStructuredPanels_.empty()) return;
+  std::vector<std::vector<domain::StructuredRib>> builtUpRibs(currentStructuredPanels_.size());
+  std::vector<std::vector<domain::SheetStockPart>> builtUpStock(currentStructuredPanels_.size());
+  for (std::size_t panel = 0; panel < currentStructuredPanels_.size(); ++panel)
+    for (const auto& control : currentStructuredPanels_[panel].controlSurfaces)
+      if (control.builtUpWing) {
+        for (const auto& rib : control.builtUpWing->ribs) builtUpRibs[panel].push_back(rib);
+        for (const auto& stock : control.builtUpWing->sheetStockParts) builtUpStock[panel].push_back(stock);
+      }
   QDialog dialog{this}; dialog.setWindowTitle("Choose parts to export");
   auto* layout = new QVBoxLayout{&dialog};
   auto* formatLayout = new QHBoxLayout;
@@ -3361,6 +3591,10 @@ void MainWindow::exportRibs() {
         addItem(QString::fromStdString(rib.name), "rib", panel, i);
       }
     }
+    for (std::size_t i = 0; i < builtUpStock[panel].size(); ++i)
+      addItem(QString::fromStdString(builtUpStock[panel][i].name), "builtup_stock", panel, i);
+    for (std::size_t i = 0; i < builtUpRibs[panel].size(); ++i)
+      addItem(QString::fromStdString(builtUpRibs[panel][i].name), "builtup_rib", panel, i);
     for (std::size_t i = 0; i < wing.riblets.size(); ++i)
       addItem(QString::fromStdString(wing.riblets[i].name),
           "riblet", panel, i);
@@ -3438,6 +3672,18 @@ void MainWindow::exportRibs() {
     const auto exportPart = [&](const QString& type, const std::size_t panel,
                                 const std::size_t index, const bool svg) {
       const auto& wing = currentStructuredPanels_[panel];
+      if (type == "builtup_stock") {
+        const auto& stock = builtUpStock[panel][index];
+        if (svg) domain::exportSheetStockSvg(stock, outputPath(QString::fromStdString(stock.name), ".svg"), stock.name);
+        else domain::exportSheetStockDxf(stock, outputPath(QString::fromStdString(stock.name), ".dxf"), stock.name);
+        return;
+      }
+      if (type == "builtup_rib") {
+        const auto& rib = builtUpRibs[panel][index];
+        if (svg) domain::exportStructuredRibSvg(rib, outputPath(QString::fromStdString(rib.name), ".svg"), rib.name);
+        else domain::exportStructuredRibDxf(rib, outputPath(QString::fromStdString(rib.name), ".dxf"), rib.name);
+        return;
+      }
       if (type == "rib" || type == "rib_positive" ||
           type == "rib_negative" || type == "riblet") {
         if (type == "riblet") {
@@ -3490,6 +3736,14 @@ void MainWindow::exportRibs() {
     const auto partDrawing = [&](const QString& type, const std::size_t panel,
                                  const std::size_t index) {
       const auto& wing = currentStructuredPanels_[panel];
+      if (type == "builtup_stock") {
+        const auto& stock = builtUpStock[panel][index];
+        return domain::makeSheetStockPartDrawing(stock, stock.name);
+      }
+      if (type == "builtup_rib") {
+        const auto& rib = builtUpRibs[panel][index];
+        return domain::makeStructuredRibPartDrawing(rib, rib.name);
+      }
       if (type == "rib" || type == "rib_positive" ||
           type == "rib_negative" || type == "riblet") {
         if (type == "riblet") {

@@ -76,6 +76,7 @@ std::string panelGroup(const std::string& name) {
     return "Sheeting";
   if (lower.find("aileron") != std::string::npos ||
       lower.find("flap") != std::string::npos ||
+      lower.starts_with("ate") || lower.starts_with("fte") ||
       lower.find("hinge post") != std::string::npos)
     return "Controls";
   if (lower.starts_with("spoiler")) return "Spoiler Components";

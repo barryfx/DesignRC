@@ -47,6 +47,26 @@ struct SparParameters {
   double tipChordLocationPercent{-1.0};
 };
 
+// Independent construction settings for a movable control surface.
+struct BuiltUpControlParameters {
+  bool enabled{false};
+  bool topSheeting{false};
+  double topSheetingWidth{25.4};
+  double topSheetingThickness{1.5875};
+  bool topSheetingTaper{false};
+  double topSheetingTaperStartLocationPercent{50.0};
+  bool bottomSheeting{false};
+  double bottomSheetingWidth{25.4};
+  double bottomSheetingThickness{1.5875};
+  bool bottomSheetingTaper{false};
+  double bottomSheetingTaperStartLocationPercent{50.0};
+  std::vector<SparParameters> spars;
+  bool hingeSpars{false};
+  double hingeSparWidth{6.0};
+  double hingeSparHeight{1.5};
+  double hingeAngleDegrees{45.0}; // aft bevel from vertical; top edge is nearest the wing
+};
+
 struct Point3 {
   double x{};
   double y{};
@@ -59,6 +79,15 @@ struct RibOutlineSegment {
 };
 
 struct StructureParameters {
+  BuiltUpControlParameters builtUpAileron;
+  BuiltUpControlParameters builtUpFlap;
+  // Internal clipping region used to reuse wing rib/sheeting/spar construction.
+  bool controlRegion{false};
+  double controlRootSpan{}, controlTipSpan{};
+  double controlRootLeadingX{}, controlTipLeadingX{};
+  double controlHingePostWidth{}, controlHingePostHeight{};
+  BuiltUpControlParameters controlSkin;
+  bool inheritedTopTeSheeting{false}, inheritedBottomTeSheeting{false};
   bool aileronHingeParallelY{false};
   bool flapHingeParallelY{false};
   bool surfaceSampling{false};
@@ -278,6 +307,8 @@ struct ProfiledSpanMember {
   std::vector<std::vector<RibOutlineSegment>> profileSegments;
 };
 
+struct StructuredWing;
+
 struct ControlSurfacePart {
   std::string name;
   std::size_t startRibIndex{};
@@ -294,6 +325,9 @@ struct ControlSurfacePart {
   bool hingeParallelY{};
   double hingeRootX{};
   double hingeTipX{};
+  std::shared_ptr<StructuredWing> builtUpWing;
+  bool hingeSpars{false};
+  double hingeSparWidth{}, hingeSparHeight{}, hingeAngleDegrees{};
 };
 
 struct SheetStockPart {
@@ -357,6 +391,9 @@ struct SheetingPart {
   std::vector<std::vector<Point2>> fullProfiles;
   std::vector<std::vector<Point2>> controlProfiles;
   std::vector<bool> controlBays;
+  double nominalThickness{};
+  bool inheritedWingSheeting{false};
+  bool supplementalControlSheeting{false};
 };
 
 struct RibCapPart {
@@ -392,6 +429,9 @@ struct StructuredWing {
 [[nodiscard]] StructuredWing applyWingStructure(
     const std::vector<RibDefinition>& ribs,
     const StructureParameters& parameters);
+
+void nameControlTrailingEdgeStock(StructuredWing& wing,
+    std::size_t& aileronNumber, std::size_t& flapNumber);
 
 void addRiblets(StructuredWing& wing,
                 const StructureParameters& parameters);
