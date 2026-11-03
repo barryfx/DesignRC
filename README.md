@@ -4,9 +4,9 @@ DesignRC is a parametric desktop application for designing built-up RC airplane 
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 source version is **1.7.0**, dated **November 3, 2026**.
 
-> **Platform status:** DesignRC is available for Windows 11 x64, Debian/Ubuntu x86-64, and Fedora
-> x86-64. The Debian package has been tested on Ubuntu 24.04 under WSL 2 with WSLg, and the RPM
-> package has been tested in Fedora 44.
+> **Platform status:** Version 1.7.0 installers are available for Windows 11 x64, Ubuntu 26.04
+> x86-64, and Fedora 44 x86-64. The Ubuntu package has been tested under WSL 2 with WSLg and in
+> a clean Ubuntu 26.04 container; the RPM has been tested in a clean Fedora 44 container.
 
 ## What DesignRC does
 
@@ -209,13 +209,12 @@ press **F1**.
 
 ## Download
 
-The packaging commands below produce the following version 1.7.0 filenames in `dist/`.
-Installers must be built and published separately; the local Git tag does not publish downloads.
-Find available packages on the [DesignRC GitHub Releases page](https://github.com/barryfx/DesignRC/releases):
+Download installers, source archives, and checksums from the
+[DesignRC 1.7.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.7.0):
 
 - `DesignRC-1.7.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.7.0_amd64.deb` for Debian/Ubuntu x86-64. From the download directory, install and run it
+- `designrc_1.7.0_amd64.deb` for Ubuntu 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
@@ -223,16 +222,15 @@ Find available packages on the [DesignRC GitHub Releases page](https://github.co
   designrc
   ```
 
-  APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
-  and the ICU 74 runtime required by the bundled Qt build are included. Bundling ICU avoids an
-  unavailable `libicu74` dependency on Debian releases that provide a different ICU ABI. On WSL,
-  install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
+  APT installs the required distribution runtime libraries automatically. Qt 6.10.2, OCCT 8.0,
+  and ICU 78 are included. This build requires `libc6 >= 2.43` and does not target Ubuntu 24.04.
+  On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
   ```bash
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.7.0-1.x86_64.rpm` for Fedora x86-64. From the download directory, install and run it
+- `designrc-1.7.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
   with:
 
   ```bash
@@ -396,9 +394,9 @@ privileges.
 
 ## Building on Ubuntu 24.04
 
-These instructions are for Ubuntu 24.04 LTS x86-64, the only Linux environment currently tested.
-They work in a native Ubuntu installation or in WSL 2. WSL users need WSLg to run the graphical
-application.
+These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions. The published
+1.7.0 Debian package was built and tested on Ubuntu 26.04 instead. Native Ubuntu and WSL 2 are
+supported build environments; WSL users need WSLg to run the graphical application.
 
 ### Build dependencies
 
@@ -490,7 +488,8 @@ sh packaging/linux/build-package.sh
 
 The script uses `build/linux-release` and stages the package on the native Linux filesystem so file
 permissions remain correct when the source tree is hosted on a WSL `/mnt/c` mount. It writes the
-Ubuntu 24.04 x86-64 `.deb`, corresponding source archive, and SHA-256 checksums to:
+x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source archive, and
+SHA-256 checksums to:
 
 ```text
 dist/designrc_1.7.0_amd64.deb
