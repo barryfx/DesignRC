@@ -35,12 +35,111 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <mutex>
 #include <numbers>
 #include <QFile>
 #include <QTemporaryDir>
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
+  if (argc > 1 && std::string{argv[1]} == "--control-direction") {
+    using namespace designrc::domain;
+    for (bool curved : {false, true}) for (bool flap : {false, true}) for (int construction = 0; construction < 3; ++construction) {
+      std::cerr << "Perpendicular control: curved=" << curved << " flap=" << flap
+                << " construction=" << construction << '\n';
+      WingParameters panel;
+      panel.halfSpan = 160; panel.rootChord = 200; panel.tipChord = 180;
+      panel.sweep = 40; panel.ribCount = 7; panel.ribThickness = 2; panel.dihedralDegrees = 0;
+      if (curved) {
+        panel.planform = {{{0, 0}, {4, .5}, {15, 1}}, {{200, 0}, {215, .5}, {205, 1}}, 160, 160};
+        panel.tipTwistDegrees = 2;
+      }
+      const auto foil = AirfoilProfile::nacaSymmetric(.15);
+      const auto ribs = generateRibs(panel, foil, foil);
+      StructureParameters settings;
+      settings.ribThickness = 2;
+      settings.ailerons = !flap; settings.flaps = flap;
+      settings.aileronStartRib = settings.flapStartRib = 2;
+      settings.aileronStopRib = 7; settings.flapStopRib = 6;
+      settings.aileronWidth = settings.flapWidth = 40;
+      settings.aileronHingePostHeight = settings.flapHingePostHeight = 40;
+      settings.aileronPerpendicularToRibs = settings.flapPerpendicularToRibs = true;
+      auto& options = flap ? settings.builtUpFlap : settings.builtUpAileron;
+      options.enabled = construction != 0; options.hingeSpars = construction == 2;
+      options.hingeSparWidth = 3; options.hingeSparHeight = 1;
+      options.topSheeting = options.bottomSheeting = true;
+      options.topSheetingThickness = options.bottomSheetingThickness = .5;
+      const auto wing = testsupport::buildStructure(ribs, settings);
+      const auto& control = wing.controlSurfaces.front();
+      assert(control.perpendicularToRibs && std::abs(control.hingeRootX - control.hingeTipX) < 1e-8);
+      const auto& root = ribs[control.startRibIndex];
+      assert(std::abs(root.leadingEdgeOffset + root.chord - control.hingeRootX - 40) < 1e-8);
+      for (std::size_t i = 0; i < control.profiles.size(); ++i) {
+        const auto first = std::min_element(control.profiles[i].begin(), control.profiles[i].end(),
+            [](Point2 a, Point2 b) { return a.x < b.x; });
+        assert(std::abs(first->x + ribs[control.startRibIndex + i].leadingEdgeOffset - control.hingeRootX) < 1e-7);
+      }
+      designrc::geometry::MaterialShapeSet parts;
+      for (std::size_t r = 0; r < wing.ribs.size(); ++r)
+        for (const auto& segment : wing.ribs[r].outlineSegments)
+          for (std::size_t i = 1; i < segment.points.size(); ++i)
+            assert(std::hypot(segment.points[i].x - segment.points[i-1].x,
+                              segment.points[i].y - segment.points[i-1].y) >= 1e-7);
+      std::string lastStage;
+      TopoDS_Shape shape;
+      try {
+        shape = designrc::geometry::buildStructuredWingPreview(wing, 2, nullptr, &parts,
+            [&](int, const std::string& stage) { lastStage = stage; }, 1);
+      } catch (...) {
+        std::cerr << "Failed during " << lastStage << '\n';
+        throw;
+      }
+      assert(!shape.IsNull() && !parts.parts.empty());
+      for (const auto& part : parts.parts)
+        if (!BRepCheck_Analyzer{part.shape, false}.IsValid())
+          throw std::runtime_error("Invalid perpendicular control component: " + part.name);
+    }
+    {
+      WingParameters tapered;
+      tapered.rootChord = 200; tapered.tipChord = 140; tapered.sweep = 30;
+      tapered.halfSpan = 180; tapered.ribCount = 7; tapered.dihedralDegrees = 0;
+      const auto foil = AirfoilProfile::nacaSymmetric(.15);
+      const auto ribs = generateRibs(tapered, foil, foil);
+      SparParameters spar;
+      spar.material = 0; spar.verticalLocation = 0; spar.woodWidth = 4; spar.woodHeight = 2;
+      spar.chordLocationPercent = spar.tipChordLocationPercent = 85;
+      std::vector<double> front(ribs.size(), 0), rear;
+      for (const auto& rib : ribs) rear.push_back(rib.chord - 40);
+      const auto fitted = fitSparAheadOfRearBoundary(ribs, spar, front, rear);
+      assert(fitted);
+      spar.chordLocationPercent = fitted->first; spar.tipChordLocationPercent = fitted->second;
+      StructureParameters settings;
+      settings.trailingEdgeType = 2; settings.trailingEdgeWidth = 40; settings.trailingEdgeHeight = 40;
+      settings.spars = {spar};
+      const auto wing = applyWingStructure(ribs, settings);
+      const auto& centers = wing.members.front().centers;
+      const double slopeX = ribs.back().leadingEdgeOffset + centers.back().x -
+          ribs.front().leadingEdgeOffset - centers.front().x;
+      assert(std::abs(slopeX + 30) < .04);
+      const auto shape = designrc::geometry::buildStructuredWingPreview(wing, settings.ribThickness);
+      assert((!shape.IsNull() && BRepCheck_Analyzer{shape, false}.IsValid()));
+      auto blocked = spar; blocked.woodWidth = 6;
+      SparParameters original = spar; original.chordLocationPercent = original.tipChordLocationPercent = 85;
+      assert(!fitSparAheadOfRearBoundary(ribs, original, front, rear, {}, {blocked}));
+    }
+    WingParameters panel;
+    panel.rootChord = 200; panel.tipChord = 160; panel.sweep = -30;
+    panel.ribCount = 7; panel.dihedralDegrees = 0;
+    const auto foil = AirfoilProfile::nacaSymmetric(.15);
+    StructureParameters invalid;
+    invalid.ailerons = invalid.aileronPerpendicularToRibs = true;
+    invalid.aileronStartRib = 2; invalid.aileronStopRib = 7; invalid.aileronWidth = 20;
+    bool rejected = false;
+    try { static_cast<void>(applyWingStructure(generateRibs(panel, foil, foil), invalid)); }
+    catch (const std::invalid_argument& error) { rejected = std::string{error.what()}.find("crosses the TE") != std::string::npos; }
+    assert(rejected);
+    return 0;
+  }
   if (argc > 1 && std::string{argv[1]} == "--hinge-spars") {
     using namespace designrc::domain;
     for (int fixture = 0; fixture < 4; ++fixture) {
@@ -202,9 +301,50 @@ int runTest(int argc, char* argv[]) {
         }
       }
       designrc::geometry::MaterialShapeSet materials;
+      std::mutex progressMutex;
+      std::vector<std::pair<int, std::string>> events;
       auto shape = designrc::geometry::buildStructuredWingPreview(wing, settings.ribThickness,
-          nullptr, &materials);
+          nullptr, &materials, [&](int value, const std::string& message) {
+            std::scoped_lock lock{progressMutex};
+            events.emplace_back(value, message);
+          });
       assert(!shape.IsNull());
+      assert(!events.empty() && events.back().first == 100 && events.back().second == "Panel geometry complete");
+      int previousProgress = 0, completeCount = 0;
+      for (const auto& [value, message] : events) {
+        assert(value >= previousProgress && value <= 100);
+        previousProgress = value;
+        if (message == "Panel geometry complete") ++completeCount;
+        if (value == 100) assert(message == "Panel geometry complete");
+      }
+      assert(completeCount == 1);
+      for (const std::string name : {"Aileron", "Flap"}) {
+        bool hasRibs = false, hasSheets = false, hasSpars = false, hasMesh = false, finished = false;
+        int updates = 0;
+        for (const auto& [value, message] : events) {
+          if (!message.starts_with(name + " (")) continue;
+          assert(value < 100);
+          ++updates;
+          hasRibs = hasRibs || message.find("Building Rib Solids") != std::string::npos;
+          hasSheets = hasSheets || message.find("Lofting") != std::string::npos;
+          hasSpars = hasSpars || message.find("Building Spar") != std::string::npos;
+          hasMesh = hasMesh || message.find("Meshing geometry") != std::string::npos;
+          finished = finished || message.ends_with("Geometry complete");
+        }
+        assert(hasRibs && hasSheets && hasSpars && hasMesh && finished && updates > 5);
+      }
+      if (!curved) {
+        std::atomic_bool cancelled{false};
+        bool stopped = false;
+        try {
+          static_cast<void>(designrc::geometry::buildStructuredWingPreview(wing, settings.ribThickness,
+              nullptr, nullptr, [&](int, const std::string& message) {
+                if ((message.starts_with("Aileron (") || message.starts_with("Flap (")) &&
+                    message.find("Building Rib Solids") != std::string::npos) cancelled = true;
+              }, 2, [&] { return cancelled.load(); }));
+        } catch (const designrc::geometry::GeometryCancelled&) { stopped = true; }
+        assert(cancelled && stopped);
+      }
       bool hasRib = false, hasSpar = false, hasSheet = false;
       for (const auto& part : materials.parts) {
         assert(part.name != "Aileron" && part.name != "Flap");

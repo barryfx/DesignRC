@@ -1709,6 +1709,7 @@ double addPlanAnnotations(TechnicalDrawingDocument& document, const PlanLayout& 
           drawingPoint(layout, false, layout.lowerRow, panel.span[ribIndex],
                        (bounds.first + bounds.second) * 0.5),
           QString::fromStdString(control.name) + "\n" +
+              (control.perpendicularToRibs ? QString{"Root Width x Height: "} : QString{}) +
               formatParameterSize(dimensions.first,
                   isAileron ? "aileronWidth" : "flapWidth",
                   dimensions.second,

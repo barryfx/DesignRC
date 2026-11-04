@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.7.0 User Help</title>
+  <title>DesignRC 1.7.1 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,14 +44,14 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.7.0 User Help</h1>
+    <h1>DesignRC 1.7.1 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
-      <a href="#new-170">New in 1.7.0</a>
+      <a href="#new-171">New in 1.7.1</a>
       <a href="#imported-curves">Import LE/TE curves</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
@@ -90,11 +90,21 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
-      <h2 id="new-170">New in 1.7.0 &mdash; November 3, 2026</h2>
+      <h2 id="new-171">New in 1.7.1 &mdash; November 4, 2026</h2>
+      <ul>
+        <li><strong>Control direction:</strong> Perpendicular to Ribs makes the aileron or flap hinge perpendicular to the rib axis; Root Width sets its chordwise width at the first control rib.</li>
+        <li><strong>Control construction:</strong> top and bottom skins extend from the hinge post or spar to the TE without a Width field. New-project hinge spars default to 3/8 inch wide, 1/4 inch high, and a 35-degree hinge angle.</li>
+        <li><strong>Sleeves:</strong> separate OD and ID fields define each sleeve. ID starts 1 mm below OD, both panel defaults match, and mirrored root sleeves retain their bore and outside diameter.</li>
+        <li><strong>Spar clearance:</strong> acknowledging a rear-spar collision can move it just ahead of the TE, aileron, or flap. Width changes also maintain clearance. The correction follows the front edge when possible and is rejected if it creates another collision.</li>
+        <li><strong>Unit defaults:</strong> changing global units rounds defaults to whole millimeters (1/16 inch becomes 1.5 mm) or the nearest displayed inch fraction. Closing Defaults applies new defaults to project fields displayed in different units.</li>
+        <li><strong>Generation progress:</strong> ailerons and flaps now report rib, stock, skin, collision-check, and mesh stages. Panel completion appears after the controls finish.</li>
+      </ul>
+
+      <h2 id="new-170">Earlier: 1.7.0 &mdash; November 3, 2026</h2>
       <ul>
         <li><strong>Built-up controls:</strong> ailerons and flaps can have separate ribs, top/bottom skins, and additional Top/Bottom wood or carbon spars. A divider separates the control groups. Every new parameter is saved in projects and available in Edit &gt; Defaults.</li>
         <li><strong>Hinge choices:</strong> matching wing/control Hinge Posts or four Top/Bottom Hinge Spars. Spar mode adds Width, Height, and Hinge Angle, measured aft from vertical. Ribs and moving spars share the bevel, and all four spars finish at the moving end-rib faces. Only the selected construction's fields appear.</li>
-        <li><strong>Sheeting:</strong> selected control skins recess the ribs and meet inherited wing TE sheets or stock without overriding wing settings. Hinge-spar skins automatically reach the corresponding spar; Hinge Post mode keeps adjustable Width. Manual control-skin taper options are removed. Sheets stop at both sides of hinge and spanwise gaps.</li>
+        <li><strong>Sheeting:</strong> selected control skins recess the ribs and meet inherited wing TE sheets or stock without overriding wing settings. Skins automatically extend from the aft face of their hinge post or spar to the TE, with no skin Width parameter. Manual control-skin taper options are removed. Sheets stop at both sides of hinge and spanwise gaps.</li>
         <li><strong>Part names:</strong> ARn and FRn identify aileron/flap ribs everywhere; ATE1, ATE2, etc. and FTE1, FTE2, etc. identify their stock TE parts. Plans include spar, skin-thickness, and TE-stock dimension leaders. Shared rib labels no longer overlap, false full-chord boundary lines are removed, and hinge-side rib contours no longer double back at the top spar.</li>
         <li><strong>Joiner length:</strong> Number of Rib Bays applies to fixed wood/tube/rod joiners and removable sleeves/rods. One bay crosses two ribs, including R1a when present. The selected span must fit both adjoining panels. Alignment pins keep their existing lengths. Joiners that leave rib boundaries are rejected with the joiner and rib identified.</li>
         <li><strong>Stock and spar fixes:</strong> LE/post height equality is accepted, undersized hinge posts report their minimum height, curved/twisted control spars are fitted, exported ribs retain TE-sheet recesses, and deleting all spars no longer restores obsolete legacy spars on reload.</li>
@@ -245,7 +255,7 @@
       </ul>
       <h3>Removable Panel</h3>
       <dl>
-        <dt>Sleeve/Rod Joiner</dt><dd>Defines which side of the joint carries the sleeve and rod, their materials, diameters, and corresponding adjoining-panel parts. The rod remains straight through the joint and extends into the sleeve so the panels can slide together for flight and apart for transport.</dd>
+        <dt>Sleeve/Rod Joiner</dt><dd>Defines which side of the joint carries the sleeve and rod, their materials, diameters, and corresponding adjoining-panel parts. Each sleeve has OD and ID fields; a new ID defaults to OD minus 1 mm. ID follows OD changes until you enter a different ID. Startup sleeve dimensions match on both sides; Edit &gt; Defaults can specify independent sizes. Alignment sleeves also have ID fields. Sleeve IDs are saved in projects; older projects retain their previously inferred bores. The rod remains straight through the joint and extends into the sleeve so the panels can slide together for flight and apart for transport.</dd>
         <dt>Alignment Pin</dt><dd>Defines either a sleeve/pin arrangement or a pin/hole arrangement, including side, material, and diameter.</dd>
         <dt>Delete Checked</dt><dd>Removes the selected fixed or removable rows.</dd>
       </dl>
@@ -279,6 +289,7 @@
       </dl>
 
       <h2 id="controls">Ailerons/Flaps tab</h2>
+      <p><strong>Perpendicular to Ribs</strong>, above Width and Height for each control, makes the hinge spanwise and perpendicular to the rib chord direction. Width becomes <strong>Root Width</strong>, measured at the control's first rib; the tip width follows the wing's taper, sweep, or imported TE. This option is saved in projects and available in Edit &gt; Defaults. It is separate from the imported-curve Hinge Parallel with Y Axis option, which measures maximum width. The two options are mutually exclusive. A hinge that crosses the LE or TE is rejected.</p>
       <p>Ailerons and flaps can be solid controls or built-up assemblies of ribs, stock, spars, and sheeting. Solid controls use separate closed solids with airfoil-derived start and end profiles. Imported planforms add intermediate geometry sections to follow the curved trailing edge without adding physical ribs.</p>
       <p>With imported curves, each enabled control has <strong>Hinge Parallel with Y Axis</strong> below Width/Height. Unchecked, Width sets the chordwise distance from the TE at each end and a straight line connects those hinge endpoints; the interior may be wider. Checked, the hinge is parallel to Y and Width is the maximum chordwise width. A hinge that crosses the TE or leaves insufficient room for its post is rejected.</p>
       <dl>
@@ -295,8 +306,8 @@
       </ul>
 
       <h3>Built-up ailerons and flaps</h3>
-      <p>Select <strong>Built-up Aileron</strong> or <strong>Built-up Flap</strong> to replace the solid movable surface with separate ribs. Choose one hinge construction: <strong>Hinge Post</strong> reveals Hinge Post Width and Height and creates matching wing-side and movable-side posts; <strong>Top/Bottom Spar</strong> reveals Height, Width, and Hinge Angle and creates top and bottom wood spars on both sides of the hinge gap. Hinge Angle is the aft bevel from vertical: the top edge of the control is closest to the wing and the bottom is farther aft. The moving rib and spars are cut to the same bevel. Open spar notches leave stock at the gap for sanding to the airfoil surface; the spar faces are trimmed flush with the bevel. All four spars end flush with the outside faces of the movable end ribs. Invalid dimensions or an angle that leaves no usable rib produce the usual geometry warning. These settings also appear in Edit &gt; Defaults.</p>
-      <p>Independent <strong>Top Sheeting</strong> and <strong>Bottom Sheeting</strong> provide Thickness and use the same construction and rib recesses as wing TE sheeting. With Top/Bottom Spar hinges, each selected sheet automatically reaches the aft face of its hinge spar; Width is hidden. With Hinge Post construction, Width remains adjustable, and widths reaching the front edge cover the full control chord. Built-up control sheeting has no manual taper controls. When both sides meet at the TE, their thicknesses are resolved automatically to fit. These options do not change the wing's TE stock or sheeting settings. Built-up controls retain the selected wing TE stock; their ribs end at that stock, with sheeting butted against it. A warning reports when the hinge construction and TE stock leave no room for a rib.</p>
+      <p>Select <strong>Built-up Aileron</strong> or <strong>Built-up Flap</strong> to replace the solid movable surface with separate ribs. Choose one hinge construction: <strong>Hinge Post</strong> reveals Hinge Post Width and Height and creates matching wing-side and movable-side posts; <strong>Top/Bottom Spar</strong> reveals Height, Width, and Hinge Angle and creates top and bottom wood spars on both sides of the hinge gap. New hinge-spar defaults are 1/4 inch (6.35 mm) Height, 3/8 inch (9.525 mm) Width, and 35 degrees Hinge Angle. Hinge Angle is the aft bevel from vertical: the top edge of the control is closest to the wing and the bottom is farther aft. The moving rib and spars are cut to the same bevel. Open spar notches leave stock at the gap for sanding to the airfoil surface; the spar faces are trimmed flush with the bevel. All four spars end flush with the outside faces of the movable end ribs. Invalid dimensions or an angle that leaves no usable rib produce the usual geometry warning. These settings also appear in Edit &gt; Defaults.</p>
+      <p>Independent <strong>Top Sheeting</strong> and <strong>Bottom Sheeting</strong> provide Thickness and use the same construction and rib recesses as wing TE sheeting. Each selected sheet automatically extends from the aft face of its hinge post or spar to the TE; there is no skin Width parameter. Existing wing TE sheeting or stock is retained, and the control skin butts against it. Built-up control sheeting has no manual taper controls. When both sides meet at the TE, their thicknesses are resolved automatically to fit. These options do not change the wing's TE stock or sheeting settings. Built-up controls retain the selected wing TE stock; their ribs end at that stock, with sheeting butted against it. A warning reports when the hinge construction and TE stock leave no room for a rib.</p>
       <p><strong>Add Spar</strong> and <strong>Delete Spar</strong> manage checked spar rows. Root/Tip Chord Location is measured from the movable surface's front edge (0%) to its TE (100%). Wood and CF tube/rod/strip options match the Spars tab; vertical location is Top or Bottom. Surface spars remain straight; their axes are recessed as needed to clear changing airfoils, twist, and selected sheeting throughout the control span. Stock too large to fit is rejected. Built-up ribs appear in parts exports, and the separate construction is included in plans and STEP assemblies. Control TE stock uses ATE1, ATE2, etc. for ailerons and FTE1, FTE2, etc. for flaps, numbered separately across panels. These names appear on exported parts and in STEP assemblies; plan leaders show each stock part name, Width, and Height. All options are saved with projects and User Defaults.</p>
       <p>Hinge Post Height must be at least the adjoining wing-side and movable-side rib cut heights. An undersized value reports the required minimum and updates the field; generate again after the correction. Equality is accepted. Movable ribs use <strong>ARn</strong> (aileron) and <strong>FRn</strong> (flap) throughout plans, rib drawings, the Export Parts dialog, exported part labels and filenames, and STEP assemblies. Plans separate labels at shared flap/aileron joints and include leaders for each control spar and skin thickness. Wing TE sheeting continues into built-up controls and recesses their exported ribs. The fixed-wing and movable sheets stop on their respective sides of hinge and spanwise end gaps, including shared flap/aileron joints. Additional control skins butt against that TE sheet without adding a second overlapping layer.</p>
       <h2 id="spoilers">Spoilers tab</h2>
@@ -315,6 +326,7 @@
       <h2 id="generate">Generate Wing</h2>
       <p><strong>Generate Wing</strong> validates every panel and then builds ribs, openings, members, controls, joiners, material solids, the mirrored assembly, and display meshes. Progress messages identify the active stage. <strong>Cancel</strong> interrupts rib lightening-hole layout, hole cutting, and rib meshing, including parallel workers. Other individual solid-modeling operations may need to finish before cancellation takes effect.</p>
       <p>Successful generation enables Generate Plan, Export Parts, and Export STEP. A failed generation reports the specific panel or component and leaves the last valid preview intact.</p>
+      <p>Built-up controls report separate aileron and flap progress, including rib counts, individual stock, sheeting, spars, clearance checks, and display meshing. Panel completion is reported only after its controls are finished. The overall percentage includes control construction, and multi-panel status identifies a panel still working.</p>
 
       <h2 id="viewport">3D View</h2>
       <dl>
@@ -361,11 +373,13 @@
         <li>built-up aileron/flap skins and spars, Hinge Post/Top-Bottom Spar construction with Hinge Angle, and fixed/removable joiner Number of Rib Bays; and</li>
         <li>per-parameter Global/mm/in choices and default rows for spars and joiners.</li>
       </ul>
-      <p>Saving User Defaults does not overwrite the current project. New projects use the saved settings; a fresh installation uses the installed defaults, with build tabs and both rib-cap options unchecked.</p>
+      <p>New projects use all saved settings. Saving Defaults also updates current project length fields that use different units from the selected global unit, as described below. A fresh installation uses the installed defaults, with build tabs and both rib-cap options unchecked.</p>
+      <p>Changing the global length unit in Defaults rounds lengths that use Global units: inches to whole millimeters (except 1/16 inch becomes 1.5 mm), or millimeters to the nearest 1/32 inch. Explicit mm/in overrides retain their values in Defaults. On Save, current project length fields displayed in other units receive the saved default dimensions and follow the new global unit; fields already displayed in the new unit retain their values. Regenerate the wing after these changes. New projects use all saved defaults. Cancel discards the default changes.</p>
 
       <h2 id="validation">Validation and automatic corrections</h2>
       <p>DesignRC checks parameter ranges and geometric feasibility before and during generation. Examples include overlapping controls, shared control widths, spoiler-to-spar and spoiler-to-TE collisions, wiring-hole fit, riblet prerequisites, LE/TE stock height, spar and joiner collisions, joiner-to-joiner collisions, tube dimensions, wood-joiner alignment, and failed solid Boolean operations.</p>
       <p>When only one valid correction exists, DesignRC may adjust a related field and explain the change. Otherwise generation stops with a message identifying what must be corrected.</p>
+      <p>A spar placed into TE stock, an aileron, or a flap reports a collision. Closing the message proposes Root and Tip Chord Locations that leave 0.25 mm clearance and run parallel to the obstruction's straight front edge where possible. Curved edges use a forward offset. Increasing the TE or control Width also checks the rear spar automatically. Moves that intersect other spars or the front stock are rejected. If full geometry generation finds another collision, the proposed move is rolled back to the original root and tip locations. Generate Wing again after a correction; a spar that cannot fit requires a design change.</p>
       <p>An LE or hinge-post Height equal to the adjoining rib cut is valid. In Top/Bottom Spar hinge mode, the spar Width must exceed Height multiplied by the tangent of Hinge Angle; the pair must leave rib material between them, clear TE stock, and avoid other control spars. Moving rib bevels and exported outlines share the same geometry. After changing construction or sheeting, regenerate the wing before re-exporting previously saved parts.</p>
       <div class="note warning"><strong>Manufacturing responsibility:</strong> inspect exported geometry, material choices, clearances, structural loads, and machine settings before cutting or flying. DesignRC does not certify structural strength or airworthiness.</div>
 
@@ -381,7 +395,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.7.0 &middot; Release date: November 3, 2026</footer>
+  <footer>DesignRC 1.7.1 &middot; Release date: November 4, 2026</footer>
 </div>
 </body>
 </html>

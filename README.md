@@ -2,9 +2,9 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.7.0**, dated **November 3, 2026**.
+source version is **1.7.1**, dated **November 4, 2026**.
 
-> **Platform status:** Version 1.7.0 installers are available for Windows 11 x64, Ubuntu 26.04
+> **Platform status:** Version 1.7.1 installers are available for Windows 11 x64, Ubuntu 26.04
 > x86-64, and Fedora 44 x86-64. The Ubuntu package has been tested under WSL 2 with WSLg and in
 > a clean Ubuntu 26.04 container; the RPM has been tested in a clean Fedora 44 container.
 
@@ -30,6 +30,19 @@ source version is **1.7.0**, dated **November 3, 2026**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
+## What's new in 1.7.1 (November 4, 2026)
+
+- Ailerons and flaps support **Perpendicular to Ribs** with a **Root Width** field.
+  Their skins extend from the hinge post/spar to the TE without a separate width.
+- New-project hinge spars default to **3/8-inch Width**, **1/4-inch Height**, and **35 degrees**.
+- Sleeve joiners expose matching OD/ID defaults for both panels, with ID initially
+  1 mm below OD. Root sleeves retain both diameters when mirrored.
+- Rear-spar clearance corrections follow the intersecting geometry's front edge when
+  possible and are rejected if they introduce another collision.
+- Global-unit changes round defaults to practical millimeter or fractional-inch values;
+  closing Defaults updates project fields displayed in different units.
+- Geometry generation reports detailed aileron/flap stages before panel completion.
+
 ## What's new in 1.7.0 (November 3, 2026)
 
 - **Built-up ailerons and flaps:** independently enable separate control ribs, top/bottom
@@ -44,8 +57,8 @@ press **F1**.
   Only the selected construction's parameter fields appear.
 - **Control sheeting:** selected skins recess the ribs and butt against inherited wing TE
   sheeting or stock without changing the wing settings. In hinge-spar mode, skins reach
-  their respective hinge spars automatically and Width is hidden. Hinge-post mode keeps
-  adjustable skin widths. Manual control-skin taper fields are removed; thickness at a
+  their respective hinge posts or spars automatically and extend to the TE, with no
+  skin Width parameter. Manual control-skin taper fields are removed; thickness at a
   shared thin TE is resolved automatically. Wing and control sheets stop on both sides
   of hinge and spanwise gaps, including shared flap/aileron joints.
 - **Manufacturing geometry:** control spars fit changing airfoils, curves, and twist.
@@ -210,15 +223,15 @@ press **F1**.
 ## Download
 
 Download installers, source archives, and checksums from the
-[DesignRC 1.7.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.7.0):
+[DesignRC 1.7.1 release](https://github.com/barryfx/DesignRC/releases/tag/1.7.1):
 
-- `DesignRC-1.7.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.7.1-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.7.0_amd64.deb` for Ubuntu 26.04 x86-64. From the download directory, install and run it
+- `designrc_1.7.1_amd64.deb` for Ubuntu 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.7.0_amd64.deb
+  sudo apt install ./designrc_1.7.1_amd64.deb
   designrc
   ```
 
@@ -230,15 +243,15 @@ Download installers, source archives, and checksums from the
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.7.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
+- `designrc-1.7.1-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.7.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.7.1-1.x86_64.rpm
   designrc
   ```
 
-Release packaging also produces source archives and `DesignRC-1.7.0-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.7.1-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -335,7 +348,7 @@ Run the complete suite with:
 ctest --preset windows-debug
 ```
 
-The complete suite contains 14 tests:
+The complete suite contains 15 tests:
 
 - `designrc_domain_tests` - airfoil, structure, naming, DXF, and SVG behavior;
 - `designrc_gui_tests` - defaults, parameter controls, plans, and PDF/DXF/SVG generation;
@@ -345,6 +358,7 @@ The complete suite contains 14 tests:
 - `designrc_stock_fit_tests` - stock height fits, sheeting recesses, hinge-sheet coverage,
   and exported rib contours;
 - `designrc_hinge_spar_tests` - beveled hinge ribs/spars, sheeting, curves, and end-face alignment;
+- `designrc_control_direction_tests` - perpendicular control hinges, root widths, and solid construction;
 - `designrc_builtup_control_tests` - built-up control solids and spar fitting;
 - `designrc_planform_tests` - curve import, normalization, hinges, and exports;
 - `designrc_sweep_tests` and `designrc_sweep_assembly_tests` - curved solid sweeps and assemblies;
@@ -395,7 +409,7 @@ privileges.
 ## Building on Ubuntu 24.04
 
 These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions. The published
-1.7.0 Debian package was built and tested on Ubuntu 26.04 instead. Native Ubuntu and WSL 2 are
+1.7.1 Debian package was built and tested on Ubuntu 26.04 instead. Native Ubuntu and WSL 2 are
 supported build environments; WSL users need WSLg to run the graphical application.
 
 ### Build dependencies
@@ -492,15 +506,15 @@ x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source ar
 SHA-256 checksums to:
 
 ```text
-dist/designrc_1.7.0_amd64.deb
-dist/DesignRC-1.7.0-source.tar.gz
-dist/DesignRC-1.7.0-Linux-x64.sha256
+dist/designrc_1.7.1_amd64.deb
+dist/DesignRC-1.7.1-source.tar.gz
+dist/DesignRC-1.7.1-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.7.0_amd64.deb
+sudo apt install ./dist/designrc_1.7.1_amd64.deb
 ```
 
 ## Building on Fedora
@@ -549,15 +563,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.7.0-1.x86_64.rpm
-dist/DesignRC-1.7.0-source.tar.gz
-dist/DesignRC-1.7.0-Linux-RPM-x64.sha256
+dist/designrc-1.7.1-1.x86_64.rpm
+dist/DesignRC-1.7.1-source.tar.gz
+dist/DesignRC-1.7.1-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.7.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.7.1-1.x86_64.rpm
 designrc
 ```
 

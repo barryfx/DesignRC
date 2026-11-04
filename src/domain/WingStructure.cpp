@@ -1208,6 +1208,166 @@ std::vector<RibOutlineSegment> makeRibOutlineSegments(
   return splitAtLeadingEdge;
 }
 
+namespace {
+struct SparSectionSize { double width, height; bool circular; };
+SparSectionSize sparSectionSize(const SparParameters& spar) {
+  const bool circular = spar.material != 0 && spar.type != 2;
+  const double width = spar.material == 0 ? spar.woodWidth : spar.type == 2 ? spar.stripWidth :
+      spar.type == 0 ? spar.tubeOd : spar.rodOd;
+  return {width, spar.material == 0 ? spar.woodHeight : spar.type == 2 ? spar.stripThickness : width, circular};
+}
+Point2 sparSectionCenter(const RibDefinition& rib, const SparParameters& spar, double percent) {
+  return spar.verticalLocation == 2 ? camberCenter(rib, percent / 100.0 * rib.chord) :
+      surfaceCenter(rib, percent / 100.0, spar.verticalLocation == 0, sparSectionSize(spar).height);
+}
+std::vector<Point2> sampledSparCenters(const std::vector<RibDefinition>& ribs, const SparParameters& spar) {
+  const auto root = sparSectionCenter(ribs.front(), spar, spar.chordLocationPercent);
+  const auto tip = sparSectionCenter(ribs.back(), spar,
+      spar.tipChordLocationPercent < 0 ? spar.chordLocationPercent : spar.tipChordLocationPercent);
+  std::vector<Point2> nominal(ribs.size());
+  nominal.front() = root; nominal.back() = tip;
+  return straightMemberCenters(ribs, nominal);
+}
+} // namespace
+
+bool sparClearsOtherSpars(const std::vector<RibDefinition>& ribs,
+    const SparParameters& spar, const std::vector<SparParameters>& otherSpars) {
+  if (ribs.size() < 2) return false;
+  const auto a = sparSectionSize(spar);
+  const auto centers = sampledSparCenters(ribs, spar);
+  for (const auto& other : otherSpars) {
+    const auto b = sparSectionSize(other);
+    const auto otherCenters = sampledSparCenters(ribs, other);
+    for (std::size_t i = 0; i < ribs.size(); ++i) {
+      double dx = std::abs(centers[i].x - otherCenters[i].x);
+      double dy = std::abs(centers[i].y - otherCenters[i].y);
+      if (a.circular && b.circular) {
+        if (std::hypot(dx, dy) < (a.width + b.width) * .5 - 1e-5) return false;
+      } else if (!a.circular && !b.circular) {
+        if (dx < (a.width + b.width) * .5 - 1e-5 && dy < (a.height + b.height) * .5 - 1e-5) return false;
+      } else {
+        const auto& rectangle = a.circular ? b : a;
+        const double radius = (a.circular ? a.width : b.width) * .5;
+        dx = std::max(0.0, dx - rectangle.width * .5);
+        dy = std::max(0.0, dy - rectangle.height * .5);
+        if (std::hypot(dx, dy) < radius - 1e-5) return false;
+      }
+    }
+  }
+  return true;
+}
+
+double controlForwardBoundary(const RibDefinition& rib, const double hingeX,
+    const double gap, const double postWidth, const BuiltUpControlParameters& construction) {
+  if (!construction.enabled || !construction.hingeSpars) return hingeX - gap - postWidth;
+  const auto section = hingeSparSection(rib, hingeX - gap, construction, false);
+  double front = hingeX;
+  for (const auto& profile : section.profiles)
+    for (const auto& point : profile) front = std::min(front, point.x);
+  return front;
+}
+
+std::optional<std::pair<double, double>> fitSparAheadOfRearBoundary(
+    const std::vector<RibDefinition>& ribs, const SparParameters& spar,
+    const std::vector<double>& frontLimits, const std::vector<double>& rearLimits,
+    const std::vector<int>& rearOwners, const std::vector<SparParameters>& otherSpars) {
+  if (ribs.size() < 2 || frontLimits.size() != ribs.size() || rearLimits.size() != ribs.size())
+    return std::nullopt;
+  const double root = spar.chordLocationPercent;
+  const double tip = spar.tipChordLocationPercent < 0 ? root : spar.tipChordLocationPercent;
+  const double width = spar.material == 0 ? spar.woodWidth : spar.type == 2 ? spar.stripWidth :
+      spar.type == 0 ? spar.tubeOd : spar.rodOd;
+  const double height = spar.material == 0 ? spar.woodHeight : spar.type == 2 ? spar.stripThickness : width;
+  if (!std::isfinite(width) || width <= 0 || !std::isfinite(height) || height <= 0) return std::nullopt;
+  const auto candidateAt = [&](double shift) {
+    const double rootPercent = std::floor(std::max(0.0, root - shift) * 100.0 + 1e-8) / 100.0;
+    const double tipPercent = std::floor(std::max(0.0, tip - shift) * 100.0 + 1e-8) / 100.0;
+    auto candidate = spar;
+    candidate.chordLocationPercent = rootPercent; candidate.tipChordLocationPercent = tipPercent;
+    return candidate;
+  };
+  const auto centersAt = [&](double shift) { return sampledSparCenters(ribs, candidateAt(shift)); };
+  const auto acceptable = [&](const SparParameters& candidate) {
+    const auto centers = sampledSparCenters(ribs, candidate);
+    for (std::size_t i = 0; i < ribs.size(); ++i)
+      if (centers[i].x - width * .5 < frontLimits[i] + .25 ||
+          centers[i].x + width * .5 > rearLimits[i] - .25 + 1e-7) return false;
+    return sparClearsOtherSpars(ribs, candidate, otherSpars);
+  };
+  // Keep 0.25 mm beyond the stock face, including rounding to the GUI's 0.01%.
+  const auto clearsRear = [&](const std::vector<Point2>& centers) {
+    for (std::size_t i = 0; i < ribs.size(); ++i)
+      if (centers[i].x + width * .5 > rearLimits[i] - .25) return false;
+    return true;
+  };
+  const auto originalCenters = centersAt(0);
+  if (clearsRear(originalCenters)) return std::pair{root, tip};
+  std::size_t worst = 0;
+  for (std::size_t i = 1; i < ribs.size(); ++i)
+    if (originalCenters[i].x - rearLimits[i] > originalCenters[worst].x - rearLimits[worst]) worst = i;
+  std::size_t first = 0, last = ribs.size() - 1;
+  if (rearOwners.size() == ribs.size()) {
+    const int owner = rearOwners[worst];
+    while (first < last && rearOwners[first] != owner) ++first;
+    while (last > first && rearOwners[last] != owner) --last;
+  }
+  if (last > first) {
+    const double slope = (ribs[last].leadingEdgeOffset + rearLimits[last] -
+        ribs[first].leadingEdgeOffset - rearLimits[first]) /
+        (ribs[last].spanPosition - ribs[first].spanPosition);
+    const double intercept = ribs[first].leadingEdgeOffset + rearLimits[first] - slope * ribs[first].spanPosition;
+    bool straight = true;
+    for (std::size_t i = first; i <= last; ++i) {
+      if (rearOwners.size() == ribs.size() && rearOwners[i] != rearOwners[worst]) continue;
+      straight = straight && std::abs(ribs[i].leadingEdgeOffset + rearLimits[i] -
+          (intercept + slope * ribs[i].spanPosition)) < .01;
+    }
+    if (straight) {
+      double offset = std::numeric_limits<double>::max();
+      for (std::size_t i = 0; i < ribs.size(); ++i)
+        offset = std::min(offset, ribs[i].leadingEdgeOffset + rearLimits[i] -
+            slope * ribs[i].spanPosition - width * .5 - .25);
+      const auto percentAtX = [&](const RibDefinition& rib, double x) -> std::optional<double> {
+        const auto modelX = [&](double percent) {
+          return modelPlanePoint(rib, sparSectionCenter(rib, spar, percent)).x;
+        };
+        if (x < modelX(0) || x > modelX(90)) return std::nullopt;
+        double low = 0, high = 90;
+        for (int j = 0; j < 35; ++j) {
+          const double mid = (low + high) * .5;
+          if (modelX(mid) <= x) low = mid; else high = mid;
+        }
+        return std::floor(low * 100.0 + 1e-7) / 100.0;
+      };
+      for (int attempt = 0; attempt < 20; ++attempt) {
+        const auto r = percentAtX(ribs.front(), offset + slope * ribs.front().spanPosition);
+        const auto t = percentAtX(ribs.back(), offset + slope * ribs.back().spanPosition);
+        if (!r || !t) break;
+        auto parallel = spar;
+        parallel.chordLocationPercent = *r; parallel.tipChordLocationPercent = *t;
+        const auto centers = sampledSparCenters(ribs, parallel);
+        if (clearsRear(centers)) {
+          if (!acceptable(parallel)) return std::nullopt;
+          return std::pair{*r, *t};
+        }
+        double violation = 0;
+        for (std::size_t i = 0; i < ribs.size(); ++i)
+          violation = std::max(violation, centers[i].x + width * .5 - rearLimits[i] + .25);
+        offset -= violation + .01;
+      }
+    }
+  }
+  double low = 0, high = std::max(root, tip);
+  if (!clearsRear(centersAt(high))) return std::nullopt;
+  for (int iteration = 0; iteration < 30; ++iteration) {
+    const double middle = (low + high) * .5;
+    if (clearsRear(centersAt(middle))) high = middle; else low = middle;
+  }
+  const auto fitted = candidateAt(high);
+  if (!acceptable(fitted)) return std::nullopt;
+  return std::pair{fitted.chordLocationPercent, fitted.tipChordLocationPercent};
+}
+
 StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                    const StructureParameters& p) {
   if (ribs.size() < 2) throw std::invalid_argument("Wing structure requires at least two ribs");
@@ -1439,7 +1599,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   if (p.flaps && p.ailerons && p.aileronStartRib < p.flapStopRib)
     throw std::invalid_argument(
         "Aileron Start Rib cannot be less than Flap Stop Rib");
-  if (!ribs.front().planform && p.flaps && p.ailerons && p.aileronStartRib == p.flapStopRib &&
+  if (!ribs.front().planform && !p.aileronPerpendicularToRibs && !p.flapPerpendicularToRibs &&
+      p.flaps && p.ailerons && p.aileronStartRib == p.flapStopRib &&
       std::abs(p.aileronWidth - p.flapWidth) > 1.0e-8)
     throw std::invalid_argument(
         "Flap Width and Aileron Width must match when their rib ranges meet");
@@ -1454,15 +1615,19 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     controlParts[0].extendThroughStopRib = true;
     controlParts[1].cutStartRib = true;
   }
-  if (ribs.front().planform) {
+  {
     for (auto& control : controlParts) {
       control.hingeParallelY =
           control.name == "Flap" ? p.flapHingeParallelY : p.aileronHingeParallelY;
+      control.perpendicularToRibs =
+          control.name == "Flap" ? p.flapPerpendicularToRibs : p.aileronPerpendicularToRibs;
       const auto& first = ribs[control.startRibIndex];
       const auto& last = ribs[control.stopRibIndex];
       control.hingeRootX = first.leadingEdgeOffset + first.chord - control.width;
       control.hingeTipX = last.leadingEdgeOffset + last.chord - control.width;
-      if (control.hingeParallelY) {
+      if (control.perpendicularToRibs) {
+        control.hingeTipX = control.hingeRootX;
+      } else if (first.planform && control.hingeParallelY) {
         const auto& curve = *first.planform;
         double maximum =
             std::max(curve.trailingX(first.planformStation), curve.trailingX(last.planformStation));
@@ -1473,25 +1638,30 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                                  curve.leadingX(first.planformStation) + maximum -
                                                  control.width;
       }
-      const auto& curve = *first.planform;
+      if (!first.planform && !control.perpendicularToRibs) continue;
+      const auto* curve = first.planform.get();
       const auto validateStation = [&](double station) {
         if (station < first.planformStation || station > last.planformStation) return;
         const double f =
             (station - first.planformStation) / (last.planformStation - first.planformStation);
         const double hinge = control.hingeRootX + f * (control.hingeTipX - control.hingeRootX);
-        const double origin = first.leadingEdgeOffset - curve.leadingX(first.planformStation);
-        if (hinge >= origin + curve.trailingX(station) - 1e-6)
+        const double origin = curve ? first.leadingEdgeOffset - curve->leadingX(first.planformStation) : 0.0;
+        const double leading = curve ? origin + curve->leadingX(station) :
+            first.leadingEdgeOffset + f * (last.leadingEdgeOffset - first.leadingEdgeOffset);
+        const double trailing = curve ? origin + curve->trailingX(station) :
+            leading + first.chord + f * (last.chord - first.chord);
+        if (hinge >= trailing - 1e-6)
           throw std::invalid_argument(
-              control.name + " hinge line crosses the curved TE or leaves zero control width.");
-        if (hinge - control.gap - control.hingePostWidth <= origin + curve.leadingX(station))
-          throw std::invalid_argument(control.name + " hinge post crosses the curved LE.");
+              control.name + " hinge line crosses the TE or leaves zero control width.");
+        if (hinge - control.gap - control.hingePostWidth <= leading)
+          throw std::invalid_argument(control.name + " hinge post crosses the LE.");
       };
       validateStation(first.planformStation);
       validateStation(last.planformStation);
-      for (auto v : curve.leading)
-        validateStation(v.y);
-      for (auto v : curve.trailing)
-        validateStation(v.y);
+      if (curve) {
+        for (auto v : curve->leading) validateStation(v.y);
+        for (auto v : curve->trailing) validateStation(v.y);
+      }
     }
     if (controlParts.size() == 2 && controlParts[0].stopRibIndex == controlParts[1].startRibIndex &&
         std::abs(controlParts[0].hingeTipX - controlParts[1].hingeRootX) > 0.01)
@@ -1508,7 +1678,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     for (std::size_t i = control.startRibIndex; i <= control.stopRibIndex; ++i) {
       const auto& rib = ribs[i];
       double front = rib.chord - control.width;
-      if (rib.planform) {
+      if (rib.planform || control.perpendicularToRibs) {
         const auto& root = ribs[control.startRibIndex];
         const auto& tip = ribs[control.stopRibIndex];
         const double t = (rib.planformStation - root.planformStation) / (tip.planformStation - root.planformStation);
@@ -1533,6 +1703,12 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   const auto controlLeadingCut = [&](const RibDefinition& rib) {
     const double t = (rib.spanPosition - p.controlRootSpan) / (p.controlTipSpan - p.controlRootSpan);
     return p.controlRootLeadingX + t * (p.controlTipLeadingX - p.controlRootLeadingX) - rib.leadingEdgeOffset;
+  };
+  const auto controlSkinStart = [&](const RibDefinition& rib, const bool top) {
+    if (!p.controlSkin.hingeSpars) return controlLeadingCut(rib) + p.controlHingePostWidth;
+    const auto section = hingeSparSection(rib, controlLeadingCut(rib), p.controlSkin, true);
+    const auto& notch = section.notches[top ? 0 : 1];
+    return notch.centerX + notch.width * .5;
   };
   std::vector<std::vector<Point2>> sparCenters;
   sparCenters.reserve(p.spars.size());
@@ -1583,13 +1759,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       };
       const auto sheetDepth = [&](const RibDefinition& rib, const double x, const bool top) {
         const double sheetWidth = top ? p.topTeSheetingWidth : p.bottomTeSheetingWidth;
-        const auto hingeRear = [&](bool upperSide) {
-          const auto section = hingeSparSection(rib, controlLeadingCut(rib), p.controlSkin, true);
-          const auto& notch = section.notches[upperSide ? 0 : 1];
-          return notch.centerX + notch.width * .5;
-        };
         const bool inherited = top ? p.inheritedTopTeSheeting : p.inheritedBottomTeSheeting;
-        const double left = p.controlSkin.hingeSpars && !inherited ? hingeRear(top) :
+        const double left = !inherited ? controlSkinStart(rib, top) :
             std::max(controlLeadingCut(rib) + p.controlHingePostWidth, rib.chord - sheetWidth);
         const double percent = top ? p.topTeSheetingTaperStartLocationPercent :
                                      p.bottomTeSheetingTaperStartLocationPercent;
@@ -1602,9 +1773,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         const auto& skin = p.controlSkin;
         const bool enabled = top ? skin.topSheeting : skin.bottomSheeting;
         if (enabled && x < left - 1e-8) {
-          const double skinLeft = skin.hingeSpars ? hingeRear(top) :
-              std::max(controlLeadingCut(rib) + p.controlHingePostWidth,
-                  rib.chord - (top ? skin.topSheetingWidth : skin.bottomSheetingWidth));
+          const double skinLeft = controlSkinStart(rib, top);
           const double start = top ? skin.topSheetingTaperStartLocationPercent : skin.bottomSheetingTaperStartLocationPercent;
           const TeSheetingDefinition extra{true, skinLeft,
               top ? skin.topSheetingThickness : skin.bottomSheetingThickness,
@@ -1830,7 +1999,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                    const bool upToSpar,
                                    const double stopPercent) {
     const auto& rib = ribs[ribIndex];
-    if (rib.planform || p.controlRegion) {
+    if (rib.planform || p.controlRegion || (p.ailerons && p.aileronPerpendicularToRibs) ||
+        (p.flaps && p.flapPerpendicularToRibs)) {
       for (std::size_t si = 0; si < p.spars.size(); ++si) {
         const auto& spar = p.spars[si];
         const double width = spar.material == 0 ? spar.woodWidth
@@ -2206,7 +2376,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     for (auto& control : controlParts) {
       if (ribIndex < control.startRibIndex || ribIndex > control.stopRibIndex) continue;
       double controlLeadingX = std::max(0.001, rib.chord - control.width);
-      if (rib.planform) {
+      if (rib.planform || control.perpendicularToRibs) {
         const auto& first = ribs[control.startRibIndex];
         const auto& last = ribs[control.stopRibIndex];
         const double t = (rib.planformStation - first.planformStation) /
@@ -2411,13 +2581,11 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         p.bottomTeSheetingTaper || bothTeSheeting,
         bottomTeSheetingStart + p.bottomTeSheetingTaperStartLocationPercent /
             100.0 * (rib.chord - bottomTeSheetingStart)};
-    if (p.controlRegion && p.controlSkin.hingeSpars) {
-      const auto hinge = hingeSparSection(rib, controlLeadingCut(rib), p.controlSkin, true);
+    if (p.controlRegion) {
       for (const bool top : {true, false}) {
         if (top ? p.inheritedTopTeSheeting : p.inheritedBottomTeSheeting) continue;
         auto& definition = top ? topTeDefinition : bottomTeDefinition;
-        const auto& notch = hinge.notches[top ? 0 : 1];
-        definition.left = notch.centerX + notch.width * .5;
+        definition.left = controlSkinStart(rib, top);
         const double percent = top ? p.topTeSheetingTaperStartLocationPercent : p.bottomTeSheetingTaperStartLocationPercent;
         definition.taperStart = definition.left + percent / 100.0 * (rib.chord - definition.left);
       }
@@ -2499,7 +2667,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           }
         }
         if (clipped.size() < 3)
-          throw std::invalid_argument("Control Sheeting Width must extend forward of the TE stock.");
+          throw std::invalid_argument("No room for control sheeting between the hinge and TE stock.");
         profileAndDepths.first = std::move(clipped);
       }
       part.profiles.push_back(std::move(profileAndDepths.first));
@@ -2519,12 +2687,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     addTeSheet(bottomTeSheeting, bottomTeDefinition, false, lowerRecesses);
     const auto skinDefinition = [&](const bool top) {
       const auto& skin = p.controlSkin;
-      double left = std::max(minimumX, rib.chord - (top ? skin.topSheetingWidth : skin.bottomSheetingWidth));
-      if (skin.hingeSpars) {
-        const auto hinge = hingeSparSection(rib, controlLeadingCut(rib), skin, true);
-        const auto& notch = hinge.notches[top ? 0 : 1];
-        left = notch.centerX + notch.width * .5;
-      }
+      const double left = controlSkinStart(rib, top);
       const double taperStart = top ? skin.topSheetingTaperStartLocationPercent : skin.bottomSheetingTaperStartLocationPercent;
       return TeSheetingDefinition{top ? skin.topSheeting : skin.bottomSheeting, left,
           top ? skin.topSheetingThickness : skin.bottomSheetingThickness,
@@ -2532,10 +2695,11 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           left + taperStart / 100.0 * (rib.chord - left)};
     };
     const auto addControlSkin = [&](const bool top, SheetingPart& part, std::vector<SurfaceRecess>& recesses) {
+      if (!p.controlRegion) return;
       const auto definition = skinDefinition(top);
-      if (!p.controlRegion || !definition.enabled) return;
+      if (!definition.enabled) return;
       double right = std::min(retainedMaximumX, (top ? topTeDefinition : bottomTeDefinition).left);
-      if (p.controlSkin.hingeSpars) right = std::max(right, definition.left + 1e-5);
+      right = std::max(right, definition.left + 1e-5);
       // A tiny section at a fully covered end keeps a curved transition loft
       // valid when the independent skin emerges between the physical ribs.
       const double left = std::min(definition.left, right - 1e-5);
@@ -3050,6 +3214,13 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       if (outline.size() < 3)
         throw std::invalid_argument("Hinge Angle leaves no control rib before the TE.");
     }
+    // A hinge notch tangent to a rib face can leave consecutive vertices
+    // closer than OCCT's edge tolerance. Keep a single manufacturing corner.
+    outline.erase(std::unique(outline.begin(), outline.end(), [](Point2 a, Point2 b) {
+      return std::hypot(a.x - b.x, a.y - b.y) <= 1e-7;
+    }), outline.end());
+    if (outline.size() > 1 && std::hypot(outline.front().x - outline.back().x,
+        outline.front().y - outline.back().y) <= 1e-7) outline.pop_back();
     StructuredRib structured{rib, std::move(outline), {}, {}, {}};
     structured.tabSeparationLines = std::move(tabSeparationLines);
     structured.outlineSegments = makeRibOutlineSegments(structured.outerOutline);
@@ -3613,33 +3784,36 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         throw std::invalid_argument(control.name + " spars require Top or Bottom vertical location.");
     settings.controlSkin = options;
     const auto needsHingeSkin = [&](bool top) {
-      if (!control.hingeSpars)
-        return (top ? options.topSheetingWidth : options.bottomSheetingWidth) >
-            (top ? p.topTeSheetingWidth : p.bottomTeSheetingWidth) + 1e-6;
       for (std::size_t i = control.startRibIndex; i <= control.stopRibIndex; ++i) {
         const auto& profile = control.profiles[i - control.startRibIndex];
         const double front = std::min_element(profile.begin(), profile.end(),
             [](Point2 a, Point2 b) { return a.x < b.x; })->x;
-        const auto section = hingeSparSection(ribs[i], front, options, true);
-        const auto& notch = section.notches[top ? 0 : 1];
+        double start = front + control.hingePostWidth;
+        if (control.hingeSpars) {
+          const auto section = hingeSparSection(ribs[i], front, options, true);
+          const auto& notch = section.notches[top ? 0 : 1];
+          start = notch.centerX + notch.width * .5;
+        }
         if (ribs[i].chord - (top ? p.topTeSheetingWidth : p.bottomTeSheetingWidth) >
-            notch.centerX + notch.width * .5 + 1e-6) return true;
+            start + 1e-6) return true;
       }
       return false;
     };
     const bool bothWingSheets = p.topTeSheeting && p.bottomTeSheeting;
     const bool bothControlSheets = options.topSheeting && options.bottomSheeting;
+    const double fullChord = std::max_element(ribs.begin(), ribs.end(),
+        [](const auto& a, const auto& b) { return a.chord < b.chord; })->chord;
     settings.controlSkin.topSheetingTaper = options.topSheetingTaper || bothControlSheets;
     settings.controlSkin.bottomSheetingTaper = options.bottomSheetingTaper || bothControlSheets;
     settings.topTeSheeting = p.topTeSheeting || options.topSheeting;
-    settings.topTeSheetingWidth = p.topTeSheeting ? p.topTeSheetingWidth : options.topSheetingWidth;
+    settings.topTeSheetingWidth = p.topTeSheeting ? p.topTeSheetingWidth : fullChord;
     settings.topTeSheetingThickness = p.topTeSheeting ? p.topTeSheetingThickness : options.topSheetingThickness;
     settings.topTeSheetingTaper = p.topTeSheeting ? p.topTeSheetingTaper || bothWingSheets : options.topSheetingTaper || bothControlSheets;
     settings.topTeSheetingTaperStartLocationPercent = p.topTeSheeting ? p.topTeSheetingTaperStartLocationPercent : options.topSheetingTaperStartLocationPercent;
     settings.inheritedTopTeSheeting = p.topTeSheeting;
     settings.controlSkin.topSheeting = p.topTeSheeting && options.topSheeting && needsHingeSkin(true);
     settings.bottomTeSheeting = p.bottomTeSheeting || options.bottomSheeting;
-    settings.bottomTeSheetingWidth = p.bottomTeSheeting ? p.bottomTeSheetingWidth : options.bottomSheetingWidth;
+    settings.bottomTeSheetingWidth = p.bottomTeSheeting ? p.bottomTeSheetingWidth : fullChord;
     settings.bottomTeSheetingThickness = p.bottomTeSheeting ? p.bottomTeSheetingThickness : options.bottomSheetingThickness;
     settings.bottomTeSheetingTaper = p.bottomTeSheeting ? p.bottomTeSheetingTaper || bothWingSheets : options.bottomSheetingTaper || bothControlSheets;
     settings.bottomTeSheetingTaperStartLocationPercent = p.bottomTeSheeting ? p.bottomTeSheetingTaperStartLocationPercent : options.bottomSheetingTaperStartLocationPercent;

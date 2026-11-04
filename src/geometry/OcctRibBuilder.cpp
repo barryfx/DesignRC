@@ -83,6 +83,7 @@
 #include <string_view>
 #include <atomic>
 #include <future>
+#include <mutex>
 #include <vector>
 #include <numbers>
 #include <numeric>
@@ -816,9 +817,35 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
                                         const double ribThickness,
                                         PanelBuildTimings* timings,
                                         MaterialShapeSet* materialShapes,
-                                        const GeometryProgressCallback& progress,
+                                        const GeometryProgressCallback& progressCallback,
                                         const std::size_t maximumRibWorkers,
                                         const std::function<bool()>& isCancelled) {
+  const auto workUnits = [](const domain::StructuredWing& wing) {
+    return std::max<std::size_t>(1, wing.ribs.size() * 4 + wing.riblets.size() * 2 +
+        wing.sheeting.size() * 6 + wing.members.size() * 3 + wing.profiledMembers.size() * 3 +
+        wing.shearWebs.size() + wing.joiners.size() * 3 + wing.ribCaps.size());
+  };
+  std::size_t controlWork = 0, controlCount = 0;
+  for (const auto& control : structuredWing.controlSurfaces)
+    if (control.builtUpWing) { controlWork += workUnits(*control.builtUpWing); ++controlCount; }
+  const std::size_t panelWork = workUnits(structuredWing);
+  const int panelProgressEnd = controlCount == 0 ? 100 :
+      std::clamp(static_cast<int>(100 * panelWork / (panelWork + controlWork)), 20, 80);
+  std::mutex progressMutex;
+  int lastProgress = 0;
+  const auto reportProgress = [&](int value, const std::string& message) {
+    if (!progressCallback) return;
+    std::scoped_lock lock{progressMutex};
+    lastProgress = std::max(lastProgress, std::clamp(value, 0, 100));
+    progressCallback(lastProgress, message);
+  };
+  GeometryProgressCallback progress;
+  std::atomic_int localProgressValue{0};
+  if (progressCallback)
+    progress = [&](int value, const std::string& message) {
+      localProgressValue.store(value);
+      reportProgress(value * panelProgressEnd / 100, message);
+    };
   const auto checkpoint = [&] {
     if (isCancelled && isCancelled()) throw GeometryCancelled{};
   };
@@ -987,6 +1014,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
           other.name == name || bounds.IsOut(other.bounds))
         continue;
       BRepAlgoAPI_Common common;
+      if (progress) progress(localProgressValue.load(), "Checking clearance between " + name + " and " + other.name);
       try {
         TopTools_ListOfShape arguments;
         arguments.Append(shape);
@@ -1916,7 +1944,13 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     progress(40, "Building leading and trailing edge stock");
   const auto& spanWing = structuredWing.surfaceWing ? *structuredWing.surfaceWing : structuredWing;
   std::vector<std::pair<std::string, TopoDS_Shape>> hingeSparShapes;
+  std::size_t stockNumber = 0;
   for (const auto& member : spanWing.profiledMembers) {
+    if (progress)
+      progress(40 + static_cast<int>(10 * stockNumber / spanWing.profiledMembers.size()),
+          "Building " + member.name + " (" + std::to_string(stockNumber + 1) + "/" +
+          std::to_string(spanWing.profiledMembers.size()) + ")");
+    ++stockNumber;
     if (member.profiles.size() != spanWing.ribs.size())
       throw std::runtime_error("Edge stock profiles do not match the rib stations");
     auto ranges = member.activeRanges;
@@ -2011,6 +2045,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
     const auto physical = std::find_if(structuredWing.controlSurfaces.begin(), structuredWing.controlSurfaces.end(),
         [&](const auto& c) { return c.name == control.name; });
     const bool builtUp = physical != structuredWing.controlSurfaces.end() && physical->builtUpWing;
+    if (progress) progress(50, "Building " + control.name + (builtUp ? " hinge structure" : " solid and hinge structure"));
     if (!builtUp) {
     SpanwiseSurface loft{static_cast<bool>(spanWing.ribs.front().rib.planform), isCancelled, timings};
     loft.CheckCompatibility(false);
@@ -2468,7 +2503,13 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   if (progress)
     progress(65, "Lofting wing sheeting");
+  std::size_t sheetNumber = 0;
   for (const auto& sheet : spanWing.sheeting) {
+    if (progress)
+      progress(65 + static_cast<int>(10 * sheetNumber / spanWing.sheeting.size()),
+          "Lofting " + sheet.name + " (" + std::to_string(sheetNumber + 1) + "/" +
+          std::to_string(spanWing.sheeting.size()) + ")");
+    ++sheetNumber;
     if (sheet.profiles.size() != sheet.stopRibIndex + 1)
       throw std::runtime_error("Sheeting profiles do not match their rib stations");
     const auto addProfile = [&](auto& loft,
@@ -2585,7 +2626,13 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   stageStart = std::chrono::steady_clock::now();
   if (progress)
     progress(75, "Building spars and span members");
+  std::size_t memberNumber = 0;
   for (const auto& member : spanWing.members) {
+    if (progress)
+      progress(75 + static_cast<int>(7 * memberNumber / spanWing.members.size()),
+          "Building " + member.name + " (" + std::to_string(memberNumber + 1) + "/" +
+          std::to_string(spanWing.members.size()) + ")");
+    ++memberNumber;
     const bool carbonFiber = member.carbonFiber ||
         member.kind == domain::SpanMemberKind::Tube ||
         member.kind == domain::SpanMemberKind::Rod;
@@ -2868,7 +2915,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
 
   stageStart = std::chrono::steady_clock::now();
   if (progress)
-    progress(95, "Meshing completed panel geometry");
+    progress(95, "Meshing geometry for display");
   // AIS automatic triangulation is disabled in the viewport. Mesh the complete
   // compound once on the worker. This includes ribs, lofted sheeting, spars,
   // joiners, controls, and edge stock in one parallel meshing operation.
@@ -2876,14 +2923,27 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
   if (!displayMesh.IsDone())
     throw std::runtime_error("Unable to mesh the complete panel for display");
   if (timings) timings->displayMeshMs = elapsedMs(stageStart);
-  if (progress)
-    progress(100, "Panel geometry complete");
+  std::size_t finishedControlWork = 0, controlNumber = 0;
   for (const auto& control : structuredWing.controlSurfaces) {
     if (!control.builtUpWing) continue;
     checkpoint();
+    ++controlNumber;
+    const int start = panelProgressEnd + static_cast<int>((99 - panelProgressEnd) * finishedControlWork / controlWork);
+    finishedControlWork += workUnits(*control.builtUpWing);
+    const int finish = panelProgressEnd + static_cast<int>((99 - panelProgressEnd) * finishedControlWork / controlWork);
+    const std::string prefix = control.name + " (" + std::to_string(controlNumber) + "/" +
+        std::to_string(controlCount) + "): ";
+    reportProgress(start, prefix + "Starting built-up geometry");
     MaterialShapeSet parts;
+    GeometryProgressCallback controlProgress;
+    if (progressCallback)
+      controlProgress = [&](int value, const std::string& message) {
+        reportProgress(start + (finish - start) * value / 100, prefix +
+            (value == 100 ? "Geometry complete" : message));
+      };
     static_cast<void>(buildStructuredWingPreview(*control.builtUpWing, ribThickness,
-        nullptr, &parts, {}, maximumRibWorkers, isCancelled));
+        nullptr, &parts, controlProgress, maximumRibWorkers, isCancelled));
+    reportProgress(finish, prefix + "Adding completed parts to the panel");
     for (const auto& part : parts.parts)
       addShape(part.shape, part.material, part.mirrorInAssembly,
           part.name.starts_with(control.name + " ") ||
@@ -2892,6 +2952,7 @@ TopoDS_Shape buildStructuredWingPreview(const domain::StructuredWing& structured
               ? part.name : control.name + " " + part.name);
   }
 
+  reportProgress(100, "Panel geometry complete");
   return result;
 }
 

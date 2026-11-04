@@ -51,6 +51,8 @@ struct MaterialShapeSet {
   std::vector<NamedPartShape> parts;
 };
 
+// Callbacks are serialized and percentages never decrease. Panel completion
+// includes built-up control surfaces; their messages identify aileron or flap.
 using GeometryProgressCallback =
     std::function<void(int, const std::string&)>;
 

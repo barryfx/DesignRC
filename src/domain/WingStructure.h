@@ -51,6 +51,7 @@ struct SparParameters {
 struct BuiltUpControlParameters {
   bool enabled{false};
   bool topSheeting{false};
+  // Legacy project fields; control skins now cover the full available chord.
   double topSheetingWidth{25.4};
   double topSheetingThickness{1.5875};
   bool topSheetingTaper{false};
@@ -62,9 +63,9 @@ struct BuiltUpControlParameters {
   double bottomSheetingTaperStartLocationPercent{50.0};
   std::vector<SparParameters> spars;
   bool hingeSpars{false};
-  double hingeSparWidth{6.0};
-  double hingeSparHeight{1.5};
-  double hingeAngleDegrees{45.0}; // aft bevel from vertical; top edge is nearest the wing
+  double hingeSparWidth{9.525}; // 3/8 inch
+  double hingeSparHeight{6.35}; // 1/4 inch
+  double hingeAngleDegrees{35.0}; // aft bevel from vertical; top edge is nearest the wing
 };
 
 struct Point3 {
@@ -90,6 +91,8 @@ struct StructureParameters {
   bool inheritedTopTeSheeting{false}, inheritedBottomTeSheeting{false};
   bool aileronHingeParallelY{false};
   bool flapHingeParallelY{false};
+  bool aileronPerpendicularToRibs{false};
+  bool flapPerpendicularToRibs{false};
   bool surfaceSampling{false};
   double ribThickness{3.0};
   std::vector<SparParameters> spars;
@@ -323,6 +326,7 @@ struct ControlSurfacePart {
   bool cutStopRib{};
   bool extendThroughStopRib{};
   bool hingeParallelY{};
+  bool perpendicularToRibs{};
   double hingeRootX{};
   double hingeTipX{};
   std::shared_ptr<StructuredWing> builtUpWing;
@@ -429,6 +433,19 @@ struct StructuredWing {
 [[nodiscard]] StructuredWing applyWingStructure(
     const std::vector<RibDefinition>& ribs,
     const StructureParameters& parameters);
+
+[[nodiscard]] double controlForwardBoundary(const RibDefinition& rib, double hingeX,
+    double gap, double postWidth, const BuiltUpControlParameters& construction);
+
+// Prefer a line parallel to the obstructing straight edge. Curved edges use
+// a forward offset instead. Reject a placement that introduces a collision.
+[[nodiscard]] std::optional<std::pair<double, double>> fitSparAheadOfRearBoundary(
+    const std::vector<RibDefinition>& ribs, const SparParameters& spar,
+    const std::vector<double>& frontLimits, const std::vector<double>& rearLimits,
+    const std::vector<int>& rearOwners = {}, const std::vector<SparParameters>& otherSpars = {});
+
+[[nodiscard]] bool sparClearsOtherSpars(const std::vector<RibDefinition>& ribs,
+    const SparParameters& spar, const std::vector<SparParameters>& otherSpars);
 
 void nameControlTrailingEdgeStock(StructuredWing& wing,
     std::size_t& aileronNumber, std::size_t& flapNumber);

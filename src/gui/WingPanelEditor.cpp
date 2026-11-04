@@ -29,6 +29,7 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <numbers>
 
@@ -453,6 +454,7 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
   PUT(curveFileName);
   PUT(aileronHingeParallelY);
   PUT(flapHingeParallelY);
+  PUT(aileronPerpendicularToRibs); PUT(flapPerpendicularToRibs);
   if (!d.planform.empty()) {
     const auto points = [](const std::vector<domain::Point2>& curve) {
       QJsonArray array;
@@ -566,14 +568,18 @@ QJsonObject panelDataToJson(const WingPanelData& d) {
     if (joiner.kind == 0) PUT_REMOVABLE(ribBays);
     PUT_REMOVABLE(thisPanelPart); PUT_REMOVABLE(adjoiningPanelPart); PUT_REMOVABLE(thisRodMaterial);
     PUT_REMOVABLE(thisRodOd); PUT_REMOVABLE(thisSleeveMaterial); PUT_REMOVABLE(thisSleeveOd);
+    item.insert("thisSleeveId", joiner.thisSleeveId < 0 ? std::max(0.0, joiner.thisSleeveOd - 1.0) : joiner.thisSleeveId);
     PUT_REMOVABLE(adjoiningRodMaterial); PUT_REMOVABLE(adjoiningRodOd);
     PUT_REMOVABLE(adjoiningSleeveMaterial); PUT_REMOVABLE(adjoiningSleeveOd);
+    item.insert("adjoiningSleeveId", joiner.adjoiningSleeveId < 0 ? std::max(0.0, joiner.adjoiningSleeveOd - 1.0) : joiner.adjoiningSleeveId);
     PUT_REMOVABLE(alignmentMode); PUT_REMOVABLE(pinHoleThisPart);
     PUT_REMOVABLE(pinMaterial); PUT_REMOVABLE(pinOd);
     item.insert("thisRodOdUnit", static_cast<int>(joiner.thisRodOdUnit));
     item.insert("thisSleeveOdUnit", static_cast<int>(joiner.thisSleeveOdUnit));
+    item.insert("thisSleeveIdUnit", static_cast<int>(joiner.thisSleeveIdUnit));
     item.insert("adjoiningRodOdUnit", static_cast<int>(joiner.adjoiningRodOdUnit));
     item.insert("adjoiningSleeveOdUnit", static_cast<int>(joiner.adjoiningSleeveOdUnit));
+    item.insert("adjoiningSleeveIdUnit", static_cast<int>(joiner.adjoiningSleeveIdUnit));
     item.insert("pinOdUnit", static_cast<int>(joiner.pinOdUnit));
 #undef PUT_REMOVABLE
     removableJoiners.append(item);
@@ -595,6 +601,7 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
   READ_D(panelSpan); READ_D(rootChord); READ_D(tipChord); READ_D(sweep); READ_D(dihedral); READ_D(twist);
   READ_B(aileronHingeParallelY);
   READ_B(flapHingeParallelY);
+  READ_B(aileronPerpendicularToRibs); READ_B(flapPerpendicularToRibs);
   d.curveFileName = o.value("curveFileName").toString();
   if (o.contains("planform")) {
     const auto curve = o.value("planform").toObject();
@@ -838,6 +845,17 @@ WingPanelData panelDataFromJson(const QJsonObject& o) {
     READ_REMOVABLE_I(adjoiningSleeveMaterial); READ_REMOVABLE_D(adjoiningSleeveOd);
     READ_REMOVABLE_I(alignmentMode); READ_REMOVABLE_I(pinHoleThisPart);
     READ_REMOVABLE_I(pinMaterial); READ_REMOVABLE_D(pinOd);
+    // Preserve the inferred bores in older projects; new joiners have explicit IDs.
+    const bool thisSleeve = joiner.thisPanelPart == 0;
+    const bool adjoiningSleeve = joiner.kind == 1 ? !thisSleeve : joiner.adjoiningPanelPart == 0;
+    joiner.thisSleeveId = item.value("thisSleeveId").toDouble(
+        adjoiningSleeve ? joiner.thisRodOd : joiner.adjoiningRodOd);
+    joiner.adjoiningSleeveId = item.value("adjoiningSleeveId").toDouble(
+        thisSleeve ? joiner.adjoiningRodOd : joiner.thisRodOd);
+    joiner.thisSleeveIdUnit = static_cast<UnitOverride>(item.value("thisSleeveIdUnit").toInt(
+        item.value("thisSleeveOdUnit").toInt()));
+    joiner.adjoiningSleeveIdUnit = static_cast<UnitOverride>(item.value("adjoiningSleeveIdUnit").toInt(
+        item.value("adjoiningSleeveOdUnit").toInt()));
     if (item.contains("thisRodOdUnit"))
       joiner.thisRodOdUnit = static_cast<UnitOverride>(
           item.value("thisRodOdUnit").toInt());
@@ -987,10 +1005,24 @@ WingPanelData roundedInchPanelData(const WingPanelData& metricData) {
   }
   for (auto& joiner : rounded.removableJoiners) {
     roundLength(joiner.thisRodOd); roundLength(joiner.thisSleeveOd);
+    if (joiner.thisSleeveId >= 0) roundLength(joiner.thisSleeveId);
     roundLength(joiner.adjoiningRodOd); roundLength(joiner.adjoiningSleeveOd);
+    if (joiner.adjoiningSleeveId >= 0) roundLength(joiner.adjoiningSleeveId);
     roundLength(joiner.pinOd);
   }
   return rounded;
+}
+
+void migrateLegacyHingeSparDefaults(WingPanelData& defaults) {
+  const domain::BuiltUpControlParameters installed;
+  for (auto* control : {&defaults.builtUpAileron, &defaults.builtUpFlap}) {
+    if (std::abs(control->hingeSparHeight - 1.5) < 1e-8)
+      control->hingeSparHeight = installed.hingeSparHeight;
+    if (std::abs(control->hingeSparWidth - 6.0) < 1e-8)
+      control->hingeSparWidth = installed.hingeSparWidth;
+    if (std::abs(control->hingeAngleDegrees - 45.0) < 1e-8)
+      control->hingeAngleDegrees = installed.hingeAngleDegrees;
+  }
 }
 
 WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
@@ -1130,14 +1162,18 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   sleeveRod.thisRodOd = 5.0;
   sleeveRod.thisSleeveMaterial = 1;
   sleeveRod.thisSleeveOd = 6.0;
+  sleeveRod.thisSleeveId = 5.0;
   sleeveRod.adjoiningRodMaterial = 0;
   sleeveRod.adjoiningRodOd = 6.0;
   sleeveRod.adjoiningSleeveMaterial = 0;
-  sleeveRod.adjoiningSleeveOd = 7.0;
+  sleeveRod.adjoiningSleeveOd = 6.0;
+  sleeveRod.adjoiningSleeveId = 5.0;
   sleeveRod.thisRodOdUnit = UnitOverride::Millimeters;
   sleeveRod.thisSleeveOdUnit = UnitOverride::Millimeters;
+  sleeveRod.thisSleeveIdUnit = UnitOverride::Millimeters;
   sleeveRod.adjoiningRodOdUnit = UnitOverride::Millimeters;
   sleeveRod.adjoiningSleeveOdUnit = UnitOverride::Millimeters;
+  sleeveRod.adjoiningSleeveIdUnit = UnitOverride::Millimeters;
 
   RemovableJoinerData alignmentPin;
   alignmentPin.kind = 1;
@@ -1148,18 +1184,22 @@ WingPanelData installedDefaultPanelData(const DisplayUnit unit) {
   alignmentPin.thisRodOd = 2.0;
   alignmentPin.thisSleeveMaterial = 0;
   alignmentPin.thisSleeveOd = 3.0;
+  alignmentPin.thisSleeveId = 2.0;
   alignmentPin.adjoiningRodMaterial = 0;
   alignmentPin.adjoiningRodOd = 2.0;
   alignmentPin.adjoiningSleeveMaterial = 0;
   alignmentPin.adjoiningSleeveOd = 3.0;
+  alignmentPin.adjoiningSleeveId = 2.0;
   alignmentPin.alignmentMode = 0;
   alignmentPin.pinHoleThisPart = 1;
   alignmentPin.pinMaterial = 1;
   alignmentPin.pinOd = 2.0;
   alignmentPin.thisRodOdUnit = UnitOverride::Millimeters;
   alignmentPin.thisSleeveOdUnit = UnitOverride::Millimeters;
+  alignmentPin.thisSleeveIdUnit = UnitOverride::Millimeters;
   alignmentPin.adjoiningRodOdUnit = UnitOverride::Millimeters;
   alignmentPin.adjoiningSleeveOdUnit = UnitOverride::Millimeters;
+  alignmentPin.adjoiningSleeveIdUnit = UnitOverride::Millimeters;
   alignmentPin.pinOdUnit = UnitOverride::Millimeters;
   defaults.removableJoiners = {sleeveRod, alignmentPin};
   defaults.unitOverrides.clear();
@@ -1261,6 +1301,105 @@ QString woodJoinerSparAlignmentError(const std::vector<WingPanelData>& panels) {
   return {};
 }
 
+namespace {
+std::vector<std::optional<std::pair<double, double>>> rearSparCorrections(const WingPanelData& panel, DisplayUnit unit) {
+  std::vector<std::optional<std::pair<double, double>>> corrections;
+  if (panel.spars.empty() || panel.panelSpan <= 0 || panel.ribCount < 2) return corrections;
+  try {
+    const double gap = unit == DisplayUnit::Inches ? 25.4 / 16.0 : 1.5;
+    domain::WingParameters p;
+    p.halfSpan = panel.panelSpan; p.rootChord = panel.rootChord; p.tipChord = panel.tipChord;
+    p.sweep = panel.sweep; p.dihedralDegrees = 0; p.tipTwistDegrees = panel.twist;
+    p.ribThickness = panel.ribThickness; p.planform = panel.planform;
+    p.ribCount = static_cast<std::size_t>(panel.ribCount);
+    std::vector<double> physical;
+    for (int i = 0; i < panel.ribCount; ++i) physical.push_back(double(i) / (panel.ribCount - 1));
+    if (panel.addRib1a) physical.insert(physical.begin() + 1, .5 / (panel.ribCount - 1));
+    auto stations = physical;
+    const int divisions = std::clamp(static_cast<int>(std::ceil(panel.panelSpan / 5.0)), 32, 2048);
+    for (int i = 0; i <= divisions; ++i) stations.push_back(double(i) / divisions);
+    for (const auto& point : panel.planform.leading) stations.push_back(point.y);
+    for (const auto& point : panel.planform.trailing) stations.push_back(point.y);
+    std::sort(stations.begin(), stations.end());
+    stations.erase(std::unique(stations.begin(), stations.end()), stations.end());
+    std::vector<domain::RibDefinition> ribs;
+    std::vector<double> front, rear;
+    std::vector<int> rearOwners;
+    for (const auto station : stations) {
+      auto rib = domain::ribAtStation(p, panel.rootAirfoil, panel.tipAirfoil, station);
+      double limit = panel.trailingEdgeType == 2 ? rib.chord - panel.trailingEdgeWidth : rib.chord;
+      int rearOwner = 0;
+      const auto control = [&](bool enabled, double width, double postWidth, int start, int stop,
+                               bool aileron, bool parallel, bool perpendicular, const auto& construction) {
+        if (!enabled || physical.size() < 4) return;
+        const auto first = static_cast<std::size_t>(std::clamp(start, 2, int(physical.size()) - 1) - 1);
+        const auto last = static_cast<std::size_t>(std::clamp(stop, 2,
+            int(physical.size()) - (aileron ? 0 : 1)) - 1);
+        if (last <= first) return;
+        const double margin = (panel.ribThickness + gap) / panel.panelSpan;
+        if (station < physical[first] - margin || station > physical[last] + margin) return;
+        const auto a = domain::ribAtStation(p, panel.rootAirfoil, panel.tipAirfoil, physical[first]);
+        const auto b = domain::ribAtStation(p, panel.rootAirfoil, panel.tipAirfoil, physical[last]);
+        double root = a.leadingEdgeOffset + a.chord - width;
+        double tip = b.leadingEdgeOffset + b.chord - width;
+        if (perpendicular) {
+          tip = root;
+        } else if (!panel.planform.empty() && parallel) {
+          double trailing = std::max(root, tip) + width;
+          for (const auto& point : panel.planform.trailing)
+            if (point.y >= physical[first] && point.y <= physical[last]) trailing = std::max(trailing, point.x);
+          root = tip = trailing - width;
+        }
+        const double t = (station - physical[first]) / (physical[last] - physical[first]);
+        const double hinge = root + t * (tip - root) - rib.leadingEdgeOffset;
+        const double boundary = domain::controlForwardBoundary(rib, hinge, gap, postWidth, construction);
+        if (boundary < limit) { limit = boundary; rearOwner = aileron ? 1 : 2; }
+      };
+      control(panel.ailerons, panel.aileronWidth, panel.aileronHingePostWidth,
+          panel.aileronStartRib, panel.aileronStopRib, true, panel.aileronHingeParallelY,
+          panel.aileronPerpendicularToRibs, panel.builtUpAileron);
+      control(panel.flaps, panel.flapWidth, panel.flapHingePostWidth,
+          panel.flapStartRib, panel.flapStopRib, false, panel.flapHingeParallelY,
+          panel.flapPerpendicularToRibs, panel.builtUpFlap);
+      ribs.push_back(std::move(rib));
+      front.push_back(panel.leadingEdgeType == 2 ? panel.leadingEdgeWidth : 0.0);
+      rear.push_back(limit);
+      rearOwners.push_back(rearOwner);
+    }
+    std::vector<domain::SparParameters> allSpars;
+    for (const auto& row : panel.spars) {
+      domain::SparParameters spar{row.chordLocationPercent, row.verticalLocation, row.material, row.type,
+          row.woodHeight, row.woodWidth, row.tubeOd, row.tubeId, row.rodOd, row.stripWidth, row.stripThickness,
+          row.tipChordLocationPercent};
+      allSpars.push_back(spar);
+    }
+    for (std::size_t i = 0; i < allSpars.size(); ++i) {
+      auto others = allSpars;
+      others.erase(others.begin() + static_cast<std::ptrdiff_t>(i));
+      corrections.push_back(domain::fitSparAheadOfRearBoundary(ribs, allSpars[i], front, rear, rearOwners, others));
+    }
+    auto proposed = allSpars;
+    for (std::size_t i = 0; i < proposed.size(); ++i)
+      if (corrections[i]) {
+        proposed[i].chordLocationPercent = corrections[i]->first;
+        proposed[i].tipChordLocationPercent = corrections[i]->second;
+      }
+    for (std::size_t i = 0; i < proposed.size(); ++i) {
+      if (!corrections[i] || *corrections[i] == std::pair{allSpars[i].chordLocationPercent, allSpars[i].tipChordLocationPercent}) continue;
+      auto others = proposed;
+      others.erase(others.begin() + static_cast<std::ptrdiff_t>(i));
+      if (!domain::sparClearsOtherSpars(ribs, proposed[i], others)) {
+        corrections.clear(); break;
+      }
+    }
+  } catch (const std::exception&) {
+    // Other invalid dimensions retain their normal validation messages.
+    corrections.clear();
+  }
+  return corrections;
+}
+} // namespace
+
 WingPanelEditor::WingPanelEditor(const WingPanelData& data, const DisplayUnit globalUnit,
                                  const bool showUnitOverrides, const bool showJoinerPage,
                                  const bool showRootChord, QWidget* parent)
@@ -1283,6 +1422,8 @@ WingPanelEditor::WingPanelEditor(const WingPanelData& data, const DisplayUnit gl
   if (showRootChord_) tabs->addTab(makeSpoilersPage(), "Spoilers");
   layout->addWidget(tabs);
   setData(data);
+  for (auto* input : {teWidth_, aileronWidth_, flapWidth_})
+    connect(input, &LengthInput::valueChanged, this, [this] { correctRearSparLocations(); });
 }
 
 void WingPanelEditor::resizeEvent(QResizeEvent* event) {
@@ -2145,7 +2286,7 @@ QWidget* WingPanelEditor::makeBuiltUpControl(const QString& prefix, BuiltUpContr
   layout->addWidget(w.enabled);
   w.details = new QWidget;
   auto* details = new QVBoxLayout{w.details};
-  details->setContentsMargins(24, 0, 0, 0);
+  details->setContentsMargins(0, 0, 0, 0);
   layout->addWidget(w.details);
   const auto makeLength = [&](const QString& suffix, double value) {
     const QString key = prefix + suffix;
@@ -2161,7 +2302,6 @@ QWidget* WingPanelEditor::makeBuiltUpControl(const QString& prefix, BuiltUpContr
     const QString side = top ? "Top" : "Bottom";
     auto*& check = top ? w.top : w.bottom;
     auto*& sheetDetails = top ? w.topDetails : w.bottomDetails;
-    auto*& width = top ? w.topWidth : w.bottomWidth;
     auto*& thickness = top ? w.topThickness : w.bottomThickness;
     check = new QCheckBox{side + " Sheeting"};
     check->setObjectName(prefix + side + "Sheeting");
@@ -2169,22 +2309,21 @@ QWidget* WingPanelEditor::makeBuiltUpControl(const QString& prefix, BuiltUpContr
     sheetDetails = new QWidget;
     auto* sheetLayout = new QVBoxLayout{sheetDetails};
     sheetLayout->setContentsMargins(24, 0, 0, 0);
-    width = makeLength(side + "SheetingWidth", 25.4);
     thickness = makeLength(side + "SheetingThickness", 1.5875);
-    sheetLayout->addWidget(detailRow({{"Width", width}}));
     sheetLayout->addWidget(detailRow({{"Thickness", thickness}}));
     details->addWidget(sheetDetails);
     connect(check, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
   };
   addSheet(true); addSheet(false);
   auto* buttons = new QHBoxLayout;
+  buttons->setContentsMargins(24, 0, 0, 0);
   auto* add = new QPushButton{"Add Spar"};
   auto* remove = new QPushButton{"Delete Spar"};
   add->setObjectName(prefix + "AddSpar"); remove->setObjectName(prefix + "DeleteSpar");
   buttons->addWidget(add); buttons->addWidget(remove); buttons->addStretch();
   details->addLayout(buttons);
   auto* rows = new QWidget;
-  w.sparsLayout = new QVBoxLayout{rows}; w.sparsLayout->setContentsMargins(0, 0, 0, 0);
+  w.sparsLayout = new QVBoxLayout{rows}; w.sparsLayout->setContentsMargins(24, 0, 0, 0);
   details->addWidget(rows);
   connect(add, &QPushButton::clicked, this, [this, &w] {
     createSparEditor(w.spars, w.sparsLayout, true); emitChanged();
@@ -2206,7 +2345,8 @@ domain::BuiltUpControlParameters WingPanelEditor::builtUpData(const BuiltUpContr
   domain::BuiltUpControlParameters d;
   d.enabled = w.enabled->isChecked();
   d.topSheeting = w.top->isChecked(); d.bottomSheeting = w.bottom->isChecked();
-  d.topSheetingWidth = w.topWidth->valueMm(); d.bottomSheetingWidth = w.bottomWidth->valueMm();
+  const auto& legacy = &w == &builtUpAileron_ ? airfoilData_.builtUpAileron : airfoilData_.builtUpFlap;
+  d.topSheetingWidth = legacy.topSheetingWidth; d.bottomSheetingWidth = legacy.bottomSheetingWidth;
   d.topSheetingThickness = w.topThickness->valueMm(); d.bottomSheetingThickness = w.bottomThickness->valueMm();
   d.hingeSpars = w.hingeSpars->isChecked();
   d.hingeSparWidth = w.hingeSparWidth->valueMm();
@@ -2231,13 +2371,12 @@ domain::BuiltUpControlParameters WingPanelEditor::builtUpData(const BuiltUpContr
 void WingPanelEditor::setBuiltUpData(BuiltUpControlWidgets& w, const domain::BuiltUpControlParameters& d) {
   w.enabled->setChecked(d.enabled);
   w.top->setChecked(d.topSheeting); w.bottom->setChecked(d.bottomSheeting);
-  w.topWidth->setValueMm(d.topSheetingWidth); w.bottomWidth->setValueMm(d.bottomSheetingWidth);
   w.topThickness->setValueMm(d.topSheetingThickness); w.bottomThickness->setValueMm(d.bottomSheetingThickness);
   (d.hingeSpars ? w.hingeSpars : w.hingePost)->setChecked(true);
   w.hingeSparWidth->setValueMm(d.hingeSparWidth);
   w.hingeSparHeight->setValueMm(d.hingeSparHeight);
   w.hingeAngle->setValue(d.hingeAngleDegrees);
-  for (auto* input : {w.topWidth, w.topThickness, w.bottomWidth, w.bottomThickness,
+  for (auto* input : {w.topThickness, w.bottomThickness,
                      w.hingeSparWidth, w.hingeSparHeight})
     input->setUnitOverride(airfoilData_.unitOverrides.value(input->objectName(), UnitOverride::Global));
 
@@ -2285,7 +2424,17 @@ QWidget* WingPanelEditor::makeControlsPage() {
     auto* detailsLayout = new QVBoxLayout{details};
     detailsLayout->setContentsMargins(0, 0, 0, 0);
     detailsLayout->setSpacing(0);
-    detailsLayout->addWidget(detailRow({{"Width", widthInput}, {"Height", heightInput}}));
+    auto* perpendicular = new QCheckBox{"Perpendicular to Ribs"};
+    perpendicular->setObjectName(prefix + "PerpendicularToRibs");
+    perpendicular->setToolTip("Make the hinge perpendicular to the rib chord direction. Root Width is measured at the control's first rib.");
+    auto*& perpendicularField = prefix == "aileron" ? aileronPerpendicularToRibs_ : flapPerpendicularToRibs_;
+    perpendicularField = perpendicular;
+    detailsLayout->addWidget(perpendicular);
+    auto* dimensions = detailRow({{"Width", widthInput}, {"Height", heightInput}});
+    auto*& widthLabel = prefix == "aileron" ? aileronWidthLabel_ : flapWidthLabel_;
+    widthLabel = dimensions->findChildren<QLabel*>().front();
+    widthLabel->setObjectName(prefix + "WidthLabel");
+    detailsLayout->addWidget(dimensions);
     auto* hingeParallel = new QCheckBox{"Hinge Parallel with Y Axis"};
     hingeParallel->setObjectName(prefix + "HingeParallelY");
     if (prefix == "aileron")
@@ -2294,6 +2443,13 @@ QWidget* WingPanelEditor::makeControlsPage() {
       flapHingeParallelY_ = hingeParallel;
     detailsLayout->addWidget(hingeParallel);
     connect(hingeParallel, &QCheckBox::toggled, this, &WingPanelEditor::emitChanged);
+    connect(perpendicular, &QCheckBox::toggled, this, [this, perpendicular, hingeParallel](bool checked) {
+      if (checked) hingeParallel->setChecked(false);
+      updateConditionalControls(); emitChanged();
+    });
+    connect(hingeParallel, &QCheckBox::toggled, this, [perpendicular](bool checked) {
+      if (checked) perpendicular->setChecked(false);
+    });
     detailsLayout->addWidget(detailRow({{"Start Rib", start}, {"Stop Rib", stop}}));
     auto& construction = prefix == "aileron" ? builtUpAileron_ : builtUpFlap_;
     construction.hingePost = new QRadioButton{"Hinge Post"};
@@ -2317,8 +2473,10 @@ QWidget* WingPanelEditor::makeControlsPage() {
     construction.hingeSparDetails->setObjectName(prefix + "HingeSparDetails");
     auto* sparLayout = new QVBoxLayout{construction.hingeSparDetails};
     sparLayout->setContentsMargins(24, 0, 0, 0);
-    construction.hingeSparHeight = makeLength(prefix + "HingeSparHeight", 1.5);
-    construction.hingeSparWidth = makeLength(prefix + "HingeSparWidth", 6.0);
+    construction.hingeSparHeight = makeLength(prefix + "HingeSparHeight",
+        domain::BuiltUpControlParameters{}.hingeSparHeight);
+    construction.hingeSparWidth = makeLength(prefix + "HingeSparWidth",
+        domain::BuiltUpControlParameters{}.hingeSparWidth);
     construction.hingeSparHeight->setObjectName(prefix + "HingeSparHeight");
     construction.hingeSparWidth->setObjectName(prefix + "HingeSparWidth");
     construction.hingeAngle = new QDoubleSpinBox;
@@ -2326,7 +2484,7 @@ QWidget* WingPanelEditor::makeControlsPage() {
     construction.hingeAngle->setRange(0, 80);
     construction.hingeAngle->setDecimals(2);
     construction.hingeAngle->setSuffix("\u00b0");
-    construction.hingeAngle->setValue(45);
+    construction.hingeAngle->setValue(domain::BuiltUpControlParameters{}.hingeAngleDegrees);
     construction.hingeAngle->setToolTip("Aft bevel from vertical. The top edge is closest to the wing.");
     sparLayout->addWidget(detailRow({{"Height", construction.hingeSparHeight}}));
     sparLayout->addWidget(detailRow({{"Width", construction.hingeSparWidth}}));
@@ -2924,6 +3082,30 @@ void WingPanelEditor::addRemovableJoinerEditor(const int kind,
         updateJoinerEditorControls(); emitChanged();
       });
   }
+  const auto addSleeveId = [&](QWidget* details, LengthInput* od, LengthInput*& id,
+                               double value, UnitOverride units) {
+    id = new LengthInput{QString{od->objectName()}.replace("Od", "Id"),
+        value < 0 ? std::max(0.0, od->valueMm() - 1.0) : value};
+    id->setGlobalUnit(globalUnit_);
+    id->setUnitOverride(units);
+    id->setOverrideSelectorVisible(showUnitOverrides_);
+    qobject_cast<QVBoxLayout*>(details->layout())->addWidget(detailRow({{"ID", id}}));
+    const auto followsOd = std::make_shared<bool>(std::abs(id->valueMm() - od->valueMm() + 1.0) < 1e-8);
+    connect(od, &LengthInput::valueChanged, this, [this, od, id, followsOd] {
+      if (*followsOd) id->setValueMm(std::max(0.0, od->valueMm() - 1.0));
+      emitChanged();
+    });
+    connect(id, &LengthInput::valueChanged, this, [this, od, id, followsOd] {
+      *followsOd = std::abs(id->valueMm() - od->valueMm() + 1.0) < 1e-8;
+      emitChanged();
+    });
+  };
+  addSleeveId(row.thisSleeveDetails, row.thisSleeveOd, row.thisSleeveId,
+      newAlignmentPin ? 2.0 : data.thisSleeveId,
+      data.thisSleeveId < 0 ? data.thisSleeveOdUnit : data.thisSleeveIdUnit);
+  addSleeveId(row.adjoiningSleeveDetails, row.adjoiningSleeveOd, row.adjoiningSleeveId,
+      newAlignmentPin ? 2.0 : data.adjoiningSleeveId,
+      data.adjoiningSleeveId < 0 ? data.adjoiningSleeveOdUnit : data.adjoiningSleeveIdUnit);
   row.thisRodOd->setUnitOverride(data.thisRodOdUnit);
   row.thisSleeveOd->setUnitOverride(data.thisSleeveOdUnit);
   row.adjoiningRodOd->setUnitOverride(data.adjoiningRodOdUnit);
@@ -3078,6 +3260,8 @@ WingPanelData WingPanelEditor::data() const {
   d.builtUpFlap = builtUpData(builtUpFlap_);
   d.aileronHingeParallelY = aileronHingeParallelY_->isChecked();
   d.flapHingeParallelY = flapHingeParallelY_->isChecked();
+  d.aileronPerpendicularToRibs = aileronPerpendicularToRibs_->isChecked();
+  d.flapPerpendicularToRibs = flapPerpendicularToRibs_->isChecked();
   d.panelSpan = span_->valueMm(); d.rootChord = rootChord_->valueMm(); d.tipChord = tipChord_->valueMm();
   d.sweep = sweep_->valueMm(); d.dihedral = dihedral_->value(); d.twist = twist_->value();
   d.ribThickness = ribThickness_->valueMm(); d.ribCount = ribCount_->value();
@@ -3248,14 +3432,18 @@ WingPanelData WingPanelEditor::data() const {
       joiner.thisRodOd = row.thisRodOd->valueMm();
       joiner.thisSleeveMaterial = row.thisSleeveMaterial->checkedId();
       joiner.thisSleeveOd = row.thisSleeveOd->valueMm();
+      joiner.thisSleeveId = row.thisSleeveId->valueMm();
       joiner.adjoiningRodMaterial = row.adjoiningRodMaterial->checkedId();
       joiner.adjoiningRodOd = row.adjoiningRodOd->valueMm();
       joiner.adjoiningSleeveMaterial = row.adjoiningSleeveMaterial->checkedId();
       joiner.adjoiningSleeveOd = row.adjoiningSleeveOd->valueMm();
+      joiner.adjoiningSleeveId = row.adjoiningSleeveId->valueMm();
       joiner.thisRodOdUnit = row.thisRodOd->unitOverride();
       joiner.thisSleeveOdUnit = row.thisSleeveOd->unitOverride();
+      joiner.thisSleeveIdUnit = row.thisSleeveId->unitOverride();
       joiner.adjoiningRodOdUnit = row.adjoiningRodOd->unitOverride();
       joiner.adjoiningSleeveOdUnit = row.adjoiningSleeveOd->unitOverride();
+      joiner.adjoiningSleeveIdUnit = row.adjoiningSleeveId->unitOverride();
       if (row.kind == 1) {
         joiner.alignmentMode = row.alignmentSleevePin->isChecked() ? 0 : 1;
         joiner.pinHoleThisPart = row.pinHolePin->isChecked() ? 0 : 1;
@@ -3287,9 +3475,12 @@ void WingPanelEditor::setMatchedRootChord(const WingPanelData& data) {
 }
 
 void WingPanelEditor::setData(const WingPanelData& d) {
+  pendingSparMoves_.clear();
   airfoilData_ = d;
   aileronHingeParallelY_->setChecked(d.aileronHingeParallelY);
   flapHingeParallelY_->setChecked(d.flapHingeParallelY);
+  aileronPerpendicularToRibs_->setChecked(d.aileronPerpendicularToRibs);
+  flapPerpendicularToRibs_->setChecked(d.flapPerpendicularToRibs);
   while (sparEditors_.size() > d.spars.size()) {
     delete sparEditors_.back().container;
     sparEditors_.pop_back();
@@ -3453,6 +3644,140 @@ void WingPanelEditor::setData(const WingPanelData& d) {
   updateRibSpacing();
 }
 
+void WingPanelEditor::convertDefaultLengthUnits(const DisplayUnit unit) {
+  if (unit == globalUnit_) return;
+  // Defaults select practical stock sizes; ordinary display-unit changes
+  // must continue to preserve the project's exact dimensions.
+  for (auto* input : findChildren<LengthInput*>()) {
+    if (input->unitOverride() != UnitOverride::Global) continue;
+    const double value = input->valueMm();
+    const double rounded = unit == DisplayUnit::Inches
+        ? std::round(value / kMmPerInch * 32.0) / 32.0 * kMmPerInch
+        : std::abs(value - kMmPerInch / 16.0) < 1.0e-8
+            ? 1.5 : std::round(value);
+    input->setValueMm(rounded);
+  }
+  setGlobalUnit(unit);
+}
+
+bool WingPanelEditor::correctRearSparLocations() {
+  const auto values = data();
+  const auto corrections = rearSparCorrections(values, globalUnit_);
+  bool changed = false;
+  if (pendingSparMoves_.size() != sparEditors_.size())
+    pendingSparMoves_.assign(sparEditors_.size(), std::nullopt);
+  {
+    const QSignalBlocker blocker{this};
+    for (std::size_t i = 0; i < corrections.size(); ++i) {
+      if (!corrections[i]) continue;
+      auto& row = sparEditors_[i];
+      const auto [root, tip] = *corrections[i];
+      if (std::abs(row.rootChordLocation->value() - root) < 1e-8 &&
+          std::abs(row.tipChordLocation->value() - tip) < 1e-8) continue;
+      auto& move = pendingSparMoves_[i];
+      if (!move || std::abs((*move)[2] - row.rootChordLocation->value()) > 1e-8 ||
+          std::abs((*move)[3] - row.tipChordLocation->value()) > 1e-8)
+        move = std::array{row.rootChordLocation->value(), row.tipChordLocation->value(), root, tip};
+      (*move)[2] = root; (*move)[3] = tip;
+      const QSignalBlocker rootBlocker{row.rootChordLocation}, tipBlocker{row.tipChordLocation};
+      row.rootChordLocation->setValue(root); row.tipChordLocation->setValue(tip);
+      changed = true;
+    }
+    if (changed) updateSparEditorControls();
+  }
+  if (changed) emitChanged();
+  return changed;
+}
+
+bool WingPanelEditor::rollbackRearSparLocations() {
+  bool changed = false;
+  {
+    const QSignalBlocker blocker{this};
+    if (pendingSparMoves_.size() == sparEditors_.size())
+      for (std::size_t i = 0; i < pendingSparMoves_.size(); ++i) {
+        if (!pendingSparMoves_[i]) continue;
+        const auto& move = *pendingSparMoves_[i];
+        auto& row = sparEditors_[i];
+        if (std::abs(row.rootChordLocation->value() - move[2]) > 1e-8 ||
+            std::abs(row.tipChordLocation->value() - move[3]) > 1e-8) continue;
+        const QSignalBlocker rootBlocker{row.rootChordLocation}, tipBlocker{row.tipChordLocation};
+        row.rootChordLocation->setValue(move[0]); row.tipChordLocation->setValue(move[1]);
+        changed = true;
+      }
+    pendingSparMoves_.clear();
+    if (changed) updateSparEditorControls();
+  }
+  if (changed) emitChanged();
+  return changed;
+}
+
+void WingPanelEditor::acceptRearSparLocations() { pendingSparMoves_.clear(); }
+
+bool WingPanelEditor::applyDefaultLengthUnits(const WingPanelData& defaults,
+                                             const DisplayUnit unit) {
+  const QSignalBlocker blocker{this};
+  // Match the current rows so each existing part gets the corresponding
+  // saved dimensions without changing its material, options, or row count.
+  auto values = defaults;
+  const auto current = data();
+  const auto sizeRows = [](auto& rows, std::size_t count, const auto& fallback) {
+    const auto seed = rows.empty() ? fallback : rows.back();
+    rows.resize(count, seed);
+  };
+  sizeRows(values.spars, current.spars.size(), defaults.sparDefaults);
+  sizeRows(values.builtUpAileron.spars, current.builtUpAileron.spars.size(),
+           domain::SparParameters{});
+  sizeRows(values.builtUpFlap.spars, current.builtUpFlap.spars.size(),
+           domain::SparParameters{});
+  sizeRows(values.fixedJoiners, current.fixedJoiners.size(), FixedJoinerData{});
+  values.removableJoiners.clear();
+  for (const auto& joiner : current.removableJoiners) {
+    const auto match = std::find_if(defaults.removableJoiners.rbegin(),
+        defaults.removableJoiners.rend(),
+        [&](const auto& candidate) { return candidate.kind == joiner.kind; });
+    auto seed = match == defaults.removableJoiners.rend()
+        ? RemovableJoinerData{} : *match;
+    seed.kind = joiner.kind;
+    values.removableJoiners.push_back(seed);
+  }
+  values.joinerPanelMode = current.joinerPanelMode;
+  WingPanelEditor defaultEditor{values, unit, true, showJoinerPage_, showRootChord_};
+  QHash<QString, QList<LengthInput*>> defaultInputs;
+  for (auto* input : defaultEditor.findChildren<LengthInput*>())
+    defaultInputs[input->objectName()].append(input);
+  QHash<LengthInput*, LengthInput*> sparInputs;
+  const auto matchSpars = [&](const std::vector<SparEditorWidgets>& rows,
+                             const std::vector<SparEditorWidgets>& defaultRows) {
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+      const auto inputs = rows[i].container->findChildren<LengthInput*>();
+      const auto stockDefaults = defaultRows[i].container->findChildren<LengthInput*>();
+      for (qsizetype j = 0; j < inputs.size(); ++j)
+        sparInputs.insert(inputs[j], stockDefaults[j]);
+    }
+  };
+  matchSpars(sparEditors_, defaultEditor.sparEditors_);
+  matchSpars(builtUpAileron_.spars, defaultEditor.builtUpAileron_.spars);
+  matchSpars(builtUpFlap_.spars, defaultEditor.builtUpFlap_.spars);
+  QHash<QString, qsizetype> occurrences;
+  bool changed = globalUnit_ != unit;
+  for (auto* input : findChildren<LengthInput*>()) {
+    const auto key = input->objectName();
+    const auto index = occurrences[key]++;
+    const auto effectiveUnit = input->unitOverride() == UnitOverride::Global
+        ? globalUnit_ : input->unitOverride() == UnitOverride::Inches
+            ? DisplayUnit::Inches : DisplayUnit::Millimeters;
+    auto* source = sparInputs.value(input, nullptr);
+    if (!source && index < defaultInputs.value(key).size()) source = defaultInputs[key][index];
+    if (effectiveUnit == unit || !source) continue;
+    input->setValueMm(source->valueMm());
+    input->setUnitOverride(UnitOverride::Global);
+    changed = true;
+  }
+  setGlobalUnit(unit);
+  setJoinerAddDefaults(defaults);
+  return changed;
+}
+
 void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
   globalUnit_ = unit;
   for (auto* control : {&builtUpAileron_, &builtUpFlap_})
@@ -3470,7 +3795,7 @@ void WingPanelEditor::setGlobalUnit(const DisplayUnit unit) {
     for (auto* input : {row.woodThickness, row.tubeOd, row.tubeId, row.rodOd, row.steelOd})
       input->setGlobalUnit(unit);
   for (auto& row : removableJoinerEditors_)
-    for (auto* input : {row.thisSleeveOd, row.thisRodOd, row.adjoiningSleeveOd,
+    for (auto* input : {row.thisSleeveOd, row.thisSleeveId, row.thisRodOd, row.adjoiningSleeveOd, row.adjoiningSleeveId,
                         row.adjoiningRodOd, row.pinOd})
       if (input) input->setGlobalUnit(unit);
   for (auto& row : wiringHoleWidgets_)
@@ -3546,9 +3871,8 @@ bool WingPanelEditor::validate(QString& error) {
     }
     for (const bool top : {true, false}) {
       if (!(top ? w.top : w.bottom)->isChecked()) continue;
-      if ((!w.hingeSpars->isChecked() && (top ? w.topWidth : w.bottomWidth)->valueMm() <= 0) ||
-          (top ? w.topThickness : w.bottomThickness)->valueMm() <= 0) {
-        error = "Built-up " + name + " Sheeting Width and Thickness must be greater than zero.";
+      if ((top ? w.topThickness : w.bottomThickness)->valueMm() <= 0) {
+        error = "Built-up " + name + " Sheeting Thickness must be greater than zero.";
         return false;
       }
     }
@@ -3691,7 +4015,8 @@ bool WingPanelEditor::validate(QString& error) {
                  : QString{});
     return false;
   }
-  if (airfoilData_.planform.empty() && flaps_->isChecked() && ailerons_->isChecked() &&
+  if (airfoilData_.planform.empty() && !aileronPerpendicularToRibs_->isChecked() &&
+      !flapPerpendicularToRibs_->isChecked() && flaps_->isChecked() && ailerons_->isChecked() &&
       aileronStart_->value() == flapStop_->value() &&
       std::abs(aileronWidth_->valueMm() - flapWidth_->valueMm()) > 1.0e-8) {
     LengthInput* corrected = lastControlWidthEdited_ == aileronWidth_
@@ -3712,10 +4037,39 @@ bool WingPanelEditor::validate(QString& error) {
     error = "Aileron Start Rib must be less than Aileron Stop Rib.";
     return false;
   }
+  if (joinerMode_ == 0) for (const auto& row : removableJoinerEditors_) {
+    if (row.kind == 1 && !row.alignmentSleevePin->isChecked()) continue;
+    const bool thisSleeve = row.sleeve->isChecked();
+    const bool adjoiningSleeve = row.kind == 1 ? !thisSleeve : row.adjoiningSleeve->isChecked();
+    const auto validSleeve = [](const LengthInput* od, const LengthInput* id) {
+      return std::isfinite(od->valueMm()) && std::isfinite(id->valueMm()) &&
+          id->valueMm() > 0 && od->valueMm() > id->valueMm();
+    };
+    if ((thisSleeve && !validSleeve(row.thisSleeveOd, row.thisSleeveId)) ||
+        (adjoiningSleeve && !validSleeve(row.adjoiningSleeveOd, row.adjoiningSleeveId))) {
+      error = "Joiner sleeve ID must be greater than zero and smaller than OD.";
+      return false;
+    }
+  }
+  const auto panel = data();
+  const auto corrections = rearSparCorrections(panel, globalUnit_);
+  for (std::size_t i = 0; i < corrections.size(); ++i) {
+    const auto& spar = panel.spars[i];
+    const double tip = spar.tipChordLocationPercent < 0 ? spar.chordLocationPercent : spar.tipChordLocationPercent;
+    if (corrections[i] && (std::abs(corrections[i]->first - spar.chordLocationPercent) > 1e-8 ||
+        std::abs(corrections[i]->second - tip) > 1e-8)) {
+      error = QString{"Spar %1 intersects rear TE, aileron, or flap geometry. "
+          "After closing this message, its root and tip locations will move forward to clear the geometry. "
+          "Generate Wing again to rebuild."}.arg(i + 1);
+      return false;
+    }
+  }
   return true;
 }
 
 void WingPanelEditor::updateConditionalControls() {
+  if (aileronWidthLabel_) aileronWidthLabel_->setText(aileronPerpendicularToRibs_->isChecked() ? "Root Width" : "Width");
+  if (flapWidthLabel_) flapWidthLabel_->setText(flapPerpendicularToRibs_->isChecked() ? "Root Width" : "Width");
   for (auto* w : {&builtUpAileron_, &builtUpFlap_}) {
     if (!w->enabled) continue;
     w->details->setVisible(w->enabled->isChecked());
@@ -3726,11 +4080,8 @@ void WingPanelEditor::updateConditionalControls() {
     w->hingeSpars->setVisible(built);
     w->hingePostDetails->setVisible(!built || w->hingePost->isChecked());
     w->hingeSparDetails->setVisible(built && w->hingeSpars->isChecked());
-    const bool fullControlSkin = w->hingeSpars->isChecked();
-    w->topWidth->parentWidget()->setVisible(!fullControlSkin);
-    w->bottomWidth->parentWidget()->setVisible(!fullControlSkin);
     for (auto* check : {w->top, w->bottom})
-      check->setToolTip(fullControlSkin ? "Sheeting extends to its hinge spar; wing TE sheeting keeps its own settings." : QString{});
+      check->setToolTip("Sheeting extends from its hinge post or spar to the TE, meeting any wing TE sheeting or stock.");
   }
   updateCurveControls();
   topFrontBuildTabDetails_->setVisible(addTopFrontBuildTab_->isChecked());

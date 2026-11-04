@@ -1,3 +1,13 @@
+designrc (1.7.1) resolute; urgency=medium
+
+  * Add perpendicular control hinges, full-width control skins, and practical
+    hinge-spar defaults; expose sleeve bore dimensions and preserve mirrored IDs.
+  * Improve rear-spar clearance corrections, global-unit default conversion,
+    and aileron/flap generation progress reporting.
+  * Update installed help and release metadata.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Wed, 04 Nov 2026 12:00:00 -0500
+
 designrc (1.2.0) noble; urgency=medium
 
   * Add rib build tabs for constructing twisted panels on a flat surface,

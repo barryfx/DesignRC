@@ -101,18 +101,22 @@ struct RemovableJoinerData {
   double thisRodOd{6.0};
   int thisSleeveMaterial{1}; // 0 CF, 1 aluminum, 2 steel, 3 fiberglass
   double thisSleeveOd{7.0};
+  double thisSleeveId{-1.0}; // negative: default to OD minus 1 mm
   int adjoiningRodMaterial{1};
   double adjoiningRodOd{6.0};
   int adjoiningSleeveMaterial{1};
   double adjoiningSleeveOd{7.0};
+  double adjoiningSleeveId{-1.0};
   int alignmentMode{1}; // 0 sleeve/pin, 1 pin/hole
   int pinHoleThisPart{0}; // 0 pin, 1 hole
   int pinMaterial{0};
   double pinOd{2.0};
   UnitOverride thisRodOdUnit{UnitOverride::Global};
   UnitOverride thisSleeveOdUnit{UnitOverride::Global};
+  UnitOverride thisSleeveIdUnit{UnitOverride::Global};
   UnitOverride adjoiningRodOdUnit{UnitOverride::Global};
   UnitOverride adjoiningSleeveOdUnit{UnitOverride::Global};
+  UnitOverride adjoiningSleeveIdUnit{UnitOverride::Global};
   UnitOverride pinOdUnit{UnitOverride::Global};
   int ribBays{1}; // Sleeve/rod joiners only; alignment pins ignore this.
 };
@@ -124,6 +128,8 @@ struct WingPanelData {
   QString curveFileName;
   bool aileronHingeParallelY{false};
   bool flapHingeParallelY{false};
+  bool aileronPerpendicularToRibs{false};
+  bool flapPerpendicularToRibs{false};
   double panelSpan{700.0};
   double rootChord{240.0};
   double tipChord{150.0};
@@ -240,6 +246,7 @@ QJsonObject panelDataToJson(const WingPanelData& data);
 WingPanelData panelDataFromJson(const QJsonObject& object);
 [[nodiscard]] WingPanelData roundedInchPanelData(const WingPanelData& metricData);
 [[nodiscard]] WingPanelData installedDefaultPanelData(DisplayUnit unit);
+void migrateLegacyHingeSparDefaults(WingPanelData& defaults);
 // Adjust joint roots transactionally; imported TE corrections fade to zero at the tip.
 [[nodiscard]] QString matchPanelRootChords(std::vector<WingPanelData>& panels);
 [[nodiscard]] QString woodJoinerSparAlignmentError(
@@ -258,6 +265,11 @@ public:
   void setMatchedRootChord(const WingPanelData& data);
   void setJoinerAddDefaults(const WingPanelData& defaults);
   void setGlobalUnit(DisplayUnit unit);
+  void convertDefaultLengthUnits(DisplayUnit unit);
+  bool applyDefaultLengthUnits(const WingPanelData& defaults, DisplayUnit unit);
+  bool correctRearSparLocations();
+  bool rollbackRearSparLocations();
+  void acceptRearSparLocations();
   void setDiamondLeadingEdgeWidthMm(double width);
   void setLeadingEdgeHeightMm(double height);
   void setTrailingEdgeHeightMm(double height);
@@ -319,7 +331,7 @@ private:
     QCheckBox* enabled{};
     QWidget* details{};
     QCheckBox *top{}, *bottom{};
-    LengthInput *topWidth{}, *topThickness{}, *bottomWidth{}, *bottomThickness{};
+    LengthInput *topThickness{}, *bottomThickness{};
     QWidget *topDetails{}, *bottomDetails{};
     QRadioButton *hingePost{}, *hingeSpars{};
     QWidget *hingePostDetails{}, *hingeSparDetails{};
@@ -359,13 +371,15 @@ private:
         *adjoiningRodDetails{}, *pinDetails{};
     QButtonGroup *thisSleeveMaterial{}, *thisRodMaterial{}, *adjoiningSleeveMaterial{},
         *adjoiningRodMaterial{}, *pinMaterial{};
-    LengthInput *thisSleeveOd{}, *thisRodOd{}, *adjoiningSleeveOd{},
+    LengthInput *thisSleeveOd{}, *thisSleeveId{}, *thisRodOd{}, *adjoiningSleeveOd{}, *adjoiningSleeveId{},
         *adjoiningRodOd{}, *pinOd{};
   };
 
   QLabel* curveFileLabel_{};
   QPushButton* deleteCurves_{};
   QCheckBox *aileronHingeParallelY_{}, *flapHingeParallelY_{};
+  QCheckBox *aileronPerpendicularToRibs_{}, *flapPerpendicularToRibs_{};
+  QLabel *aileronWidthLabel_{}, *flapWidthLabel_{};
   WingPanelData airfoilData_;
   DisplayUnit globalUnit_{DisplayUnit::Millimeters};
   bool showUnitOverrides_{false};
@@ -426,6 +440,7 @@ private:
 
   QVBoxLayout* sparEditorsLayout_{};
   std::vector<SparEditorWidgets> sparEditors_;
+  std::vector<std::optional<std::array<double, 4>>> pendingSparMoves_;
   QCheckBox* sparShearWebs_{};
   QWidget* sparShearWebDetails_{};
   LengthInput* sparShearWebThickness_{};

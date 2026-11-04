@@ -27,6 +27,7 @@
 #include <QRadioButton>
 #include <QSpinBox>
 #include <QTabWidget>
+#include <QVBoxLayout>
 
 #include <cassert>
 #include <cstdlib>
@@ -36,12 +37,330 @@
 #include <fstream>
 #include <limits>
 
+namespace {
+void testHingeSparHeightDefaults() {
+  using namespace designrc::gui;
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    const auto installed = installedDefaultPanelData(unit);
+    assert(installed.builtUpAileron.hingeSparHeight == 6.35);
+    assert(installed.builtUpFlap.hingeSparHeight == 6.35);
+    assert(installed.builtUpAileron.hingeSparWidth == 9.525 && installed.builtUpFlap.hingeSparWidth == 9.525);
+    assert(installed.builtUpAileron.hingeAngleDegrees == 35 && installed.builtUpFlap.hingeAngleDegrees == 35);
+    WingPanelEditor editor{installed, unit};
+    for (const QString prefix : {QString{"aileron"}, QString{"flap"}}) {
+      editor.findChild<QRadioButton*>(prefix + "HingeSpars")->setChecked(true);
+      auto* height = editor.findChild<LengthInput*>(prefix + "HingeSparHeight");
+      assert(height && height->valueMm() == 6.35);
+      auto* width = editor.findChild<LengthInput*>(prefix + "HingeSparWidth");
+      assert(width && width->valueMm() == 9.525);
+      assert(editor.findChild<QDoubleSpinBox*>(prefix + "HingeAngle")->value() == 35);
+      if (unit == DisplayUnit::Inches)
+        assert(height->findChild<QDoubleSpinBox*>()->text() == "1/4 in" &&
+               width->findChild<QDoubleSpinBox*>()->text() == "3/8 in");
+    }
+    const auto reopened = panelDataFromJson(panelDataToJson(editor.data()));
+    assert(reopened.builtUpAileron.hingeSparHeight == 6.35);
+    assert(reopened.builtUpFlap.hingeSparHeight == 6.35);
+  }
+  WingPanelData legacy;
+  legacy.builtUpAileron.hingeSparHeight = legacy.builtUpFlap.hingeSparHeight = 1.5;
+  legacy.builtUpAileron.hingeSparWidth = legacy.builtUpFlap.hingeSparWidth = 6;
+  legacy.builtUpAileron.hingeAngleDegrees = legacy.builtUpFlap.hingeAngleDegrees = 45;
+  migrateLegacyHingeSparDefaults(legacy);
+  assert(legacy.builtUpAileron.hingeSparHeight == 6.35 && legacy.builtUpFlap.hingeSparHeight == 6.35);
+  assert(legacy.builtUpAileron.hingeSparWidth == 9.525 && legacy.builtUpFlap.hingeSparWidth == 9.525);
+  assert(legacy.builtUpAileron.hingeAngleDegrees == 35 && legacy.builtUpFlap.hingeAngleDegrees == 35);
+  legacy.builtUpAileron.hingeSparHeight = 4.75;
+  legacy.builtUpFlap.hingeSparHeight = 8;
+  legacy.builtUpAileron.hingeSparWidth = 12; legacy.builtUpFlap.hingeSparWidth = 11;
+  legacy.builtUpAileron.hingeAngleDegrees = 20; legacy.builtUpFlap.hingeAngleDegrees = 40;
+  migrateLegacyHingeSparDefaults(legacy);
+  assert(legacy.builtUpAileron.hingeSparHeight == 4.75 && legacy.builtUpFlap.hingeSparHeight == 8);
+  assert(legacy.builtUpAileron.hingeSparWidth == 12 && legacy.builtUpFlap.hingeSparWidth == 11);
+  assert(legacy.builtUpAileron.hingeAngleDegrees == 20 && legacy.builtUpFlap.hingeAngleDegrees == 40);
+  WingPanelData project;
+  project.builtUpAileron.hingeSparHeight = project.builtUpFlap.hingeSparHeight = 1.5;
+  project.builtUpAileron.hingeSparWidth = project.builtUpFlap.hingeSparWidth = 6;
+  project.builtUpAileron.hingeAngleDegrees = project.builtUpFlap.hingeAngleDegrees = 45;
+  const auto original = panelDataFromJson(panelDataToJson(project));
+  assert(original.builtUpAileron.hingeSparHeight == 1.5 && original.builtUpFlap.hingeSparHeight == 1.5);
+  assert(original.builtUpAileron.hingeSparWidth == 6 && original.builtUpFlap.hingeSparWidth == 6);
+  assert(original.builtUpAileron.hingeAngleDegrees == 45 && original.builtUpFlap.hingeAngleDegrees == 45);
+}
+
+void testControlDirectionsAndSparSafety() {
+  using namespace designrc::gui;
+  WingPanelData values;
+  values.ailerons = values.flaps = true;
+  values.aileronPerpendicularToRibs = values.flapPerpendicularToRibs = true;
+  WingPanelEditor editor{values};
+  for (const QString prefix : {QString{"aileron"}, QString{"flap"}}) {
+    auto* option = editor.findChild<QCheckBox*>(prefix + "PerpendicularToRibs");
+    auto* label = editor.findChild<QLabel*>(prefix + "WidthLabel");
+    assert(option && option->text() == "Perpendicular to Ribs" && option->isChecked());
+    assert(label && label->text() == "Root Width");
+    const auto* layout = qobject_cast<QVBoxLayout*>(option->parentWidget()->layout());
+    assert(layout && layout->indexOf(option) < layout->indexOf(label->parentWidget()));
+    option->setChecked(false); assert(label->text() == "Width");
+    option->setChecked(true);
+  }
+  const auto saved = panelDataToJson(editor.data());
+  const auto restored = panelDataFromJson(saved);
+  assert(restored.aileronPerpendicularToRibs && restored.flapPerpendicularToRibs);
+  WingPanelEditor defaults{restored, DisplayUnit::Inches, true};
+  assert(defaults.findChild<QLabel*>("aileronWidthLabel")->text() == "Root Width");
+  auto legacy = saved; legacy.remove("aileronPerpendicularToRibs"); legacy.remove("flapPerpendicularToRibs");
+  assert(!panelDataFromJson(legacy).aileronPerpendicularToRibs);
+  editor.findChild<QCheckBox*>("aileronHingeParallelY")->setChecked(true);
+  assert(!editor.data().aileronPerpendicularToRibs);
+
+  WingPanelData panel;
+  panel.rootChord = 200; panel.tipChord = 140; panel.sweep = 30;
+  panel.trailingEdgeType = 2; panel.trailingEdgeWidth = 40;
+  SparDefaults rear;
+  rear.material = 0; rear.verticalLocation = 0; rear.woodWidth = 4; rear.woodHeight = 2;
+  rear.chordLocationPercent = rear.tipChordLocationPercent = 85;
+  panel.spars = {rear};
+  WingPanelEditor tapered{panel};
+  assert(tapered.correctRearSparLocations());
+  const auto fitted = tapered.data().spars.front();
+  const double rootX = fitted.chordLocationPercent * 2.0;
+  const double tipX = 30 + fitted.tipChordLocationPercent * 1.4;
+  assert(std::abs((tipX - rootX) - (-30.0)) < .04);
+  assert(std::abs(fitted.chordLocationPercent - fitted.tipChordLocationPercent) > 1);
+  assert(tapered.rollbackRearSparLocations());
+  assert(tapered.data().spars.front().chordLocationPercent == 85);
+  assert(tapered.correctRearSparLocations());
+  tapered.acceptRearSparLocations();
+  assert(!tapered.rollbackRearSparLocations());
+
+  panel.tipChord = 200; panel.sweep = 0;
+  auto front = rear; front.chordLocationPercent = front.tipChordLocationPercent = 78;
+  front.woodWidth = 6;
+  panel.spars = {front, rear};
+  WingPanelEditor blocked{panel};
+  assert(!blocked.correctRearSparLocations());
+  const auto unchanged = blocked.data().spars;
+  assert(unchanged[0].chordLocationPercent == 78 && unchanged[1].chordLocationPercent == 85);
+  assert(unchanged[0].tipChordLocationPercent == 78 && unchanged[1].tipChordLocationPercent == 85);
+}
+
+void testSleeveIds() {
+  using namespace designrc::gui;
+  {
+    WingPanelData panel;
+    panel.joinerPanelMode = 0;
+    RemovableJoinerData sleeve;
+    sleeve.thisPanelPart = sleeve.adjoiningPanelPart = 0;
+    panel.removableJoiners = {sleeve};
+    WingPanelEditor editor{panel, DisplayUnit::Millimeters, true};
+    auto* od = editor.findChild<LengthInput*>("removableThisSleeveOd");
+    auto* id = editor.findChild<LengthInput*>("removableThisSleeveId");
+    auto* adjoiningId = editor.findChild<LengthInput*>("removableAdjoiningSleeveId");
+    assert(od && id && adjoiningId);
+    assert(id->valueMm() == 6 && adjoiningId->valueMm() == 6);
+    od->findChild<QDoubleSpinBox*>()->setValue(9);
+    assert(id->valueMm() == 8);
+    id->findChild<QDoubleSpinBox*>()->setValue(7.5);
+    od->findChild<QDoubleSpinBox*>()->setValue(10);
+    assert(id->valueMm() == 7.5);
+    QString error;
+    assert(editor.validate(error));
+    const auto saved = panelDataFromJson(panelDataToJson(editor.data()));
+    assert(saved.removableJoiners.front().thisSleeveId == 7.5);
+    assert(saved.removableJoiners.front().adjoiningSleeveId == 6);
+    WingPanelEditor reopened{saved, DisplayUnit::Inches, true};
+    assert(reopened.findChild<LengthInput*>("removableThisSleeveId")->valueMm() == 7.5);
+    id->findChild<QDoubleSpinBox*>()->setValue(10);
+    assert(!editor.validate(error) && error.contains("smaller than OD"));
+    auto legacy = panelDataToJson(panel);
+    auto rows = legacy["removableJoiners"].toArray();
+    auto old = rows[0].toObject(); old.remove("thisSleeveId"); old.remove("adjoiningSleeveId");
+    old.insert("thisRodOd", 5); old.insert("adjoiningRodOd", 4); rows[0] = old;
+    legacy["removableJoiners"] = rows;
+    const auto migrated = panelDataFromJson(legacy).removableJoiners.front();
+    assert(migrated.thisSleeveId == 5 && migrated.adjoiningSleeveId == 4);
+    const auto startup = installedDefaultPanelData(DisplayUnit::Inches).removableJoiners.front();
+    assert(startup.thisSleeveOd == startup.adjoiningSleeveOd);
+    assert(startup.thisSleeveId == startup.adjoiningSleeveId);
+    panel.removableJoiners.front().thisSleeveOd = 8;
+    panel.removableJoiners.front().thisSleeveId = 6.5;
+    panel.removableJoiners.front().adjoiningSleeveOd = 9;
+    panel.removableJoiners.front().adjoiningSleeveId = 7;
+    WingPanelEditor customDefaults{panel, DisplayUnit::Millimeters, true};
+    const auto custom = customDefaults.data().removableJoiners.front();
+    assert(custom.thisSleeveOd == 8 && custom.thisSleeveId == 6.5);
+    assert(custom.adjoiningSleeveOd == 9 && custom.adjoiningSleeveId == 7);
+  }
+}
+
+void testRearSparPlacement() {
+  using namespace designrc::gui;
+  {
+    for (int obstruction = 0; obstruction < 3; ++obstruction) {
+      WingPanelData panel;
+      panel.rootChord = panel.tipChord = 200; panel.sweep = 0;
+      panel.dihedral = 0; panel.ribCount = 7;
+      panel.trailingEdgeType = obstruction == 0 ? 2 : 0;
+      panel.trailingEdgeWidth = 40;
+      panel.ailerons = obstruction == 1; panel.flaps = obstruction == 2;
+      panel.aileronWidth = panel.flapWidth = 40;
+      panel.aileronStartRib = panel.flapStartRib = 2;
+      panel.aileronStopRib = 7; panel.flapStopRib = 6;
+      SparDefaults spar;
+      spar.material = 0; spar.verticalLocation = 0;
+      spar.woodWidth = 4; spar.woodHeight = 2;
+      spar.chordLocationPercent = spar.tipChordLocationPercent = 85;
+      panel.spars = {spar};
+      WingPanelEditor editor{panel};
+      QString error;
+      assert(!editor.validate(error) && error.contains("intersects rear TE"));
+      assert(editor.data().spars.front().chordLocationPercent == 85);
+      assert(editor.correctRearSparLocations());
+      assert(editor.validate(error));
+      const auto adjusted = editor.data().spars.front();
+      assert(adjusted.chordLocationPercent < 80 && adjusted.tipChordLocationPercent < 80);
+      const auto* key = obstruction == 0 ? "trailingEdgeWidth" : obstruction == 1 ? "aileronWidth" : "flapWidth";
+      editor.findChild<LengthInput*>(key)->findChild<QDoubleSpinBox*>()->setValue(60);
+      const auto widened = editor.data().spars.front();
+      assert(widened.chordLocationPercent < adjusted.chordLocationPercent);
+      assert(widened.tipChordLocationPercent < adjusted.tipChordLocationPercent);
+      assert(editor.validate(error));
+      assert(!editor.correctRearSparLocations());
+    }
+  }
+}
+} // namespace
+
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
   _set_error_mode(_OUT_TO_STDERR);
 #endif
   QApplication application{argc, argv};
   using namespace designrc::gui;
+  testHingeSparHeightDefaults();
+  testControlDirectionsAndSparSafety();
+  testSleeveIds();
+  testRearSparPlacement();
+  {
+    for (const auto target : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+      const auto previous = target == DisplayUnit::Millimeters
+          ? DisplayUnit::Inches : DisplayUnit::Millimeters;
+      for (const int joinerMode : {0, 1}) {
+        auto saved = installedDefaultPanelData(DisplayUnit::Inches);
+        saved.builtUpAileron.spars.push_back({});
+        WingPanelEditor defaults{saved, previous, true};
+        defaults.convertDefaultLengthUnits(target);
+        saved = defaults.data();
+        auto current = installedDefaultPanelData(DisplayUnit::Inches);
+        current.joinerPanelMode = joinerMode;
+        current.panelSpan = 1234.5;
+        current.rootChord = 321.25;
+        current.sweep = 17.25;
+        current.ribCount = 13;
+        current.dihedral = 11;
+        current.twist = 2;
+        current.spars.resize(3, current.spars.front());
+        current.builtUpAileron.spars.resize(2);
+        current.fixedJoiners.resize(2, current.fixedJoiners.front());
+        current.unitOverrides.insert("rootChord", target == DisplayUnit::Inches
+            ? UnitOverride::Inches : UnitOverride::Millimeters);
+        current.unitOverrides.insert("sweep", previous == DisplayUnit::Inches
+            ? UnitOverride::Inches : UnitOverride::Millimeters);
+        WingPanelEditor project{current, previous};
+        assert(project.applyDefaultLengthUnits(saved, target));
+        const auto result = project.data();
+        assert(result.panelSpan == saved.panelSpan);
+        assert(result.rootChord == current.rootChord);
+        assert(result.sweep == saved.sweep);
+        assert(result.unitOverrides.value("rootChord") == current.unitOverrides.value("rootChord"));
+        assert(result.unitOverrides.value("sweep") == UnitOverride::Global);
+        assert(result.ribCount == 13 && result.dihedral == 11 && result.twist == 2);
+        assert(result.spars.size() == 3);
+        assert(result.spars.back().woodHeight == saved.spars.back().woodHeight);
+        assert(result.builtUpAileron.spars.size() == 2);
+        assert(result.builtUpAileron.spars.back().woodHeight == saved.builtUpAileron.spars.back().woodHeight);
+        if (joinerMode == 1) {
+          assert(result.fixedJoiners.size() == 2);
+          assert(result.fixedJoiners.back().woodThickness == saved.fixedJoiners.back().woodThickness);
+        } else {
+          assert(result.removableJoiners.size() == current.removableJoiners.size());
+          assert(result.removableJoiners.front().thisRodOd == saved.removableJoiners.front().thisRodOd);
+        }
+        // Saving defaults again in the same unit preserves current dimensions,
+        // even when those defaults were subsequently edited.
+        saved.panelSpan += 100;
+        assert(!project.applyDefaultLengthUnits(saved, target));
+        assert(project.data().panelSpan == result.panelSpan);
+        const auto reopened = panelDataFromJson(panelDataToJson(result));
+        assert(reopened.panelSpan == result.panelSpan);
+        assert(reopened.rootChord == current.rootChord);
+      }
+    }
+  }
+  {
+    // Defaults conversion covers hidden fields and dynamically added stock,
+    // while unit overrides and the current project's dimensions stay intact.
+    for (const int joinerMode : {0, 1}) {
+      auto source = installedDefaultPanelData(DisplayUnit::Inches);
+      source.joinerPanelMode = joinerMode;
+      source.sweep = -4.7625;
+      source.builtUpAileron.spars.push_back({});
+      source.builtUpFlap.spars.push_back({});
+      source.unitOverrides.insert("leadingEdgeWidth", UnitOverride::Inches);
+      source.unitOverrides.insert("trailingEdgeWidth", UnitOverride::Millimeters);
+      WingPanelEditor project{source, DisplayUnit::Inches};
+      const auto original = project.data();
+      WingPanelEditor defaults{source, DisplayUnit::Inches, true};
+      const auto inputs = defaults.findChildren<LengthInput*>();
+      std::vector<double> metricValues;
+      for (const auto* input : inputs) {
+        const double value = input->valueMm();
+        metricValues.push_back(input->unitOverride() != UnitOverride::Global
+            ? value : std::abs(value - 1.5875) < 1.0e-8
+                ? 1.5 : std::round(value));
+      }
+      defaults.convertDefaultLengthUnits(DisplayUnit::Millimeters);
+      for (qsizetype i = 0; i < inputs.size(); ++i)
+        assert(std::abs(inputs[i]->valueMm() - metricValues[i]) < 1.0e-8);
+      const auto metric = defaults.data();
+      assert(metric.panelSpan == 699 && metric.sweep == -5);
+      assert(metric.topTeSheetingThickness == 1.5);
+      assert(metric.builtUpAileron.topSheetingThickness == 1.5);
+      assert(metric.builtUpFlap.bottomSheetingThickness == 1.5);
+      assert(metric.dihedral == original.dihedral && metric.twist == original.twist);
+      assert(metric.ribCount == original.ribCount);
+      assert(metric.spars[0].woodHeight == 3);
+      assert(metric.builtUpAileron.spars[0].woodHeight == 5);
+      if (joinerMode == 1)
+        assert(metric.fixedJoiners[0].woodThickness == 3);
+      else
+        assert(metric.removableJoiners[0].thisRodOd == 5);
+      // Saving/reopening defaults and using them for a new editor retains the
+      // rounded dimensions. Merely opening Defaults or keeping mm is a no-op.
+      const auto saved = panelDataFromJson(panelDataToJson(metric));
+      WingPanelEditor newProject{saved, DisplayUnit::Millimeters};
+      assert(newProject.data().panelSpan == 699);
+      assert(newProject.data().topTeSheetingThickness == 1.5);
+      defaults.convertDefaultLengthUnits(DisplayUnit::Millimeters);
+      assert(defaults.data().topTeSheetingThickness == 1.5);
+      assert(project.data().panelSpan == original.panelSpan);
+      assert(project.data().topTeSheetingThickness == original.topTeSheetingThickness);
+      project.setGlobalUnit(DisplayUnit::Millimeters);
+      assert(project.data().panelSpan == original.panelSpan);
+      assert(project.data().topTeSheetingThickness == original.topTeSheetingThickness);
+
+      defaults.convertDefaultLengthUnits(DisplayUnit::Inches);
+      for (qsizetype i = 0; i < inputs.size(); ++i) {
+        const double expected = inputs[i]->unitOverride() != UnitOverride::Global
+            ? metricValues[i] : std::round(metricValues[i] / 25.4 * 32) / 32 * 25.4;
+        assert(std::abs(inputs[i]->valueMm() - expected) < 1.0e-8);
+      }
+      assert(std::abs(defaults.data().topTeSheetingThickness - 1.5875) < 1.0e-8);
+      auto* thickness = defaults.findChild<LengthInput*>("topTeSheetingThickness");
+      assert(thickness->findChild<QDoubleSpinBox*>()->text().contains("1/16"));
+    }
+  }
   {
     WingPanelData values;
     values.ailerons = values.flaps = true;
@@ -61,16 +380,16 @@ int main(int argc, char* argv[]) {
       assert(post && spars && postDetails && sparDetails);
       assert(spars->isChecked() && !post->isChecked());
       assert(postDetails->isHidden() && !sparDetails->isHidden());
-      auto* skinWidth = editor.findChild<LengthInput*>(prefix + "TopSheetingWidth");
-      assert(skinWidth && skinWidth->parentWidget()->isHidden());
+      assert(!editor.findChild<LengthInput*>(prefix + "TopSheetingWidth"));
+      assert(!editor.findChild<LengthInput*>(prefix + "BottomSheetingWidth"));
       assert(!editor.findChild<QCheckBox*>(prefix + "TopSheetingTaper"));
       assert(!editor.findChild<QCheckBox*>(prefix + "BottomSheetingTaper"));
       post->setChecked(true);
       assert(!spars->isChecked() && !postDetails->isHidden() && sparDetails->isHidden());
-      assert(!skinWidth->parentWidget()->isHidden());
+      assert(!editor.findChild<LengthInput*>(prefix + "TopSheetingWidth"));
       spars->setChecked(true);
       assert(!post->isChecked() && postDetails->isHidden() && !sparDetails->isHidden());
-      assert(skinWidth->parentWidget()->isHidden());
+      assert(!editor.findChild<LengthInput*>(prefix + "BottomSheetingWidth"));
     }
     const auto saved = panelDataToJson(editor.data());
     const auto loaded = panelDataFromJson(saved);
@@ -1675,7 +1994,7 @@ int main(int argc, char* argv[]) {
   assert(installedInches.removableJoiners[0].adjoiningRodMaterial == 0);
   assert(installedInches.removableJoiners[0].adjoiningSleeveMaterial == 0);
   assert(std::abs(
-             installedInches.removableJoiners[0].adjoiningSleeveOd - 7.0) <
+             installedInches.removableJoiners[0].adjoiningSleeveOd - 6.0) <
          1.0e-8);
   assert(installedInches.removableJoiners[1].kind == 1 &&
          installedInches.removableJoiners[1].chordLocationPercent == 70);

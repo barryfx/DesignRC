@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.7.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.7.1 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -121,7 +121,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="November 3, 2026"
+  DESIGNRC_RELEASE_DATE="November 4, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
@@ -277,6 +277,7 @@ if(DESIGNRC_BUILD_TESTS)
   add_test(NAME designrc_geometry_tests COMMAND designrc_geometry_tests)
   add_test(NAME designrc_builtup_control_tests COMMAND designrc_geometry_tests --builtup)
   add_test(NAME designrc_hinge_spar_tests COMMAND designrc_geometry_tests --hinge-spars)
+  add_test(NAME designrc_control_direction_tests COMMAND designrc_geometry_tests --control-direction)
   add_test(NAME designrc_sweep_tests COMMAND designrc_geometry_tests --sweep-fixture)
   add_test(NAME designrc_sweep_assembly_tests COMMAND designrc_geometry_tests --sweep-assembly)
   set_tests_properties(designrc_sweep_tests designrc_sweep_assembly_tests PROPERTIES TIMEOUT 180)

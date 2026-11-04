@@ -25,6 +25,32 @@ bool hasStep(const PartDrawing& drawing, double x, double thickness, bool top) {
 }
 
 int run() {
+  {
+    // Curved, tapered panels must clear rear stock between physical ribs too.
+    WingParameters panel;
+    panel.halfSpan = 300; panel.ribCount = 65; panel.dihedralDegrees = 0;
+    panel.planform.leading = {{0, 0}, {8, .4}, {20, 1}};
+    panel.planform.trailing = {{200, 0}, {160, .4}, {150, 1}};
+    panel.planform.leadingSourceSpan = panel.planform.trailingSourceSpan = 300;
+    panel.rootChord = 200; panel.tipChord = 130;
+    const auto foil = AirfoilProfile::nacaSymmetric(.15);
+    const auto sections = generateRibs(panel, foil, foil);
+    SparParameters spar;
+    spar.material = 1; spar.type = 0; spar.tubeOd = 6; spar.tubeId = 5;
+    spar.chordLocationPercent = 85; spar.tipChordLocationPercent = 80;
+    std::vector<double> front(sections.size(), 0), rear;
+    for (const auto& rib : sections) rear.push_back(rib.chord - 40);
+    const auto fit = fitSparAheadOfRearBoundary(sections, spar, front, rear);
+    assert(fit && fit->first < 85 && fit->second < 80);
+    spar.chordLocationPercent = fit->first; spar.tipChordLocationPercent = fit->second;
+    StructureParameters structure;
+    structure.spars = {spar}; structure.trailingEdgeType = 2;
+    structure.trailingEdgeWidth = 40; structure.trailingEdgeHeight = 40;
+    const auto clear = applyWingStructure(sections, structure);
+    for (std::size_t i = 0; i < sections.size(); ++i)
+      assert(clear.members.front().centers[i].x + 3 <= rear[i] - .25 + 1e-7);
+    assert(fitSparAheadOfRearBoundary(sections, spar, front, rear) == fit);
+  }
   WingParameters p;
   p.rootChord=p.tipChord=200; p.halfSpan=300; p.ribCount=7; p.dihedralDegrees=0;
   const auto foil=AirfoilProfile::nacaSymmetric(.15);
@@ -212,6 +238,7 @@ int run() {
   // Saved Built-upAilerons/FR3: the bevel must not double back past the
   // top notch, and a control skin must reach its hinge spar even when its
   // old stored Width is narrower than the control or the wing TE sheet.
+  for (const bool hingeSpars : {false, true})
   for (const bool inherited : {false, true}) for (const bool bottom : {false, true}) {
     WingParameters panel;
     panel.rootChord = panel.tipChord = 200; panel.halfSpan = 400;
@@ -222,14 +249,15 @@ int run() {
     settings.flapStartRib = 2; settings.flapStopRib = 5;
     settings.aileronStartRib = 5; settings.aileronStopRib = 9;
     settings.flapWidth = settings.aileronWidth = 50;
+    settings.flapHingePostHeight = settings.aileronHingePostHeight = 30;
     settings.topTeSheeting = settings.bottomTeSheeting = inherited;
     settings.topTeSheetingWidth = settings.bottomTeSheetingWidth = 25.4;
     settings.topTeSheetingThickness = settings.bottomTeSheetingThickness = .5;
     for (auto* options : {&settings.builtUpAileron, &settings.builtUpFlap}) {
-      options->enabled = options->hingeSpars = true;
+      options->enabled = true; options->hingeSpars = hingeSpars;
       options->hingeSparWidth = 4; options->hingeSparHeight = 3.5; options->hingeAngleDegrees = 45;
       options->topSheeting = true; options->bottomSheeting = bottom;
-      options->topSheetingWidth = options->bottomSheetingWidth = 20; // narrower than wing TE sheet
+      options->topSheetingWidth = options->bottomSheetingWidth = 1; // obsolete widths must not limit skins
       options->topSheetingThickness = options->bottomSheetingThickness = .5;
     }
     const auto model = applyWingStructure(sections, settings);
@@ -250,18 +278,26 @@ int run() {
         const auto spar = std::find_if(built.profiledMembers.begin(), built.profiledMembers.end(), [&](const auto& member) {
           return member.name == (top ? "Control Top hinge spar" : "Control Bottom hinge spar");
         });
-        assert(spar != built.profiledMembers.end());
+        assert(!hingeSpars || spar != built.profiledMembers.end());
         bool found = false;
         for (const auto& sheet : built.sheeting) {
           if (sheet.inheritedWingSheeting || (sheet.name.find("top") != std::string::npos ||
               sheet.name.find("Top") != std::string::npos) != top) continue;
           found = true;
           for (std::size_t i = 0; i < sheet.profiles.size(); ++i) {
-            const double rear = std::max_element(spar->profiles[i].begin(), spar->profiles[i].end(),
-                [](Point2 a, Point2 b) { return a.x < b.x; })->x;
+            const double rear = hingeSpars
+                ? std::max_element(spar->profiles[i].begin(), spar->profiles[i].end(),
+                    [](Point2 a, Point2 b) { return a.x < b.x; })->x
+                : std::min_element(built.ribs[i].outerOutline.begin(), built.ribs[i].outerOutline.end(),
+                    [](Point2 a, Point2 b) { return a.x < b.x; })->x;
             const double start = std::min_element(sheet.profiles[i].begin(), sheet.profiles[i].end(),
                 [](Point2 a, Point2 b) { return a.x < b.x; })->x;
             assert(std::abs(start - rear) < 1e-7);
+            if (!inherited) {
+              const double end = std::max_element(sheet.profiles[i].begin(), sheet.profiles[i].end(),
+                  [](Point2 a, Point2 b) { return a.x < b.x; })->x;
+              assert(std::abs(end - built.ribs[i].rib.chord) < 1e-7);
+            }
           }
         }
         assert(found);

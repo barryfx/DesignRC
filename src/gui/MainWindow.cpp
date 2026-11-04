@@ -52,6 +52,11 @@
 
 #include <Standard_Failure.hxx>
 #include <Standard_Version.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <BRepBndLib.hxx>
+#include <Bnd_Box.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
 
 #include <filesystem>
 #include <algorithm>
@@ -287,6 +292,8 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.teTopSheetStopRib = station(d.teTopSheetStopRib); s.teBottomSheetStopRib = station(d.teBottomSheetStopRib);
   s.aileronHingeParallelY = d.aileronHingeParallelY;
   s.flapHingeParallelY = d.flapHingeParallelY;
+  s.aileronPerpendicularToRibs = d.aileronPerpendicularToRibs;
+  s.flapPerpendicularToRibs = d.flapPerpendicularToRibs;
   s.ailerons = d.ailerons; s.aileronWidth = d.aileronWidth; s.aileronHeight = d.aileronHeight;
   s.aileronHingePostWidth = d.aileronHingePostWidth; s.aileronHingePostHeight = d.aileronHingePostHeight;
   s.aileronStartRib = station(d.aileronStartRib); s.aileronStopRib = station(d.aileronStopRib);
@@ -1261,9 +1268,9 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
         const double adjoiningOd = adjoiningSleeve
             ? removable.adjoiningSleeveOd : removable.adjoiningRodOd;
         const double thisId = thisSleeve
-            ? (adjoiningSleeve ? removable.thisRodOd : adjoiningOd) : 0.0;
+            ? (removable.thisSleeveId < 0 ? std::max(0.0, thisOd - 1.0) : removable.thisSleeveId) : 0.0;
         const double adjoiningId = adjoiningSleeve
-            ? (thisSleeve ? removable.adjoiningRodOd : thisOd) : 0.0;
+            ? (removable.adjoiningSleeveId < 0 ? std::max(0.0, adjoiningOd - 1.0) : removable.adjoiningSleeveId) : 0.0;
         const int thisMaterial = thisSleeve ? removable.thisSleeveMaterial : removable.thisRodMaterial == 0 ? 0 : 2;
         const int adjoiningMaterial = adjoiningSleeve
             ? removable.adjoiningSleeveMaterial
@@ -1557,22 +1564,30 @@ PreviewComputation computePreview(std::vector<WingPanelData> panels,
   constexpr int geometryProgressSpan = 65;
   std::mutex panelProgressMutex;
   std::vector<int> panelProgressValues(result.structuredPanels.size(), 0);
+  std::vector<QString> panelProgressMessages(result.structuredPanels.size(), "Waiting for geometry worker");
   const auto reportPanelProgress =
       [&](const std::size_t panelIndex, const int localValue,
           const QString& localMessage) {
         std::scoped_lock lock{panelProgressMutex};
         panelProgressValues[panelIndex] = std::max(
             panelProgressValues[panelIndex], std::clamp(localValue, 0, 100));
+        panelProgressMessages[panelIndex] = localMessage;
         const int combined = std::accumulate(
             panelProgressValues.begin(), panelProgressValues.end(), 0);
         const int globalValue = geometryProgressStart +
             geometryProgressSpan * combined /
                 static_cast<int>(100 * panelProgressValues.size());
+        std::size_t displayedPanel = panelIndex;
+        if (panelProgressValues[panelIndex] == 100)
+          for (std::size_t i = 0; i < panelProgressValues.size(); ++i)
+            if (panelProgressValues[i] < 100 && panelProgressMessages[i] != "Waiting for geometry worker") {
+              displayedPanel = i; break;
+            }
         progress(globalValue,
             QString{"Panel %1 of %2: %3"}
-                .arg(panelIndex + 1)
+                .arg(displayedPanel + 1)
                 .arg(result.structuredPanels.size())
-                .arg(localMessage));
+                .arg(panelProgressMessages[displayedPanel]));
       };
 
   std::atomic_size_t nextPanel{0};
@@ -1661,7 +1676,9 @@ int runProjectBackendRegression(const QString& path) {
     if (panels.empty()) return 1;
     const auto result = computePreview(panels,
         static_cast<DisplayUnit>(project.value("globalUnit").toInt()),
-        std::make_shared<std::atomic_bool>(false), [](int, const QString&) {});
+        std::make_shared<std::atomic_bool>(false), [](int value, const QString& message) {
+          std::fprintf(stderr, "%d%% %s\n", value, message.toUtf8().constData());
+        });
     if (result.materialShapes.parts.empty()) return 2;
     std::fprintf(stderr, "Saved project built successfully: %zu parts\n", result.materialShapes.parts.size());
     return 0;
@@ -2096,12 +2113,51 @@ int runJoinerBackendRegression() {
 
     sleeveRod.thisPanelPart = 0;
     sleeveRod.adjoiningPanelPart = 0;
+    sleeveRod.thisSleeveId = 4.5;
+    sleeveRod.adjoiningSleeveId = 4.0;
     removable.removableJoiners = {sleeveRod};
     const auto twoSleevePreview = build(removable);
     if (twoSleevePreview.structuredPanels.front().joiners.size() != 2 ||
         twoSleevePreview.structuredPanels.front().joiners[0].kind != domain::SpanMemberKind::Tube ||
-        twoSleevePreview.structuredPanels.front().joiners[1].kind != domain::SpanMemberKind::Tube)
+        twoSleevePreview.structuredPanels.front().joiners[1].kind != domain::SpanMemberKind::Tube ||
+        std::abs(twoSleevePreview.structuredPanels.front().joiners[0].innerDiameter - 4.5) > 1e-8 ||
+        std::abs(twoSleevePreview.structuredPanels.front().joiners[1].innerDiameter - 4.0) > 1e-8)
       return 21;
+
+    // A center-root sleeve pair must retain the same physical OD and bore
+    // on the mirrored wing half, not merely matching parameter metadata.
+    auto matchingSleeves = removable;
+    auto matchingSleeve = sleeveRod;
+    matchingSleeve.thisSleeveOd = matchingSleeve.adjoiningSleeveOd = 7.4;
+    matchingSleeve.thisSleeveId = matchingSleeve.adjoiningSleeveId = 5.2;
+    matchingSleeves.dihedral = 0;
+    matchingSleeves.removableJoiners = {matchingSleeve};
+    const auto matchingPreview = build(matchingSleeves);
+    int matchingParts = 0;
+    bool rightSleeve = false, leftSleeve = false;
+    for (const auto& part : matchingPreview.materialShapes.parts) {
+      if (part.name.find("Removable Joiner 1") == std::string::npos) continue;
+      bool correctOd = false, correctId = false;
+      for (TopExp_Explorer faces{part.shape, TopAbs_FACE}; faces.More(); faces.Next()) {
+        const BRepAdaptor_Surface surface{TopoDS::Face(faces.Current())};
+        if (surface.GetType() != GeomAbs_Cylinder) continue;
+        const double diameter = surface.Cylinder().Radius() * 2.0;
+        correctOd = correctOd || std::abs(diameter - 7.4) < 1e-7;
+        correctId = correctId || std::abs(diameter - 5.2) < 1e-7;
+      }
+      if (!correctOd || !correctId) {
+        std::fprintf(stderr, "Mirrored root sleeve lost its OD or ID: %s\n", part.name.c_str());
+        return 123;
+      }
+      Bnd_Box bounds;
+      BRepBndLib::Add(part.shape, bounds);
+      double xmin, ymin, zmin, xmax, ymax, zmax;
+      bounds.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+      rightSleeve = rightSleeve || ymin + ymax > 1e-6;
+      leftSleeve = leftSleeve || ymin + ymax < -1e-6;
+      ++matchingParts;
+    }
+    if (matchingParts != 2 || !rightSleeve || !leftSleeve) return 124;
 
     // Bay counts select the terminal physical rib for every fixed material.
     WingPanelData bayPanel=fixed;
@@ -2637,6 +2693,22 @@ std::vector<WingPanelData> MainWindow::defaultPanelData(const DisplayUnit unit) 
       migrateLegacyLeadingEdgeWidthUnit(panel);
       // Remove the duplicate wood joiner shipped in the previous defaults.
       migrateLegacyDuplicateDefaultWoodJoiner(panel);
+      migrateLegacyHingeSparDefaults(panel);
+      const auto savedJoiners = object.value("removableJoiners").toArray();
+      for (std::size_t i = 0; i < panel.removableJoiners.size(); ++i) {
+        auto& joiner = panel.removableJoiners[i];
+        const auto saved = savedJoiners.at(static_cast<qsizetype>(i)).toObject();
+        // Upgrade the original asymmetric startup sleeve sizes only. Explicit
+        // IDs and other custom Defaults dimensions remain authoritative.
+        if (joiner.kind == 0 && !saved.contains("thisSleeveId") && !saved.contains("adjoiningSleeveId") &&
+            std::abs(joiner.thisSleeveOd - 6.0) < 1e-8 && std::abs(joiner.adjoiningSleeveOd - 7.0) < 1e-8 &&
+            std::abs(joiner.thisRodOd - 5.0) < 1e-8 && std::abs(joiner.adjoiningRodOd - 6.0) < 1e-8) {
+          joiner.adjoiningSleeveOd = joiner.thisSleeveOd;
+          joiner.thisSleeveId = joiner.adjoiningSleeveId = 5.0;
+          joiner.thisSleeveIdUnit = joiner.thisSleeveOdUnit;
+          joiner.adjoiningSleeveIdUnit = joiner.adjoiningSleeveOdUnit;
+        }
+      }
       const std::size_t panelIndex = result.size();
       if (!object.contains("spoilerMinimumWoodMargin"))
         panel.spoilerMinimumWoodMargin =
@@ -2937,6 +3009,7 @@ void MainWindow::regeneratePreview() {
     if (!panelEditors_[i]->validate(error)) {
       QMessageBox::warning(this, "Invalid panel settings",
           QString{"Panel %1: %2"}.arg(i + 1).arg(error));
+      if (error.contains("intersects rear TE")) panelEditors_[i]->correctRearSparLocations();
       return;
     }
   }
@@ -2948,7 +3021,11 @@ void MainWindow::regeneratePreview() {
   }
   const auto alignmentError = woodJoinerSparAlignmentError(panels);
   if (!alignmentError.isEmpty()) {
-    QMessageBox::warning(this, "Invalid wood joiner", alignmentError);
+    bool rejectedSparMove = false;
+    for (auto* editor : panelEditors_)
+      rejectedSparMove = editor->rollbackRearSparLocations() || rejectedSparMove;
+    QMessageBox::warning(this, "Invalid wood joiner", alignmentError + (rejectedSparMove
+        ? QString{"\n\nThe automatic spar move was rejected; its original root and tip locations were restored."} : QString{}));
     return;
   }
   const auto unit = globalUnit_;
@@ -3047,10 +3124,22 @@ void MainWindow::regeneratePreview() {
       if (!error.isEmpty()) {
         finishUi();
         window->statusBar()->showMessage("Update View failed", 3000);
+        bool rejectedSparMove = false;
+        if (error.contains("collision", Qt::CaseInsensitive) || error.contains("intersect", Qt::CaseInsensitive) ||
+            error.contains("leaves the airfoil", Qt::CaseInsensitive))
+          for (auto* editor : window->panelEditors_)
+            rejectedSparMove = editor->rollbackRearSparLocations() || rejectedSparMove;
+        const auto reportedError = error + (rejectedSparMove
+            ? QString{"\n\nThe automatic spar move was rejected; its original root and tip locations were restored."} : QString{});
         if (error.contains("No gap between the hinge post and the TE"))
-          QMessageBox::warning(window, "Invalid built-up control", error);
+          QMessageBox::warning(window, "Invalid built-up control", reportedError);
         else
-          QMessageBox::critical(window, "Preview update failed", error);
+          QMessageBox::critical(window, "Preview update failed", reportedError);
+        if (!rejectedSparMove && error.contains("spar", Qt::CaseInsensitive) &&
+            (error.contains("TE") || error.contains("trailing", Qt::CaseInsensitive) ||
+             error.contains("aileron", Qt::CaseInsensitive) || error.contains("flap", Qt::CaseInsensitive) ||
+             error.contains("hinge", Qt::CaseInsensitive)))
+          for (auto* editor : window->panelEditors_) editor->correctRearSparLocations();
         if (edgeHeightCorrection &&
             edgeHeightCorrection->panelIndex < window->panelEditors_.size()) {
           auto* editor =
@@ -3078,6 +3167,7 @@ void MainWindow::regeneratePreview() {
       window->currentStructuredPanels_ = result->structuredPanels;
       window->currentRibThicknesses_ = result->thicknesses;
       window->currentPlanParameters_ = panels;
+      for (auto* editor : window->panelEditors_) editor->acceptRearSparLocations();
       window->applyDiamondWidthCorrections(result->structuredPanels);
       window->currentDihedralAngles_ = result->dihedrals;
       window->currentMaterialShapes_ = std::move(result->materialShapes);
@@ -3421,6 +3511,8 @@ void MainWindow::regeneratePreviewLegacy() {
         d.bottomTeSheetingTaperStartLocationPercent;
     structure.aileronHingeParallelY = d.aileronHingeParallelY;
     structure.flapHingeParallelY = d.flapHingeParallelY;
+    structure.aileronPerpendicularToRibs = d.aileronPerpendicularToRibs;
+    structure.flapPerpendicularToRibs = d.flapPerpendicularToRibs;
     structure.ailerons = d.ailerons; structure.aileronWidth = d.aileronWidth; structure.aileronHeight = d.aileronHeight;
     structure.aileronHingePostWidth = d.aileronHingePostWidth; structure.aileronHingePostHeight = d.aileronHingePostHeight;
     const auto stationNumber = [panelOne, &d](const int ribNumber) {
@@ -3920,10 +4012,13 @@ void MainWindow::updateWindowTitle() {
 }
 
 void MainWindow::openDefaults() {
+  QSettings settings;
+  const auto defaultUnit = static_cast<DisplayUnit>(settings.value(
+      "defaults/globalUnit", static_cast<int>(installedDefaultDisplayUnit())).toInt());
   QDialog dialog{this}; dialog.setWindowTitle("DesignRC Defaults"); dialog.resize(1200, 760);
   auto* outer = new QVBoxLayout{&dialog};
   auto* unitRow = new QHBoxLayout; unitRow->addWidget(new QLabel{"Global length unit"});
-  auto* unit = new QComboBox; unit->addItems({"Millimetres (mm)", "Inches (in)"}); unit->setCurrentIndex(static_cast<int>(globalUnit_));
+  auto* unit = new QComboBox; unit->addItems({"Millimetres (mm)", "Inches (in)"}); unit->setCurrentIndex(static_cast<int>(defaultUnit));
   unitRow->addWidget(unit);
   unitRow->addSpacing(24);
   unitRow->addWidget(new QLabel{"Number of Wing Panels"});
@@ -3940,7 +4035,7 @@ void MainWindow::openDefaults() {
   unitRow->addStretch(); outer->addLayout(unitRow);
   auto* container = new QWidget; auto* columns = new QHBoxLayout{container};
   std::vector<WingPanelEditor*> editors;
-  auto defaults = defaultPanelData(globalUnit_);
+  auto defaults = defaultPanelData(defaultUnit);
   const auto addEditor = [&](const WingPanelData& panelDefaults) {
     auto* group = new QGroupBox{QString{"Panel %1 Defaults"}.arg(editors.size() + 1)};
     auto* layout = new QVBoxLayout{group};
@@ -4000,6 +4095,8 @@ void MainWindow::openDefaults() {
   auto* scroll = new QScrollArea; scroll->setWidget(container); scroll->setWidgetResizable(true); outer->addWidget(scroll, 1);
   auto* buttons = new QDialogButtonBox{QDialogButtonBox::Save | QDialogButtonBox::Cancel}; outer->addWidget(buttons);
   connect(unit, &QComboBox::currentIndexChanged, &dialog, [&](int index) {
+    for (auto* editor : editors)
+      editor->convertDefaultLengthUnits(static_cast<DisplayUnit>(index));
     snapshotActiveDefaults();
     applyUnitDefaults(index);
   });
@@ -4022,7 +4119,7 @@ void MainWindow::openDefaults() {
   connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
   if (dialog.exec() != QDialog::Accepted) return;
   snapshotActiveDefaults();
-  QSettings settings; settings.setValue("defaults/globalUnit", unit->currentIndex());
+  settings.setValue("defaults/globalUnit", unit->currentIndex());
   settings.setValue("defaults/numberOfThreads", defaultThreadCount->value());
   QJsonArray array;
   for (const auto& panel : defaults) array.append(panelDataToJson(panel));
@@ -4032,16 +4129,14 @@ void MainWindow::openDefaults() {
   settings.setValue("defaults/panels/mm", serialized);
   settings.setValue("defaults/panels/in", serialized);
   settings.sync();
-  globalUnit_ = static_cast<DisplayUnit>(unit->currentIndex());
   workerThreadCount_ =
       static_cast<std::size_t>(defaultThreadCount->value());
-  for (std::size_t i = 0; i < panelEditors_.size(); ++i) {
-    panelEditors_[i]->setGlobalUnit(globalUnit_);
-    if (!defaults.empty())
-      panelEditors_[i]->setJoinerAddDefaults(
-          defaults[std::min(i, defaults.size() - 1)]);
-  }
-  updateMetrics();
+  globalUnit_ = static_cast<DisplayUnit>(unit->currentIndex());
+  bool lengthsChanged = false;
+  for (std::size_t i = 0; i < panelEditors_.size(); ++i)
+    lengthsChanged = panelEditors_[i]->applyDefaultLengthUnits(
+        defaults[std::min(i, defaults.size() - 1)], globalUnit_) || lengthsChanged;
+  if (lengthsChanged) markPreviewPending();
   statusBar()->showMessage("Defaults saved", 3000);
 }
 
