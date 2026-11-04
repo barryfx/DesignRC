@@ -1,3 +1,12 @@
+designrc (1.7.1-1) noble; urgency=medium
+
+  * Add an Ubuntu 24.04 compatibility build with a separately rebuilt OCCT
+    and Ubuntu 24.04 Qt/ICU libraries, avoiding the libc6 2.43 requirement.
+  * Keep the application version at 1.7.1; increment only the Debian revision.
+    Windows and Fedora installers are unchanged.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Wed, 04 Nov 2026 12:00:00 -0500
+
 designrc (1.7.1) resolute; urgency=medium
 
   * Add perpendicular control hinges, full-width control skins, and practical

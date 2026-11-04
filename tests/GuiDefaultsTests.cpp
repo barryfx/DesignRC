@@ -769,16 +769,27 @@ int main(int argc, char* argv[]) {
                 "300'/><path d='M200 0 Q240 150 160 300'/></svg>");
     int changes = 0, dialogs = 0;
     QObject::connect(&editor, &WingPanelEditor::changed, [&] { ++changes; });
+    QTimer dialogTimeout;
+    dialogTimeout.setSingleShot(true);
+    QObject::connect(&dialogTimeout, &QTimer::timeout, [] {
+      std::fprintf(stderr, "Timed out driving the LE/TE curve import dialogs\n");
+      std::abort();
+    });
     QTimer dialogDriver;
     QObject::connect(&dialogDriver, &QTimer::timeout, [&] {
       if (auto* file = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
-        file->selectFile(sourcePath);
+        // Qt 6.4 can keep clearing selectFile() while its asynchronous directory
+        // model loads. Enter the absolute path as a user would instead.
+        auto* filename = file->findChild<QLineEdit*>("fileNameEdit");
+        assert(filename);
+        filename->setText(sourcePath);
         QMetaObject::invokeMethod(file, "accept");
       } else if (auto* message = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
         ++dialogs;
         message->accept();
       }
     });
+    dialogTimeout.start(30000);
     dialogDriver.start(10);
     editor.findChild<QPushButton*>("importLeTeCurves")->click();
     assert(changes == 1 && dialogs == 0 && editor.data().curveFileName == "wing.svg");
@@ -793,6 +804,7 @@ int main(int argc, char* argv[]) {
       if (button->text() == "CF Tube LE") button->click();
     assert(dialogs == 2 && editor.data().leadingEdgeType == 3);
     dialogDriver.stop();
+    dialogTimeout.stop();
     QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
 
     designrc::domain::WingParameters parameters;

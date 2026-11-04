@@ -4,9 +4,9 @@ DesignRC is a parametric desktop application for designing built-up RC airplane 
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
 source version is **1.7.1**, dated **November 4, 2026**.
 
-> **Platform status:** Version 1.7.1 installers are available for Windows 11 x64, Ubuntu 26.04
-> x86-64, and Fedora 44 x86-64. The Ubuntu package has been tested under WSL 2 with WSLg and in
-> a clean Ubuntu 26.04 container; the RPM has been tested in a clean Fedora 44 container.
+> **Platform status:** Version 1.7.1 targets Windows 11 x64, Ubuntu 24.04/26.04 x86-64,
+> and Fedora 44 x86-64. Ubuntu package revision **1.7.1-1** was built on Ubuntu 24.04 and
+> tested in clean 24.04 and 26.04 containers. The Windows and RPM installers are unchanged.
 
 ## What DesignRC does
 
@@ -42,6 +42,13 @@ press **F1**.
 - Global-unit changes round defaults to practical millimeter or fractional-inch values;
   closing Defaults updates project fields displayed in different units.
 - Geometry generation reports detailed aileron/flap stages before panel completion.
+
+### Ubuntu package revision 1.7.1-1 (November 4, 2026)
+
+The Ubuntu package was rebuilt with Ubuntu 24.04's toolchain, Qt 6.4.2, ICU 74, and a fresh
+OCCT 8.0 build. Its minimum libc6 requirement is now **2.38**. The application/About version
+remains **1.7.1**; only the Debian packaging revision changes. Matching source and checksums
+use distinct `1.7.1-1` filenames. Windows and Fedora RPM packages remain unchanged.
 
 ## What's new in 1.7.0 (November 3, 2026)
 
@@ -227,16 +234,18 @@ Download installers, source archives, and checksums from the
 
 - `DesignRC-1.7.1-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.7.1_amd64.deb` for Ubuntu 26.04 x86-64. From the download directory, install and run it
+- `designrc_1.7.1-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.7.1_amd64.deb
+  sudo apt install ./designrc_1.7.1-1_amd64.deb
   designrc
   ```
 
-  APT installs the required distribution runtime libraries automatically. Qt 6.10.2, OCCT 8.0,
-  and ICU 78 are included. This build requires `libc6 >= 2.43` and does not target Ubuntu 24.04.
+  APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
+  and ICU 74 are included. This build requires `libc6 >= 2.38`. Use its matching
+  `DesignRC-1.7.1-1-source.tar.gz` source archive and `DesignRC-1.7.1-1-Linux-x64.sha256`
+  checksum manifest. Revision 1.7.1-1 supersedes the original Ubuntu 26.04-only DEB.
   On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
   ```bash
@@ -408,8 +417,8 @@ privileges.
 
 ## Building on Ubuntu 24.04
 
-These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions. The published
-1.7.1 Debian package was built and tested on Ubuntu 26.04 instead. Native Ubuntu and WSL 2 are
+These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions, matching the
+1.7.1-1 Debian compatibility package. Native Ubuntu and WSL 2 are
 supported build environments; WSL users need WSLg to run the graphical application.
 
 ### Build dependencies
@@ -425,7 +434,7 @@ sudo apt install \
   libgl-dev libglu1-mesa-dev \
   libx11-dev libxext-dev libxmu-dev libxi-dev \
   libfreetype-dev libfontconfig1-dev \
-  dpkg-dev fakeroot gzip
+  dpkg-dev fakeroot gzip file
 ```
 
 DesignRC requires Qt 6.4 or newer and OCCT 8.0. Ubuntu 24.04 supplies Qt 6.4.2. OCCT is built from
@@ -506,15 +515,57 @@ x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source ar
 SHA-256 checksums to:
 
 ```text
-dist/designrc_1.7.1_amd64.deb
-dist/DesignRC-1.7.1-source.tar.gz
-dist/DesignRC-1.7.1-Linux-x64.sha256
+dist/designrc_1.7.1-1_amd64.deb
+dist/DesignRC-1.7.1-1-source.tar.gz
+dist/DesignRC-1.7.1-1-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.7.1_amd64.deb
+sudo apt install ./dist/designrc_1.7.1-1_amd64.deb
+```
+
+### Reproducible Ubuntu 24.04 compatibility build
+
+To build a DEB for Ubuntu 24.04 without changing the host OS, use the dedicated Docker builder.
+It installs Ubuntu 24.04's Qt/toolchain, rebuilds OCCT from source in a separate Linux volume,
+builds DesignRC in Release with assertions enabled in its tests, runs all regression suites,
+and packages the application with the matching Qt/ICU/OCCT libraries. It never uses the host's
+compiled libraries. Changing only the DEB's dependency metadata cannot provide compatibility.
+
+With Docker available, run the following from the project directory in a Linux/WSL shell.
+The builder downloads the official OCCT `V8_0_0` source archive into the Linux volume and records
+its SHA-256 digest:
+
+```bash
+mkdir -p dist/ubuntu-24.04
+docker build -t designrc-ubuntu2404-builder -f packaging/linux/ubuntu-24.04.Dockerfile .
+docker run --rm \
+  --mount "type=bind,source=$PWD,target=/workspace,readonly" \
+  --mount type=volume,source=designrc-ubuntu2404-build,target=/build \
+  --mount "type=bind,source=$PWD/dist/ubuntu-24.04,target=/output" \
+  -e BUILD_JOBS=8 designrc-ubuntu2404-builder
+```
+
+The separate `dist/ubuntu-24.04` output contains the DEB, matching source archive, checksums,
+test results, dependency metadata, and exact build-package inventory. Existing release artifacts
+are preserved. Set `DEBIAN_PACKAGE_RELEASE` in the container to override the default packaging
+revision of `1`; the application version remains unchanged. Use a fresh named volume when
+changing the OCCT source version. Validate the DEB
+in clean Ubuntu 24.04 and 26.04 environments before replacing a published download.
+
+For each target version, create a fresh disposable test container with only the project mounted
+read-only. The script installs the DEB and its declared dependencies, checks the installed files
+and libraries, runs non-root generation regressions and an XCB GUI smoke test under Xvfb, then
+uninstalls the package. For example:
+
+```bash
+docker run --rm \
+  --mount "type=bind,source=$PWD,target=/workspace,readonly" \
+  ubuntu:24.04 bash /workspace/packaging/linux/test-ubuntu-package.sh \
+  /workspace/dist/ubuntu-24.04/designrc_1.7.1-1_amd64.deb
+# Repeat with ubuntu:26.04.
 ```
 
 ## Building on Fedora

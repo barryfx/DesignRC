@@ -10,7 +10,8 @@ reverse engineering when it is necessary to debug modifications to these librari
 ## Qt 6
 
 DesignRC uses Qt Core, GUI, Widgets, OpenGL support, and platform runtime plugins. Windows releases
-bundle Qt 6.11.1. The Ubuntu 26.04 package bundles Qt 6.10.2 from Ubuntu's `qt6-base` package;
+bundle Qt 6.11.1. Ubuntu 24.04 compatibility packages bundle Qt 6.4.2;
+Ubuntu 26.04 builds bundle Qt 6.10.2 from Ubuntu's `qt6-base` package;
 the Fedora 44 package bundles Qt 6.11.2. Qt is
 Copyright (C) The Qt Company Ltd. and other contributors. The Qt components used by DesignRC are
 distributed under the GNU Lesser General Public License version 3 (`LGPL-3.0-only`). DesignRC does
@@ -19,6 +20,7 @@ not modify Qt.
 - Project: https://www.qt.io/
 - Windows QtBase source: https://code.qt.io/cgit/qt/qtbase.git/tag/?h=v6.11.1
 - Ubuntu QtBase source package: https://packages.ubuntu.com/source/resolute/qt6-base
+- Ubuntu 24.04 QtBase source package: https://packages.ubuntu.com/source/noble/qt6-base
 - Fedora QtBase source package: https://src.fedoraproject.org/rpms/qt6-qtbase
 - License: `licenses/QT-LGPL-3.0.txt`
 - GNU GPL version 3 incorporated by the LGPL: `licenses/DESIGNRC-GPL-3.0.txt`
@@ -49,7 +51,8 @@ DesignRC does not modify OCCT.
 ## FreeType
 
 Windows releases distribute FreeType 2.13.3 for OCCT font support. The Ubuntu package uses the
-system-provided FreeType 2.14.2 shared library instead of bundling it; Fedora uses FreeType 2.14.3.
+system-provided FreeType shared library instead of bundling it: 2.13.2 on Ubuntu 24.04,
+2.14.2 on Ubuntu 26.04. Fedora uses FreeType 2.14.3.
 FreeType is Copyright (C)
 1996-2024 David Turner, Robert Wilhelm, Werner Lemberg, and other contributors. The Windows
 distribution uses the FreeType License (FTL), a BSD-style license with an attribution requirement.
@@ -62,7 +65,8 @@ DesignRC does not modify FreeType.
 
 ## International Components for Unicode
 
-The Debian/Ubuntu package bundles the ICU 78 runtime libraries required by its Qt 6.10.2 build so
+Ubuntu 24.04 compatibility packages bundle ICU 74 for Qt 6.4.2; Ubuntu 26.04 builds bundle
+ICU 78 for Qt 6.10.2, so
 the package remains installable on Debian releases whose repositories provide a different ICU ABI.
 The Fedora package bundles ICU 77 for its Qt build.
 ICU is Copyright (C) 1991-2022 Unicode, Inc. and other contributors and is distributed under its
@@ -70,6 +74,7 @@ permissive license. DesignRC does not modify ICU.
 
 - Project: https://icu.unicode.org/
 - Ubuntu source package: https://packages.ubuntu.com/source/resolute/icu
+- Ubuntu 24.04 source package: https://packages.ubuntu.com/source/noble/icu
 - Fedora source package: https://src.fedoraproject.org/rpms/icu
 - License: `licenses/ICU-LICENSE.txt`
 
