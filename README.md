@@ -240,8 +240,7 @@ press **F1**.
 
 ## Download
 
-Version 1.8.0 packages have not yet been published. Installer, source archive, and checksum links
-are prepared for the upcoming
+Download installers, source archives, and checksums from the
 [DesignRC 1.8.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.8.0):
 
 - `DesignRC-1.8.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
