@@ -42,6 +42,64 @@
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
+  if (argc > 1 && std::string{argv[1]} == "--spoiler-between-spars") {
+    using namespace designrc::domain;
+    WingParameters p;
+    p.rootChord = 254; p.tipChord = 203.2; p.sweep = 6.35;
+    p.halfSpan = 160; p.ribCount = 6; p.dihedralDegrees = 6;
+    const auto foil = AirfoilProfile::nacaSymmetric(.12);
+    const auto ribs = generateRibs(p, foil, foil);
+    for (double rearRoot : {75.0, 80.0}) {
+      StructureParameters settings;
+      settings.trailingEdgeType = 2;
+      settings.trailingEdgeWidth = 25.4; settings.trailingEdgeHeight = 9.525;
+      SparParameters top;
+      top.material = 0; top.verticalLocation = 0;
+      top.referenceId = "front";
+      top.woodWidth = 6.35; top.woodHeight = 3.175;
+      auto bottom = top; bottom.verticalLocation = 1;
+      auto rear = top; rear.chordLocationPercent = rearRoot;
+      rear.referenceId = "rear";
+      rear.tipChordLocationPercent = sparTipParallelTo(ribs, rear,
+          {p.sweep + p.tipChord - p.rootChord, p.halfSpan});
+      settings.spars = {top, bottom, rear};
+      settings.spoilers = true; settings.spoilerStartRib = 2; settings.spoilerEndRib = 5;
+      settings.spoilerChordLocationPercent = 30;
+      settings.spoilerWidth = 25.4; settings.spoilerFrameRailWidth = 6.35;
+      settings.spoilerThickness = settings.spoilerSupportRailHeight = 3.175;
+      const auto wing = testsupport::buildStructure(ribs, settings);
+      const auto& spoiler = wing.spoilers.front();
+      for (std::size_t i = 0; i < spoiler.forwardRailProfiles.size(); ++i)
+        assert(std::abs(spoiler.forwardRailProfiles[i][0].x -
+            .30 * ribs[spoiler.startRibIndex + i].chord) < 1e-8);
+      const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness);
+      assert((!shape.IsNull() && BRepCheck_Analyzer{shape, false}.IsValid()));
+      settings.spoilerImmediatelyBehindSpar = true;
+      settings.spoilerSparReferenceId = "front";
+      const auto aligned = testsupport::buildStructure(ribs, settings);
+      for (std::size_t i = 0; i < aligned.spoilers.front().forwardRailProfiles.size(); ++i) {
+        const auto index = aligned.spoilers.front().startRibIndex + i;
+        const double nominal = .25 * ribs[index].chord + top.woodWidth * .5 + .01;
+        const double actual = aligned.spoilers.front().forwardRailProfiles[i][0].x;
+        assert(actual >= nominal - 1e-8 && actual < nominal + .25);
+      }
+      const auto alignedShape = designrc::geometry::buildStructuredWingPreview(aligned, p.ribThickness);
+      assert((!alignedShape.IsNull() && BRepCheck_Analyzer{alignedShape, false}.IsValid()));
+      settings.spoilerImmediatelyBehindSpar = false;
+      settings.spoilerChordLocationPercent = 25;
+      bool collision = false;
+      try {
+        const auto overlapping = testsupport::buildStructure(ribs, settings);
+        static_cast<void>(designrc::geometry::buildStructuredWingPreview(overlapping, p.ribThickness));
+      } catch (const std::invalid_argument& error) {
+        const std::string message = error.what();
+        collision = message.find("Spoiler collision") != std::string::npos &&
+            message.find("Spar 1") != std::string::npos;
+      }
+      assert(collision);
+    }
+    return 0;
+  }
   if (argc > 1 && std::string{argv[1]} == "--control-direction") {
     using namespace designrc::domain;
     for (bool curved : {false, true}) for (bool flap : {false, true}) for (int construction = 0; construction < 3; ++construction) {

@@ -2,11 +2,9 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.7.1**, dated **November 4, 2026**.
+source version is **1.8.0**, dated **November 5, 2026**.
 
-> **Platform status:** Version 1.7.1 targets Windows 11 x64, Ubuntu 24.04/26.04 x86-64,
-> and Fedora 44 x86-64. Ubuntu package revision **1.7.1-1** was built on Ubuntu 24.04 and
-> tested in clean 24.04 and 26.04 containers. The Windows and RPM installers are unchanged.
+> **Platform targets:** Windows 11 x64, Ubuntu 24.04/26.04 x86-64, and Fedora 44 x86-64.
 
 ## What DesignRC does
 
@@ -30,7 +28,27 @@ source version is **1.7.1**, dated **November 4, 2026**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## What's new in 1.7.1 (November 4, 2026)
+## What's new in 1.8.0 (November 5, 2026)
+
+- **Sheet Entire Panel:** one press enables all four sheeting options and sets their stop ribs
+  to the panel's last rib. Press again after changing the rib count to apply the new last rib.
+- **Parallel to:** align a spar with other spanwise geometry in its current panel. The spar
+  stays straight, curved references use their end-to-end direction, and Top/Bottom/Mid
+  placement is retained. The calculated Tip Chord Location is read-only; Manual restores
+  its previous editable value. References are saved and checked for missing or circular links.
+- **Spar/joiner alignment:** Generate Wing shows one Continue/Cancel warning when matching
+  root chord locations have different plan-view directions. New-install defaults link both
+  wood spars parallel to the joiner.
+- **Rear-spar collision recovery:** linked spars can be relocated ahead of TE, aileron, or
+  flap geometry. Relocation switches the affected spar to Manual; rejected moves restore
+  its original reference and locations.
+- **Spoiler placement:** manual Start Chord Location allows spoilers between front and rear
+  spars. Immediately Behind Spar now appears below that field and disables it when checked.
+  A dropdown beside the checkbox selects among multiple top spars, and the choice is saved.
+  Selected-spar clearance accounts for tilted ribs and rail ends at the rib faces.
+- Updated help and focused GUI and geometry regression coverage.
+
+## Earlier: 1.7.1 (November 4, 2026)
 
 - Ailerons and flaps support **Perpendicular to Ribs** with a **Root Width** field.
   Their skins extend from the hinge post/spar to the TE without a separate width.
@@ -42,13 +60,6 @@ press **F1**.
 - Global-unit changes round defaults to practical millimeter or fractional-inch values;
   closing Defaults updates project fields displayed in different units.
 - Geometry generation reports detailed aileron/flap stages before panel completion.
-
-### Ubuntu package revision 1.7.1-1 (November 4, 2026)
-
-The Ubuntu package was rebuilt with Ubuntu 24.04's toolchain, Qt 6.4.2, ICU 74, and a fresh
-OCCT 8.0 build. Its minimum libc6 requirement is now **2.38**. The application/About version
-remains **1.7.1**; only the Debian packaging revision changes. Matching source and checksums
-use distinct `1.7.1-1` filenames. Windows and Fedora RPM packages remain unchanged.
 
 ## What's new in 1.7.0 (November 3, 2026)
 
@@ -229,38 +240,39 @@ use distinct `1.7.1-1` filenames. Windows and Fedora RPM packages remain unchang
 
 ## Download
 
-Download installers, source archives, and checksums from the
-[DesignRC 1.7.1 release](https://github.com/barryfx/DesignRC/releases/tag/1.7.1):
+Version 1.8.0 packages have not yet been published. Installer, source archive, and checksum links
+are prepared for the upcoming
+[DesignRC 1.8.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.8.0):
 
-- `DesignRC-1.7.1-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.8.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.7.1-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
+- `designrc_1.8.0-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.7.1-1_amd64.deb
+  sudo apt install ./designrc_1.8.0-1_amd64.deb
   designrc
   ```
 
   APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
   and ICU 74 are included. This build requires `libc6 >= 2.38`. Use its matching
-  `DesignRC-1.7.1-1-source.tar.gz` source archive and `DesignRC-1.7.1-1-Linux-x64.sha256`
-  checksum manifest. Revision 1.7.1-1 supersedes the original Ubuntu 26.04-only DEB.
+  `DesignRC-1.8.0-1-source.tar.gz` source archive and `DesignRC-1.8.0-1-Linux-x64.sha256`
+  checksum manifest.
   On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
   ```bash
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.7.1-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
+- `designrc-1.8.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.7.1-1.x86_64.rpm
+  sudo dnf install ./designrc-1.8.0-1.x86_64.rpm
   designrc
   ```
 
-Release packaging also produces source archives and `DesignRC-1.7.1-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.8.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -411,14 +423,12 @@ Then build the Release application and installer with:
 
 The script uses `build/release`, copies Microsoft's redistributable Visual C++ runtime DLLs beside
 the application, creates a corresponding-source archive for GPL compliance, and writes the
-installer to `dist`. Package versions are read from `CMakeLists.txt`; a two-component app
-version such as 1.7 is packaged as 1.7.0. The resulting installer does not require administrator
+installer to `dist`. Package versions are read from `CMakeLists.txt`; versions use three numeric components. The resulting installer does not require administrator
 privileges.
 
 ## Building on Ubuntu 24.04
 
-These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions, matching the
-1.7.1-1 Debian compatibility package. Native Ubuntu and WSL 2 are
+These source-build instructions use Ubuntu 24.04 LTS x86-64 dependency versions. Native Ubuntu and WSL 2 are
 supported build environments; WSL users need WSLg to run the graphical application.
 
 ### Build dependencies
@@ -515,15 +525,15 @@ x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source ar
 SHA-256 checksums to:
 
 ```text
-dist/designrc_1.7.1-1_amd64.deb
-dist/DesignRC-1.7.1-1-source.tar.gz
-dist/DesignRC-1.7.1-1-Linux-x64.sha256
+dist/designrc_1.8.0-1_amd64.deb
+dist/DesignRC-1.8.0-1-source.tar.gz
+dist/DesignRC-1.8.0-1-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.7.1-1_amd64.deb
+sudo apt install ./dist/designrc_1.8.0-1_amd64.deb
 ```
 
 ### Reproducible Ubuntu 24.04 compatibility build
@@ -564,7 +574,7 @@ uninstalls the package. For example:
 docker run --rm \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   ubuntu:24.04 bash /workspace/packaging/linux/test-ubuntu-package.sh \
-  /workspace/dist/ubuntu-24.04/designrc_1.7.1-1_amd64.deb
+  /workspace/dist/ubuntu-24.04/designrc_1.8.0-1_amd64.deb
 # Repeat with ubuntu:26.04.
 ```
 
@@ -614,15 +624,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.7.1-1.x86_64.rpm
-dist/DesignRC-1.7.1-source.tar.gz
-dist/DesignRC-1.7.1-Linux-RPM-x64.sha256
+dist/designrc-1.8.0-1.x86_64.rpm
+dist/DesignRC-1.8.0-source.tar.gz
+dist/DesignRC-1.8.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.7.1-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.8.0-1.x86_64.rpm
 designrc
 ```
 

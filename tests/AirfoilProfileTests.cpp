@@ -1831,7 +1831,7 @@ int runTests() {
        ++local) {
     const std::size_t ribIndex =
         legacyTopSparSpoiler.spoilers.front().startRibIndex + local;
-    const double expectedAftFace = 0.25 * ribs[ribIndex].chord + 5.01;
+    const double expectedAftFace = 0.10 * ribs[ribIndex].chord;
     assert(std::abs(
         legacyTopSparSpoiler.spoilers.front().forwardRailProfiles[local][0].x -
         expectedAftFace) < 1.0e-8);
@@ -1864,7 +1864,7 @@ int runTests() {
        ++local) {
     const std::size_t ribIndex =
         configurableTopSparSpoiler.spoilers.front().startRibIndex + local;
-    const double expectedAftFace = 0.45 * ribs[ribIndex].chord + 4.51;
+    const double expectedAftFace = 0.10 * ribs[ribIndex].chord;
     assert(std::abs(
         configurableTopSparSpoiler.spoilers.front().forwardRailProfiles[local][0].x -
         expectedAftFace) < 1.0e-8);

@@ -56,7 +56,8 @@ try {
   }
   New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
   $sourceEntries = Get-ChildItem -Force | Where-Object {
-    $_.Name -notin @('.git', 'build', 'dist', 'out', 'tmp', '$install')
+    $_.Name -notin @('.git', 'build', 'dist', 'out', 'tmp', '$install') -and
+        $_.Extension -ne '.lnk'
   } | ForEach-Object Name
   & tar.exe -a -c -f $sourceArchive @sourceEntries
   if ($LASTEXITCODE -ne 0) { throw 'Corresponding-source archive creation failed.' }

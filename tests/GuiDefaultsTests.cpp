@@ -37,7 +37,47 @@
 #include <fstream>
 #include <limits>
 
+void testSparParallelReferences();
+void testSparJoinerWarning();
+void testSpoilerPlacementControls();
+
 namespace {
+void testSheetEntirePanel() {
+  using namespace designrc::gui;
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    WingPanelData data;
+    data.ribCount = 11;
+    data.addRib1a = true;
+    data.leTopSheet = true;
+    data.leBottomSheet = data.teTopSheet = data.teBottomSheet = false;
+    data.leTopSheetStopRib = data.leBottomSheetStopRib = 3;
+    data.teTopSheetStopRib = data.teBottomSheetStopRib = 4;
+    WingPanelEditor editor{data, unit};
+    auto* button = editor.findChild<QPushButton*>("sheetEntirePanel");
+    assert(button && button->text() == "Sheet Entire Panel" && !button->isCheckable());
+    int changes = 0;
+    QObject::connect(&editor, &WingPanelEditor::changed, [&] { ++changes; });
+    const auto checkSelection = [](const WingPanelData& result, const int lastRib) {
+      assert(result.leTopSheet && result.leBottomSheet && result.teTopSheet && result.teBottomSheet);
+      assert(result.leTopSheetStopRib == lastRib && result.leBottomSheetStopRib == lastRib);
+      assert(result.teTopSheetStopRib == lastRib && result.teBottomSheetStopRib == lastRib);
+    };
+    button->click();
+    assert(changes == 1);
+    checkSelection(editor.data(), 11);
+    checkSelection(panelDataFromJson(panelDataToJson(editor.data())), 11);
+    auto* ribCount = editor.findChild<QSpinBox*>("ribCount");
+    ribCount->setValue(15);
+    changes = 0;
+    button->click();
+    assert(changes == 1);
+    checkSelection(editor.data(), 15);
+    ribCount->setValue(2);
+    button->click();
+    checkSelection(editor.data(), 2);
+  }
+}
+
 void testHingeSparHeightDefaults() {
   using namespace designrc::gui;
   for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
@@ -237,7 +277,17 @@ int main(int argc, char* argv[]) {
   _set_error_mode(_OUT_TO_STDERR);
 #endif
   QApplication application{argc, argv};
+  if (application.arguments().contains("--spoiler-placement")) {
+    testSpoilerPlacementControls();
+    return 0;
+  }
+  if (application.arguments().contains("--spar-joiner-warning")) {
+    testSparJoinerWarning();
+    return 0;
+  }
   using namespace designrc::gui;
+  testSheetEntirePanel();
+  testSparParallelReferences();
   testHingeSparHeightDefaults();
   testControlDirectionsAndSparSafety();
   testSleeveIds();

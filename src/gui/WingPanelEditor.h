@@ -8,6 +8,8 @@
 #include <QHash>
 #include <QString>
 #include <QWidget>
+#include <QUuid>
+#include <functional>
 #include <vector>
 
 class QCheckBox;
@@ -73,6 +75,9 @@ struct SparDefaults {
   double shearWebThickness{3.0};
   // A negative value migrates to the root value.
   double tipChordLocationPercent{-1.0};
+  QString referenceId{QUuid::createUuid().toString(QUuid::WithoutBraces)};
+  QString parallelTo;
+  double manualTipChordLocationPercent{-1.0};
 };
 
 struct FixedJoinerData {
@@ -90,6 +95,7 @@ struct FixedJoinerData {
   UnitOverride carbonRodOdUnit{UnitOverride::Global};
   UnitOverride steelRodOdUnit{UnitOverride::Global};
   int ribBays{1};
+  QString referenceId{QUuid::createUuid().toString(QUuid::WithoutBraces)};
 };
 
 struct RemovableJoinerData {
@@ -119,9 +125,11 @@ struct RemovableJoinerData {
   UnitOverride adjoiningSleeveIdUnit{UnitOverride::Global};
   UnitOverride pinOdUnit{UnitOverride::Global};
   int ribBays{1}; // Sleeve/rod joiners only; alignment pins ignore this.
+  QString referenceId{QUuid::createUuid().toString(QUuid::WithoutBraces)};
 };
 
 struct WingPanelData {
+  QString referenceId{QUuid::createUuid().toString(QUuid::WithoutBraces)};
   domain::BuiltUpControlParameters builtUpAileron;
   domain::BuiltUpControlParameters builtUpFlap;
   domain::PlanformCurves planform;
@@ -219,6 +227,7 @@ struct WingPanelData {
   int spoilerStartRib{3}; int spoilerEndRib{7};
   double spoilerChordLocationPercent{30.0};
   bool spoilerImmediatelyBehindSpar{false};
+  QString spoilerSparReferenceId;
   double spoilerWidth{25.4}; double spoilerThickness{3.0};
   double spoilerFrameRailWidth{6.0}; double spoilerSupportRailHeight{3.0};
   bool spoilerLighteningHoles{false};
@@ -261,6 +270,9 @@ public:
                            QWidget* parent = nullptr);
 
   [[nodiscard]] WingPanelData data() const;
+  void setSparReferenceContext(std::size_t panelIndex,
+      std::function<std::vector<WingPanelData>()> provider);
+  void refreshSparReferences(bool populate = false);
   void setData(const WingPanelData& data);
   void setMatchedRootChord(const WingPanelData& data);
   void setJoinerAddDefaults(const WingPanelData& defaults);
@@ -320,6 +332,7 @@ private:
     QWidget* container{};
     QCheckBox* deleteSelection{};
     QDoubleSpinBox *rootChordLocation{}, *tipChordLocation{};
+    QComboBox* parallelTo{};
     QRadioButton *top{}, *bottom{}, *mid{};
     QRadioButton *wood{}, *carbonFiber{};
     QRadioButton *tube{}, *rod{}, *strip{};
@@ -381,6 +394,9 @@ private:
   QCheckBox *aileronPerpendicularToRibs_{}, *flapPerpendicularToRibs_{};
   QLabel *aileronWidthLabel_{}, *flapWidthLabel_{};
   WingPanelData airfoilData_;
+  std::function<std::vector<WingPanelData>()> sparReferenceProvider_;
+  std::size_t sparReferencePanelIndex_{};
+  bool sparReferencesReady_{false}, refreshingSparReferences_{false};
   DisplayUnit globalUnit_{DisplayUnit::Millimeters};
   bool showUnitOverrides_{false};
   bool showJoinerPage_{true};
@@ -440,7 +456,12 @@ private:
 
   QVBoxLayout* sparEditorsLayout_{};
   std::vector<SparEditorWidgets> sparEditors_;
-  std::vector<std::optional<std::array<double, 4>>> pendingSparMoves_;
+  struct PendingSparMove {
+    std::array<double, 4> locations;
+    QString parallelTo;
+    double manualTip{};
+  };
+  std::vector<std::optional<PendingSparMove>> pendingSparMoves_;
   QCheckBox* sparShearWebs_{};
   QWidget* sparShearWebDetails_{};
   LengthInput* sparShearWebThickness_{};
@@ -478,6 +499,7 @@ private:
   QWidget* spoilerMinimumCircleDistanceDetails_{};
   QSpinBox *spoilerStartRib_{}, *spoilerEndRib_{};
   QDoubleSpinBox* spoilerChordLocation_{};
+  QComboBox* spoilerSpar_{};
   LengthInput *spoilerWidth_{}, *spoilerThickness_{}, *spoilerFrameRailWidth_{},
       *spoilerMinimumWoodMargin_{}, *spoilerMinimumCircleDistance_{};
   QLabel* spoilerSupportRailHeight_{};

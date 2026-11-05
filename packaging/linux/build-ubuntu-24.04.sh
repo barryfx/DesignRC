@@ -69,7 +69,7 @@ cp "/build/packages/designrc_${package_version}_amd64.deb" /output/
 cd /workspace
 find . -mindepth 1 -maxdepth 1 \
   ! -name .git ! -name build ! -name dist ! -name out ! -name tmp \
-  ! -name '$install' -print0 |
+  ! -name '$install' ! -name '*.lnk' -print0 |
   tar --null -T - -czf "/output/DesignRC-$package_version-source.tar.gz"
 dpkg-query -W > "/output/DesignRC-$package_version-Ubuntu-24.04-build-packages.txt"
 dpkg-deb -f "/output/designrc_${package_version}_amd64.deb" \

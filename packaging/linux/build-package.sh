@@ -21,7 +21,7 @@ cpack --config "$build_dir/CPackConfig.cmake" \
 (cd "$project_root" &&
   find . -mindepth 1 -maxdepth 1 \
     ! -name .git ! -name build ! -name dist ! -name out ! -name tmp \
-    ! -name '$install' -print0 |
+    ! -name '$install' ! -name '*.lnk' -print0 |
   tar --null -T - -czf "$package_stage/DesignRC-$package_version-source.tar.gz")
 (cd "$package_stage" && sha256sum *.deb "DesignRC-$package_version-source.tar.gz" \
   > "DesignRC-$package_version-Linux-x64.sha256")

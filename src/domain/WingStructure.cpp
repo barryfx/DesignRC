@@ -1230,6 +1230,44 @@ std::vector<Point2> sampledSparCenters(const std::vector<RibDefinition>& ribs, c
 }
 } // namespace
 
+Point2 sparPlanPoint(const RibDefinition& rib, const SparParameters& spar, double percent) {
+  const auto center = sparSectionCenter(rib, spar, percent);
+  const auto translation = ribTwistTranslation(rib);
+  const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
+  const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180.0;
+  const double z = std::sin(twist) * center.x + std::cos(twist) * center.y + translation.y;
+  return {rib.leadingEdgeOffset + std::cos(twist) * center.x - std::sin(twist) * center.y + translation.x,
+      rib.spanPosition - std::sin(plane) * z};
+}
+
+double sparTipParallelTo(const std::vector<RibDefinition>& ribs,
+    const SparParameters& spar, const Point2 direction, const bool allowOutsideChordRange) {
+  if (ribs.size() < 2 || !std::isfinite(direction.x) || !std::isfinite(direction.y) ||
+      std::abs(direction.y) < 1e-8)
+    throw std::invalid_argument("Parallel to reference has no usable spanwise direction");
+  const auto root = sparPlanPoint(ribs.front(), spar, spar.chordLocationPercent);
+  const auto residual = [&](double percent) {
+    const auto tip = sparPlanPoint(ribs.back(), spar, percent);
+    return (tip.x - root.x) - direction.x / direction.y * (tip.y - root.y);
+  };
+  // Collision recovery inspects invalid linked positions before moving them
+  // into range. Geometry generation always uses strict bounds.
+  double low = allowOutsideChordRange ? -1000 : 0;
+  double high = allowOutsideChordRange ? 1000 : 90;
+  double lowValue = residual(low), highValue = residual(high);
+  if (std::abs(lowValue) < 1e-9) return low;
+  if (std::abs(highValue) < 1e-9) return high;
+  if (lowValue * highValue > 0)
+    throw std::invalid_argument("Parallel to direction puts the spar tip outside the allowed 0–90% chord range. Change Root Chord Location or the reference.");
+  for (int i = 0; i < 60; ++i) {
+    const double middle = (low + high) * .5;
+    const double value = residual(middle);
+    if (lowValue * value <= 0) high = middle;
+    else { low = middle; lowValue = value; }
+  }
+  return (low + high) * .5;
+}
+
 bool sparClearsOtherSpars(const std::vector<RibDefinition>& ribs,
     const SparParameters& spar, const std::vector<SparParameters>& otherSpars) {
   if (ribs.size() < 2) return false;
@@ -2100,20 +2138,70 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     }
   }
 
+  if (buildSpoiler && p.spoilerImmediatelyBehindSpar && !p.spoilerSparReferenceId.empty()) {
+    const auto& selected = p.spoilerSparReferenceId;
+    const bool available = (selected == "legacy/front" && p.topSpar) ||
+        (selected == "legacy/rear" && p.topRearSpar) ||
+        std::any_of(p.spars.begin(), p.spars.end(), [&](const auto& spar) {
+          return spar.verticalLocation == 0 && spar.referenceId == selected;
+        });
+    if (!available) throw std::invalid_argument("The spoiler's selected top spar is no longer available. Select another spar.");
+  }
   const auto topSparAftFace = [&](const std::size_t ribIndex) {
     double aftFace = 0.0;
-    if (p.topSpar)
+    const auto& selected = p.spoilerSparReferenceId;
+    const bool specific = p.spoilerImmediatelyBehindSpar && !selected.empty();
+    if (p.topSpar && (!specific || selected == "legacy/front"))
       aftFace = std::max(aftFace,
           0.25 * ribs[ribIndex].chord + p.topSparWidth * 0.5);
-    if (p.topRearSpar)
+    if (p.topRearSpar && (!specific || selected == "legacy/rear"))
       aftFace = std::max(aftFace,
           0.60 * ribs[ribIndex].chord + p.topRearSparWidth * 0.5);
     for (std::size_t sparIndex = 0; sparIndex < p.spars.size(); ++sparIndex) {
       const auto& spar = p.spars[sparIndex];
       if (spar.verticalLocation != 0) continue;
+      if (specific && spar.referenceId != selected) continue;
       const double width = spar.material == 0 ? spar.woodWidth :
           spar.type == 2 ? spar.stripWidth :
           spar.type == 0 ? spar.tubeOd : spar.rodOd;
+      if (specific) {
+        // The spar is extruded along its actual 3D axis. On tilted ribs,
+        // center.x + width/2 can understate its aft face at the bottom of
+        // the spoiler support. Project that face at both profile heights.
+        const auto plan = [&](const RibDefinition& rib, const Point2 point) {
+          const auto model = modelPlanePoint(rib, point);
+          const auto translation = ribTwistTranslation(rib);
+          const double twist = rib.twistDegrees * std::numbers::pi / 180;
+          const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180;
+          const double z = std::sin(twist) * point.x + std::cos(twist) * point.y + translation.y;
+          const bool centerRoot = std::abs(rib.spanPosition) < 1e-9 &&
+              std::abs(rib.ribThicknessStartFactor) < 1e-9;
+          return Point2{model.x, rib.spanPosition - (centerRoot ? 0 : std::sin(angle) * z)};
+        };
+        const auto a = plan(ribs.front(), sparCenters[sparIndex].front());
+        const auto b = plan(ribs.back(), sparCenters[sparIndex].back());
+        const double slope = (b.x - a.x) / (b.y - a.y);
+        const auto& rib = ribs[ribIndex];
+        const auto upper = localSurfaces(rib).first;
+        // End rails are lofted at rib faces, offset from the station plane.
+        const double offset = p.ribThickness * std::max(std::abs(rib.ribThicknessStartFactor),
+            std::abs(rib.ribThicknessStartFactor + 1.0));
+        const double endAllowance = std::abs(slope * std::cos(rib.ribPlaneAngleDegrees *
+            std::numbers::pi / 180)) * offset;
+        double face = 0;
+        for (const double depth : {0.0, p.spoilerThickness + p.spoilerSupportRailHeight}) {
+          double low = 0, high = rib.chord;
+          for (int iteration = 0; iteration < 45; ++iteration) {
+            const double x = (low + high) * .5;
+            const auto point = plan(rib, {x, interpolateY(upper, x) - depth});
+            if (point.x < a.x + slope * (point.y - a.y) + width * .5 + endAllowance) low = x;
+            else high = x;
+          }
+          face = std::max(face, high);
+        }
+        aftFace = std::max(aftFace, face);
+        continue;
+      }
       aftFace = std::max(
           aftFace, sparCenters[sparIndex][ribIndex].x + width * 0.5);
     }
@@ -2130,10 +2218,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     if (buildSpoiler && ribIndex >= spoiler.startRibIndex && ribIndex <= spoiler.endRibIndex) {
       spoilerLeft = std::clamp(p.spoilerChordLocationPercent / 100.0 * rib.chord,
                                0.001, rib.chord - 0.001);
-      // A spoiler cannot precede a top-mounted spar. If its requested position
-      // reaches or crosses a spar, put the forward frame rail directly against
-      // the spar's aft face. Calculating this per station preserves contact on
-      // tapered wings and for straight circular spars.
+      // Manual chord placement may sit between front and rear spars. Only
+      // the explicit automatic option follows the rearmost top spar.
       const double sparAftFace = topSparAftFace(ribIndex);
       // A nominally coincident rail/spar face can acquire a small overlapping
       // volume when the two independently lofted solids are evaluated by
@@ -2144,8 +2230,6 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           ? sparAftFace + sparClearance : 0.0;
       if (p.spoilerImmediatelyBehindSpar && sparAftFace > 0.0)
         spoilerLeft = minimumSpoilerLeft;
-      else
-        spoilerLeft = std::max(spoilerLeft, minimumSpoilerLeft);
       if (rib.planform) {
         // Keep the spoiler's hinge straight in plan view. Test its clearance
         // at all auxiliary sections rather than bending around a spar.
@@ -2156,7 +2240,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           return end.leadingEdgeOffset +
                  (p.spoilerImmediatelyBehindSpar && aft > 0
                       ? aft + sparClearance
-                      : std::max(requested, aft > 0 ? aft + sparClearance : 0));
+                      : requested);
         };
         const auto& first = ribs[spoiler.startRibIndex];
         const auto& last = ribs[spoiler.endRibIndex];
@@ -2164,7 +2248,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                          (last.planformStation - first.planformStation);
         spoilerLeft = nominal(spoiler.startRibIndex) * (1 - t) + nominal(spoiler.endRibIndex) * t -
                       rib.leadingEdgeOffset;
-        if (spoilerLeft < minimumSpoilerLeft - 1e-6 || spoilerLeft <= 0)
+        if ((p.spoilerImmediatelyBehindSpar && spoilerLeft < minimumSpoilerLeft - 1e-6) || spoilerLeft <= 0)
           throw std::invalid_argument("Straight spoiler frame crosses a spar or the curved LE.");
       }
       spoilerRight = spoilerLeft + 2.0 * p.spoilerFrameRailWidth +

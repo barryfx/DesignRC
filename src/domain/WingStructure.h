@@ -45,6 +45,7 @@ struct SparParameters {
   double stripThickness{1.0};
   // A negative value means "same as root" for migrated/legacy data.
   double tipChordLocationPercent{-1.0};
+  std::string referenceId;
 };
 
 // Independent construction settings for a movable control surface.
@@ -182,6 +183,7 @@ struct StructureParameters {
   int spoilerEndRib{7};
   double spoilerChordLocationPercent{30.0};
   bool spoilerImmediatelyBehindSpar{false};
+  std::string spoilerSparReferenceId;
   double spoilerWidth{25.4};
   double spoilerThickness{3.0};
   double spoilerFrameRailWidth{6.0};
@@ -433,6 +435,11 @@ struct StructuredWing {
 [[nodiscard]] StructuredWing applyWingStructure(
     const std::vector<RibDefinition>& ribs,
     const StructureParameters& parameters);
+
+[[nodiscard]] Point2 sparPlanPoint(const RibDefinition& rib,
+    const SparParameters& spar, double chordLocationPercent);
+[[nodiscard]] double sparTipParallelTo(const std::vector<RibDefinition>& ribs,
+    const SparParameters& spar, Point2 planDirection, bool allowOutsideChordRange = false);
 
 [[nodiscard]] double controlForwardBoundary(const RibDefinition& rib, double hingeX,
     double gap, double postWidth, const BuiltUpControlParameters& construction);

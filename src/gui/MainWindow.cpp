@@ -7,6 +7,7 @@
 #include "gui/PartPdfExporter.h"
 #include "gui/PlanViewport.h"
 #include "gui/TechnicalDrawing.h"
+#include "gui/SparAlignment.h"
 
 #include <QAction>
 #include <QApplication>
@@ -243,7 +244,7 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
         spar.material, spar.type, spar.woodHeight, spar.woodWidth,
         spar.tubeOd, spar.tubeId, spar.rodOd, spar.stripWidth,
         spar.stripThickness, spar.tipChordLocationPercent >= 0.0
-            ? spar.tipChordLocationPercent : spar.chordLocationPercent});
+            ? spar.tipChordLocationPercent : spar.chordLocationPercent, spar.referenceId.toStdString()});
   s.sparShearWebs = d.sparShearWebs;
   s.sparShearWebThickness = d.sparDefaults.shearWebThickness;
   const bool useLegacySpars = d.spars.empty();
@@ -306,6 +307,7 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.spoilerEndRib = station(d.spoilerEndRib);
   s.spoilerChordLocationPercent = d.spoilerChordLocationPercent;
   s.spoilerImmediatelyBehindSpar = d.spoilerImmediatelyBehindSpar;
+  s.spoilerSparReferenceId = d.spoilerSparReferenceId.toStdString();
   s.spoilerWidth = d.spoilerWidth;
   s.spoilerThickness = d.spoilerThickness;
   s.spoilerFrameRailWidth = d.spoilerFrameRailWidth;
@@ -1371,6 +1373,7 @@ PreviewComputation computePreview(std::vector<WingPanelData> panels,
                                   const std::size_t requestedWorkerThreads = 0) {
   const auto chordError = matchPanelRootChords(panels);
   if (!chordError.isEmpty()) throw std::invalid_argument(chordError.toStdString());
+  resolveSparParallelLocations(panels, unit);
   const auto alignmentError = woodJoinerSparAlignmentError(panels);
   if (!alignmentError.isEmpty())
     throw std::invalid_argument(alignmentError.toStdString());
@@ -1883,6 +1886,29 @@ int runJoinerBackendRegression() {
     fixed.sweep = 0.0; fixed.dihedral = 6.0; fixed.ribCount = 3;
     fixed.spars.clear(); fixed.joinerPanelMode = 1;
     fixed.fixedJoiners = {FixedJoinerData{}};
+    {
+      auto aligned = fixed;
+      aligned.rootChord = 254; aligned.tipChord = 152.4; aligned.sweep = 25.4;
+      aligned.panelSpan = 698.5; aligned.ribCount = 11; aligned.dihedral = 0;
+      aligned.fixedJoiners.front().chordLocationPercent = 30;
+      aligned.fixedJoiners.front().ribBays = 7;
+      aligned.spars.resize(2);
+      for (std::size_t i = 0; i < aligned.spars.size(); ++i) {
+        auto& s = aligned.spars[i];
+        s.material = 0; s.verticalLocation = static_cast<int>(i);
+        s.woodWidth = 6.35; s.woodHeight = 3.175;
+        s.chordLocationPercent = s.tipChordLocationPercent = 30;
+        s.parallelTo = aligned.referenceId + "/fixed/" + aligned.fixedJoiners.front().referenceId;
+      }
+      const auto alignedPreview = build(aligned);
+      const auto& wing = alignedPreview.structuredPanels.front();
+      const auto& joiner = wing.joiners.front();
+      for (const auto& member : wing.members)
+        if (member.name.starts_with("Spar "))
+          for (std::size_t i = 0; i < member.centers.size(); ++i)
+            if (std::abs(wing.ribs[i].rib.leadingEdgeOffset + member.centers[i].x - joiner.innerEndpoint.x) > 1e-7)
+              return 70;
+    }
     const auto fixedPreview = build(fixed);
     if (fixedPreview.structuredPanels.front().joiners.size() != 1 ||
         fixedPreview.structuredPanels.front().joiners.front().mirrorInAssembly ||
@@ -2513,7 +2539,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow{parent} {
   setCentralWidget(splitter);
 
   connect(panelCount_, &QSpinBox::valueChanged, this, [this](int count) { changePanelCount(count); });
-  connect(updateButton_, &QPushButton::clicked, this, [this] { regeneratePreview(); });
+  connect(updateButton_, &QPushButton::clicked, this, [this] {
+    if (updateThread_ || panelEditors_.empty()) return;
+    if (!confirmSparJoinerAlignment(this, panelData(), globalUnit_)) return;
+    regeneratePreview();
+  });
   connect(fit, &QPushButton::clicked, this, [this] {
     const BusyCursor busy;
     if (graphicsTabs_->currentIndex() == 1) planViewport_->fitAll();
@@ -2761,6 +2791,8 @@ std::vector<WingPanelData> MainWindow::panelData() const {
   // Invalid joints remain editable; regeneration reports the error. Valid
   // corrections are shared by metrics, saving, preview, and plan generation.
   static_cast<void>(matchPanelRootChords(result));
+  try { resolveSparParallelLocations(result, globalUnit_); }
+  catch (const std::exception&) { /* Keep invalid references editable and saveable. */ }
   return result;
 }
 
@@ -2775,6 +2807,9 @@ void MainWindow::rebuildPanelTabs(const std::vector<WingPanelData>& panels) {
   panelEditors_.clear();
   for (std::size_t i = 0; i < panels.size(); ++i) {
     auto panel = panels[i];
+    if (std::any_of(panelEditors_.begin(), panelEditors_.end(), [&](const auto* other) {
+          return other->data().referenceId == panel.referenceId;
+        })) reidentifySparReferencePanel(panel);
     if (panel.ribLighteningStopRib <= 0)
       panel.ribLighteningStopRib = std::max(
           1, panel.ribCount - (i + 1 == panels.size() ? 1 : 2));
@@ -2789,11 +2824,20 @@ void MainWindow::rebuildPanelTabs(const std::vector<WingPanelData>& panels) {
     if (!joinerDefaults.empty())
       editor->setJoinerAddDefaults(
           joinerDefaults[std::min(i, joinerDefaults.size() - 1)]);
-    connect(editor, &WingPanelEditor::changed, this, [this] { markPreviewPending(); });
+    connect(editor, &WingPanelEditor::changed, this, [this] {
+      for (auto* panel : panelEditors_) panel->refreshSparReferences();
+      markPreviewPending();
+    });
     panelTabs_->addTab(editor, QString{"Panel %1"}.arg(i + 1));
     panelEditors_.push_back(editor);
   }
   panelCount_->setValue(static_cast<int>(panels.size()));
+  for (std::size_t i = 0; i < panelEditors_.size(); ++i)
+    panelEditors_[i]->setSparReferenceContext(i, [this] {
+      std::vector<WingPanelData> current;
+      for (const auto* editor : panelEditors_) current.push_back(editor->data());
+      return current;
+    });
   changingPanelCount_ = false;
   updateMetrics();
 }
@@ -3467,7 +3511,7 @@ void MainWindow::regeneratePreviewLegacy() {
           spar.material, spar.type, spar.woodHeight, spar.woodWidth,
           spar.tubeOd, spar.tubeId, spar.rodOd, spar.stripWidth,
           spar.stripThickness, spar.tipChordLocationPercent >= 0.0
-              ? spar.tipChordLocationPercent : spar.chordLocationPercent});
+              ? spar.tipChordLocationPercent : spar.chordLocationPercent, spar.referenceId.toStdString()});
     structure.sparShearWebs = d.sparShearWebs;
     structure.sparShearWebThickness = d.sparDefaults.shearWebThickness;
     const bool useLegacySpars = d.spars.empty();
@@ -3535,6 +3579,7 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.spoilerChordLocationPercent = d.spoilerChordLocationPercent;
     structure.spoilerImmediatelyBehindSpar =
         d.spoilerImmediatelyBehindSpar;
+    structure.spoilerSparReferenceId = d.spoilerSparReferenceId.toStdString();
     structure.spoilerWidth = d.spoilerWidth;
     structure.spoilerThickness = d.spoilerThickness;
     structure.spoilerFrameRailWidth = d.spoilerFrameRailWidth;
@@ -4040,6 +4085,9 @@ void MainWindow::openDefaults() {
     auto* group = new QGroupBox{QString{"Panel %1 Defaults"}.arg(editors.size() + 1)};
     auto* layout = new QVBoxLayout{group};
     auto panel = panelDefaults;
+    if (std::any_of(editors.begin(), editors.end(), [&](const auto* other) {
+          return other->data().referenceId == panel.referenceId;
+        })) reidentifySparReferencePanel(panel);
     if (!editors.empty()) {
       const auto previous = editors.back()->data();
       if (panel.planform.empty()) panel.rootChord = previous.tipChord;
@@ -4050,6 +4098,15 @@ void MainWindow::openDefaults() {
         static_cast<DisplayUnit>(unit->currentIndex()), true, true, editors.empty()};
     editor->setMinimumWidth(430);
     layout->addWidget(editor); columns->addWidget(group); editors.push_back(editor);
+    for (std::size_t i = 0; i < editors.size(); ++i)
+      editors[i]->setSparReferenceContext(i, [&editors] {
+        std::vector<WingPanelData> current;
+        for (const auto* item : editors) current.push_back(item->data());
+        return current;
+      });
+    connect(editor, &WingPanelEditor::changed, &dialog, [&editors] {
+      for (auto* item : editors) item->refreshSparReferences();
+    });
   };
   const auto removeLastEditor = [&] {
     auto* editor = editors.back();

@@ -24,10 +24,6 @@ for mode in panel-chord joiner cancellation; do
 done
 runuser -u releasecheck -- env QT_QPA_PLATFORM=offscreen /usr/bin/designrc \
   --project-backend-regression /workspace/tests/fixtures/Curved_LE_TE.designrc
-if [[ -f '/workspace/out/Parts/Ailerons Spars.designrc' ]]; then
-  runuser -u releasecheck -- env QT_QPA_PLATFORM=offscreen /usr/bin/designrc \
-    --project-backend-regression '/workspace/out/Parts/Ailerons Spars.designrc'
-fi
 set +e
 runuser -u releasecheck -- env LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb \
   timeout 12s xvfb-run -a /usr/bin/designrc > /tmp/designrc-gui.log 2>&1

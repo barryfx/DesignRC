@@ -5,6 +5,7 @@
 /.vs/
 /.vscode/
 /.idea/
+/*.lnk
 
 # In-source CMake/CTest artifacts
 CMakeCache.txt
