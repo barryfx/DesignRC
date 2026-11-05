@@ -1890,8 +1890,13 @@ int main(int argc, char* argv[]) {
          1.0e-8);
   assert(std::abs(installedMetric.spoilerMinimumCircleDistance - 12.0) <
          1.0e-8);
-  assert(installedMetric.spars.size() == 1);
-  assert(installedMetric.fixedJoiners.empty() && installedMetric.removableJoiners.empty());
+  assert(installedMetric.spars.size() == 2);
+  assert(installedMetric.fixedJoiners.size() == 1 && installedMetric.removableJoiners.empty());
+  const auto metricJoinerReference = installedMetric.referenceId + "/fixed/" +
+      installedMetric.fixedJoiners.front().referenceId;
+  assert(installedMetric.spars[0].verticalLocation == 0 && installedMetric.spars[1].verticalLocation == 1);
+  for (const auto& spar : installedMetric.spars)
+    assert(spar.material == 0 && spar.parallelTo == metricJoinerReference);
   assert(std::abs(installedMetric.topTeSheetingWidth - 25.4) < 1.0e-8);
   assert(std::abs(installedMetric.bottomTeSheetingWidth - 25.4) < 1.0e-8);
   assert(std::abs(installedMetric.topTeSheetingThickness - 1.5875) < 1.0e-8);
