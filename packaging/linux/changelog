@@ -1,3 +1,15 @@
+designrc (1.9.0-1) noble; urgency=medium
+
+  * Add mutually exclusive sheeting boundaries and Cover Ribs on all four sides.
+  * Fit rib caps to the sheeting boundary and recessed wood or tube spars.
+  * Add perpendicular spar placement and show tip fields only in Manual mode.
+  * Keep plywood joiners flat and straight across mirrored halves and panels;
+    use the same direction for spar references and alignment warnings.
+  * Set metric install spar/joiner locations to 35% for swept-tip clearance.
+  * Update versioned Help, About, README, and website for 1.9.0.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Fri, 06 Nov 2026 12:00:00 -0500
+
 designrc (1.7.1-1) noble; urgency=medium
 
   * Add an Ubuntu 24.04 compatibility build with a separately rebuilt OCCT

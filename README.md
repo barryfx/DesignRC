@@ -263,24 +263,24 @@ press **F1**.
 - Percent controls accept manually entered values to two decimal places while their arrows retain
   one-percent increments. LE/TE stock height errors restore the minimum valid cut-face height.
 
-## Published downloads (1.8.0)
+## Download
 
-The source version described above is 1.9.0. Published installers, source archives, and checksums are available from the
-[DesignRC 1.8.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.8.0):
+Download the 1.9.0 installers, corresponding source archives, and checksums from the
+[DesignRC 1.9.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.9.0):
 
-- `DesignRC-1.8.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.9.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.8.0-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
+- `designrc_1.9.0-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.8.0-1_amd64.deb
+  sudo apt install ./designrc_1.9.0-1_amd64.deb
   designrc
   ```
 
   APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
   and ICU 74 are included. This build requires `libc6 >= 2.38`. Use its matching
-  `DesignRC-1.8.0-1-source.tar.gz` source archive and `DesignRC-1.8.0-1-Linux-x64.sha256`
+  `DesignRC-1.9.0-1-source.tar.gz` source archive and `DesignRC-1.9.0-1-Linux-x64.sha256`
   checksum manifest.
   On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
@@ -288,15 +288,15 @@ The source version described above is 1.9.0. Published installers, source archiv
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.8.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
+- `designrc-1.9.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.8.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.9.0-1.x86_64.rpm
   designrc
   ```
 
-Release packaging also produces source archives and `DesignRC-1.8.0-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.9.0-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use

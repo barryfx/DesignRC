@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="DesignRC is a parametric desktop application for designing built-up RC airplane wings and producing manufacturing-ready plans and parts.">
-  <meta property="og:title" content="DesignRC 1.8.0 — Design wings. Build with confidence.">
+  <meta property="og:title" content="DesignRC 1.9.0 — Design wings. Build with confidence.">
   <meta property="og:description" content="Parametric RC wing design, 3D solid modeling, full-scale plans, and manufacturing exports for Windows and Linux.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://barryfx.github.io/DesignRC/">
   <meta property="og:image" content="https://raw.githubusercontent.com/barryfx/DesignRC/main/resources/graphics/designrc_splash.png">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="theme-color" content="#07111d">
-  <title>DesignRC 1.8.0 — Parametric RC Wing Design</title>
+  <title>DesignRC 1.9.0 — Parametric RC Wing Design</title>
   <link rel="icon" href="https://raw.githubusercontent.com/barryfx/DesignRC/main/resources/graphics/designrc_smaller.png">
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -156,48 +156,50 @@
     <section class="section shell" id="new">
       <div class="section-heading">
         <div>
-          <p class="eyebrow"><span></span> New in version 1.8.0 · November 5, 2026</p>
-          <h2>Spar alignment and spoiler placement.</h2>
+          <p class="eyebrow"><span></span> New in version 1.9.0 &middot; November 6, 2026</p>
+          <h2>Sheeting, rib caps, and straight joiners.</h2>
         </div>
         <p>
-          Align spars with the parts around them, apply panel sheeting in one step,
-          and place spoilers between spars or directly behind a selected top spar.
+          Choose how sheeting meets the spars, fit caps to the exposed ribs,
+          and keep joiners straight through the wing center and panel joints.
         </p>
       </div>
 
       <div class="feature-grid">
         <article class="feature-card feature-wide">
           <p class="card-number">01</p>
-          <h3>Align spars with panel geometry</h3>
+          <h3>Choose the sheeting boundary</h3>
           <p>
-            Parallel to aligns a straight spar with geometry in its current panel and
-            calculates its tip chord location while retaining Top/Bottom/Mid placement.
-            Curved references use their end-to-end direction. References are saved with
-            the project, and new-install defaults link both wood spars to the joiner.
-            Generate Wing warns once when matching spar and joiner root locations have
-            different directions. Rear-collision relocation can release a link to clear
-            the obstruction, and rejected moves restore the original settings.
+            Front and Rear sheeting on both sides offer Stop Chord Location, Up To Spar,
+            and Mid Spar radio buttons. Spar modes use the first spar from the LE on
+            the matching Top or Bottom side. Cover Ribs recesses stock beneath the skin:
+            Up To Spar covers the full spar, while Mid Spar stops at its centerline.
+            Rib caps fill the exposed area and butt against the sheet edge, including
+            the uncovered half of a recessed wood spar or tube.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">02</p>
-          <h3>Sheet the entire panel</h3>
+          <h3>Set the spar direction</h3>
           <p>
-            Sheet Entire Panel enables all four sheeting options and sets each stop rib
-            to the panel's last rib. It is a one-time action: press it again after changing
-            the rib count to apply the new last rib.
+            New spars default to Perpendicular to Ribs. Select the mutually exclusive
+            Parallel to radio button to follow geometry in the current panel instead.
+            Tip Chord Location and its title appear only when Manual is selected;
+            returning to Manual restores its previous value. Top/Bottom/Mid placement
+            and saved project directions are retained.
           </p>
         </article>
 
         <article class="feature-card">
           <p class="card-number">03</p>
-          <h3>Choose the spoiler's position</h3>
+          <h3>Keep joiners straight across panels</h3>
           <p>
-            Manual chord placement allows a spoiler between front and rear spars.
-            Immediately Behind Spar disables Start Chord Location and offers a dropdown
-            beside the checkbox when multiple top spars exist. The selected spar is saved,
-            and placement accounts for tilted ribs and rail ends at the rib faces.
+            Joiners stay straight through mirrored wing halves and adjoining panels.
+            A plywood joiner remains in one flat chordwise plane instead of following
+            a swept chord-percentage line. Spar references and alignment warnings use
+            that same direction. New metric install defaults place both wood spars
+            and their joiner at 35% root chord to clear the swept tip.
           </p>
         </article>
       </div>
@@ -251,11 +253,11 @@
 
     <section class="section shell download-section" id="download">
       <div class="download-intro">
-        <p class="eyebrow"><span></span> Installer downloads: 1.8.0 · November 5, 2026</p>
+        <p class="eyebrow"><span></span> Installer downloads: 1.9.0 · November 6, 2026</p>
         <h2>Choose your platform.</h2>
         <p>
           DesignRC is available for 64-bit Windows and Linux. Every installer is published with
-          source archives and SHA-256 checksums. Download version 1.8.0 for your platform below.
+          source archives and SHA-256 checksums. Download version 1.9.0 for your platform below.
         </p>
       </div>
 
@@ -265,7 +267,7 @@
           <p class="platform-label">Windows 11 · x64</p>
           <h3>Windows installer</h3>
           <p>Guided per-user installation with the application graphics and runtime dependencies included.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/DesignRC-1.8.0-Windows-x64-Setup.exe">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/DesignRC-1.9.0-Windows-x64-Setup.exe">
             Download .exe <span>↓</span>
           </a>
           <small>Windows may warn because the installer is not code-signed.</small>
@@ -276,10 +278,10 @@
           <p class="platform-label">Ubuntu 24.04 / 26.04 · amd64</p>
           <h3>Ubuntu package</h3>
           <p>Debian package for Ubuntu 24.04 and 26.04, with the application graphics and required Qt/Open CASCADE runtime libraries included.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/designrc_1.8.0-1_amd64.deb">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/designrc_1.9.0-1_amd64.deb">
             Download .deb <span>↓</span>
           </a>
-          <code>sudo apt install ./designrc_1.8.0-1_amd64.deb</code>
+          <code>sudo apt install ./designrc_1.9.0-1_amd64.deb</code>
         </article>
 
         <article class="download-card">
@@ -287,18 +289,18 @@
           <p class="platform-label">Fedora 44 · x86_64</p>
           <h3>Fedora package</h3>
           <p>Native RPM package for Fedora 44 with required dependencies resolved by DNF.</p>
-          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/designrc-1.8.0-1.x86_64.rpm">
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/designrc-1.9.0-1.x86_64.rpm">
             Download .rpm <span>↓</span>
           </a>
-          <code>sudo dnf install ./designrc-1.8.0-1.x86_64.rpm</code>
+          <code>sudo dnf install ./designrc-1.9.0-1.x86_64.rpm</code>
         </article>
       </div>
 
       <div class="release-links">
-        <a href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/DesignRC-1.8.0-SHA256SUMS.txt">SHA-256 checksums</a>
-        <a href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/DesignRC-1.8.0-source.zip">Source ZIP</a>
-        <a href="https://github.com/barryfx/DesignRC/releases/download/1.8.0/DesignRC-1.8.0-source.tar.gz">Source tar.gz</a>
-        <a href="https://github.com/barryfx/DesignRC/releases/tag/1.8.0">Release notes</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/DesignRC-1.9.0-SHA256SUMS.txt">SHA-256 checksums</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/DesignRC-1.9.0-source.zip">Source ZIP</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/download/1.9.0/DesignRC-1.9.0-source.tar.gz">Source tar.gz</a>
+        <a href="https://github.com/barryfx/DesignRC/releases/tag/1.9.0">Release notes</a>
         <a href="https://github.com/barryfx/DesignRC/blob/main/README.md">Build from source</a>
       </div>
     </section>
