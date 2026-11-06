@@ -255,6 +255,16 @@ domain::StructureParameters structureParametersFor(const WingPanelData& d,
   s.leTopSheet = d.leTopSheet; s.leTopSheetThickness = d.leTopSheetThickness;
   s.leTopSheetStopChordPercent = d.leTopSheetStopChordPercent;
   s.leTopSheetUpToSpar = d.leTopSheetUpToSpar;
+  s.leTopSheetBoundaryMode = d.leTopSheetBoundaryMode;
+  s.leBottomSheetBoundaryMode = d.leBottomSheetBoundaryMode;
+  s.teTopSheetBoundaryMode = d.teTopSheetBoundaryMode;
+  s.teBottomSheetBoundaryMode = d.teBottomSheetBoundaryMode;
+  s.teTopSheetStopChordPercent = d.teTopSheetStopChordPercent;
+  s.teBottomSheetStopChordPercent = d.teBottomSheetStopChordPercent;
+  s.leTopSheetCoverRibs = d.leTopSheetCoverRibs;
+  s.leBottomSheetCoverRibs = d.leBottomSheetCoverRibs;
+  s.teTopSheetCoverRibs = d.teTopSheetCoverRibs;
+  s.teBottomSheetCoverRibs = d.teBottomSheetCoverRibs;
   s.leBottomSheet = d.leBottomSheet; s.leBottomSheetThickness = d.leBottomSheetThickness;
   s.leBottomSheetStopChordPercent = d.leBottomSheetStopChordPercent;
   s.leBottomSheetUpToSpar = d.leBottomSheetUpToSpar;
@@ -1012,15 +1022,21 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
                               const domain::SpanMember& top,
                               const domain::SpanMember& bottom,
                               const std::size_t ribIndex,
-                              const double fraction,
+                              const double modelX,
                               const double thickness) {
-    const double centerX = fraction * wing.ribs[ribIndex].rib.chord;
+    const auto& rib = wing.ribs[ribIndex].rib;
+    const double twist = rib.twistDegrees * std::numbers::pi / 180.0;
+    const auto translation = domain::ribTwistTranslation(rib);
     const double bottomY = bottom.centers[ribIndex].y + bottom.height * 0.5;
     const double topY = top.centers[ribIndex].y - top.height * 0.5;
     const double half = thickness * 0.5;
+    const auto corner = [&](double x, double y) {
+      return domain::Point2{(x - rib.leadingEdgeOffset - translation.x + std::sin(twist) * y) /
+          std::cos(twist), y};
+    };
     return std::array<domain::Point2, 4>{{
-        {centerX - half, bottomY}, {centerX + half, bottomY},
-        {centerX + half, topY}, {centerX - half, topY}}};
+        corner(modelX - half, bottomY), corner(modelX + half, bottomY),
+        corner(modelX + half, topY), corner(modelX - half, topY)}};
   };
   const auto globalProfile = [](const domain::RibDefinition& rib,
                                 const std::array<domain::Point2, 4>& profile,
@@ -1049,6 +1065,8 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     if (!outerTop || !outerBottom)
       throw std::invalid_argument("Joiner " + std::to_string(number) +
           " requires matching top and bottom wood spars");
+    const auto& jointRib = outer.ribs.front().rib;
+    const double modelX = modelSectionPoint(jointRib, joinerCamberCenter(jointRib, fraction)).x;
     const auto cutRib = [&](domain::StructuredWing& wing, const std::size_t index,
                            const std::array<domain::Point2,4>& profile) {
       for (std::size_t edge=0; edge<profile.size(); ++edge)
@@ -1070,7 +1088,7 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
     joiner.annotateOnBothPlanHalves = panelIndex == 0;
     for (std::size_t i=0; i<=terminal; ++i) {
       joiner.rectangularProfiles.push_back(woodProfile(
-          outer,*outerTop,*outerBottom,i,fraction,data.woodThickness));
+          outer,*outerTop,*outerBottom,i,modelX,data.woodThickness));
       cutRib(outer,i,joiner.rectangularProfiles.back());
     }
     removeJoinerWebs(outer,0,terminal);
@@ -1091,7 +1109,7 @@ void addConfiguredJoiners(const std::vector<WingPanelData>& panelData,
         throw std::invalid_argument("Joiner " + std::to_string(number) +
             " requires matching adjoining-panel wood spars");
       for (std::size_t i=innerTerminal; i<inner.ribs.size(); ++i) {
-        const auto profile=woodProfile(inner,*innerTop,*innerBottom,i,fraction,data.woodThickness);
+        const auto profile=woodProfile(inner,*innerTop,*innerBottom,i,modelX,data.woodThickness);
         cutRib(inner,i,profile);
         joiner.innerRectangularProfiles.push_back(globalProfile(inner.ribs[i].rib,profile,
             i==innerTerminal ? inner.ribs[i].rib.ribThicknessStartFactor*ribThicknesses[panelIndex-1] : 0.0));
@@ -1683,6 +1701,15 @@ int runProjectBackendRegression(const QString& path) {
           std::fprintf(stderr, "%d%% %s\n", value, message.toUtf8().constData());
         });
     if (result.materialShapes.parts.empty()) return 2;
+    for (std::size_t panel = 0; panel < result.structuredPanels.size(); ++panel)
+      for (const auto& sheet : result.structuredPanels[panel].sheeting) {
+        const auto parts = std::count_if(result.materialShapes.parts.begin(), result.materialShapes.parts.end(),
+            [&](const auto& part) { return part.name.find(sheet.name) != std::string::npos; });
+        std::fprintf(stderr, "Panel %zu %s: through rib %zu, %zu profiles, %zu assembly parts\n",
+            panel + 1, sheet.name.c_str(), sheet.stopRibIndex + 1, sheet.profiles.size(),
+            static_cast<std::size_t>(parts));
+        if (parts == 0) throw std::runtime_error("Requested sheeting is missing from the assembly");
+      }
     std::fprintf(stderr, "Saved project built successfully: %zu parts\n", result.materialShapes.parts.size());
     return 0;
   } catch (const Standard_Failure& error) {
@@ -1815,6 +1842,47 @@ int runJoinerBackendRegression() {
         std::abs(jointOffset + adjoiningOffset) < 1.0e-5;
   };
   try {
+    // Flat plywood stays in one chordwise plane across the center and a
+    // panel joint, even when the adjoining panels have different planforms.
+    WingPanelData plywood;
+    plywood.rootChord = 254; plywood.tipChord = 203.2; plywood.sweep = 25.4;
+    plywood.panelSpan = 160; plywood.ribCount = 3; plywood.dihedral = 4;
+    plywood.joinerPanelMode = 1;
+    FixedJoinerData plywoodDefinition; plywoodDefinition.material = 0; plywoodDefinition.chordLocationPercent = 25; plywoodDefinition.ribBays = 1;
+    plywood.fixedJoiners = {plywoodDefinition};
+    plywood.spars.resize(2);
+    for (std::size_t i = 0; i < plywood.spars.size(); ++i) {
+      auto& spar = plywood.spars[i];
+      spar.material = 0; spar.verticalLocation = static_cast<int>(i);
+      spar.chordLocationPercent = 25; spar.perpendicularToRibs = true;
+      spar.woodWidth = 6.35; spar.woodHeight = 3.175;
+    }
+    const auto flatPlate = [](const auto& preview, std::size_t panel) {
+      const auto& wing = preview.structuredPanels[panel];
+      const auto& joiner = wing.joiners.front();
+      if (joiner.kind != domain::SpanMemberKind::Rectangular || joiner.innerRectangularProfiles.empty()) return false;
+      const double half = joiner.outerDiameter * .5;
+      const auto& first = joiner.innerRectangularProfiles.front();
+      const double center = .5 * (first[0].x + first[1].x);
+      for (const auto& section : joiner.innerRectangularProfiles)
+        for (std::size_t i = 0; i < 4; ++i)
+          if (std::abs(section[i].x - center - (i == 0 || i == 3 ? -half : half)) > 1e-7) return false;
+      for (std::size_t r = 0; r < joiner.rectangularProfiles.size(); ++r)
+        for (std::size_t i = 0; i < 4; ++i) {
+          const auto point = modelSectionPoint(wing.ribs[r].rib, joiner.rectangularProfiles[r][i]);
+          if (std::abs(point.x - center - (i == 0 || i == 3 ? -half : half)) > 1e-7) return false;
+        }
+      return true;
+    };
+    const auto centerPlywood = build(plywood);
+    if (!flatPlate(centerPlywood, 0) || centerPlywood.structuredPanels[0].joiners[0].mirrorInAssembly) return 130;
+    auto innerPlywood = plywood;
+    reidentifySparReferencePanel(innerPlywood);
+    innerPlywood.joinerPanelMode = -1; innerPlywood.fixedJoiners.clear();
+    innerPlywood.rootChord = 280; innerPlywood.tipChord = plywood.rootChord;
+    innerPlywood.sweep = -15; innerPlywood.dihedral = 2;
+    const auto jointPlywood = buildPanels({innerPlywood, plywood});
+    if (!flatPlate(jointPlywood, 1)) return 131;
     WingPanelData teSheetingProject;
     teSheetingProject.panelSpan = 698.5;
     teSheetingProject.rootChord = 254.0;
@@ -2689,6 +2757,9 @@ void MainWindow::showAbout() {
       QString{"<h2>DesignRC</h2>"
               "<p><b>Parametric built-up RC aircraft wing design and manufacturing.</b></p>"
               "<p>Version %1 &middot; Release date: %2</p>"
+              "<p><b>New in 1.9.0:</b> selectable sheeting boundaries and Cover Ribs, "
+              "rib caps that meet sheeting, perpendicular spar placement, and straight "
+              "joiners across mirrored wing halves and adjoining panels.</p>"
               "<p>Copyright &copy; 2026 Barry Foust</p>"
               "<p>DesignRC is free software licensed under the GNU General Public License "
               "version 3 only. It comes with absolutely no warranty.</p>"
@@ -3522,6 +3593,16 @@ void MainWindow::regeneratePreviewLegacy() {
     structure.leTopSheet = d.leTopSheet; structure.leTopSheetThickness = d.leTopSheetThickness;
     structure.leTopSheetStopChordPercent = d.leTopSheetStopChordPercent;
     structure.leTopSheetUpToSpar = d.leTopSheetUpToSpar;
+    structure.leTopSheetBoundaryMode = d.leTopSheetBoundaryMode;
+    structure.leBottomSheetBoundaryMode = d.leBottomSheetBoundaryMode;
+    structure.teTopSheetBoundaryMode = d.teTopSheetBoundaryMode;
+    structure.teBottomSheetBoundaryMode = d.teBottomSheetBoundaryMode;
+    structure.teTopSheetStopChordPercent = d.teTopSheetStopChordPercent;
+    structure.teBottomSheetStopChordPercent = d.teBottomSheetStopChordPercent;
+    structure.leTopSheetCoverRibs = d.leTopSheetCoverRibs;
+    structure.leBottomSheetCoverRibs = d.leBottomSheetCoverRibs;
+    structure.teTopSheetCoverRibs = d.teTopSheetCoverRibs;
+    structure.teBottomSheetCoverRibs = d.teBottomSheetCoverRibs;
     structure.leBottomSheet = d.leBottomSheet; structure.leBottomSheetThickness = d.leBottomSheetThickness;
     structure.leBottomSheetStopChordPercent = d.leBottomSheetStopChordPercent;
     structure.leBottomSheetUpToSpar = d.leBottomSheetUpToSpar;

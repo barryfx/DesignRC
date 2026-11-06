@@ -4,6 +4,8 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QPushButton>
+#include <QRadioButton>
+#include <QLabel>
 #include <QGroupBox>
 #include <QFile>
 #include <QJsonDocument>
@@ -88,7 +90,7 @@ void testLinkedRearSparCollision() {
 }
 void testLinkedRearSparWidthChanges() {
   for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
-    for (int obstruction = 0; obstruction < 3; ++obstruction) {
+    for (int obstruction = 0; obstruction < 3; ++obstruction) for (bool perpendicular : {false, true}) {
       auto d = fixture();
       d.rootChord = d.tipChord = 200; d.sweep = 0;
       d.trailingEdgeType = obstruction == 0 ? 2 : 0;
@@ -100,7 +102,8 @@ void testLinkedRearSparWidthChanges() {
       auto rear = d.spars.front();
       rear.referenceId = QUuid::createUuid().toString(QUuid::WithoutBraces);
       rear.chordLocationPercent = rear.tipChordLocationPercent = 82;
-      rear.parallelTo = part(d, "fixed/" + d.fixedJoiners[0].referenceId);
+      rear.perpendicularToRibs = perpendicular;
+      if (!perpendicular) rear.parallelTo = part(d, "fixed/" + d.fixedJoiners[0].referenceId);
       d.spars.push_back(rear);
       WingPanelEditor editor{d, unit};
       QString error;
@@ -109,11 +112,12 @@ void testLinkedRearSparWidthChanges() {
       auto* width = editor.findChild<LengthInput*>(name)->findChild<QDoubleSpinBox*>();
       width->setValue(unit == DisplayUnit::Inches ? 40 / 25.4 : 40);
       const auto moved = editor.data();
-      assert(moved.spars.back().parallelTo.isEmpty());
+      assert(moved.spars.back().parallelTo.isEmpty() && !moved.spars.back().perpendicularToRibs);
       assert(moved.spars.back().chordLocationPercent < 80);
       assert(editor.validate(error));
       assert(editor.rollbackRearSparLocations());
       assert(editor.data().spars.back().parallelTo == rear.parallelTo);
+      assert(editor.data().spars.back().perpendicularToRibs == perpendicular);
       assert(editor.data().spars.back().chordLocationPercent == 82);
 
       // A front spar blocking the proposed relocation must leave everything intact.
@@ -124,6 +128,7 @@ void testLinkedRearSparWidthChanges() {
       assert(!blocked.correctRearSparLocations());
       assert(blocked.data().spars.back().chordLocationPercent == 82);
       assert(blocked.data().spars.back().parallelTo == rear.parallelTo);
+      assert(blocked.data().spars.back().perpendicularToRibs == perpendicular);
     }
   }
 }
@@ -303,12 +308,65 @@ void testEditor() {
   const auto current=editor.data();
   boxes=editor.findChildren<QComboBox*>("sparParallelTo");
   assert(current.spars.size()==3);
+  assert(current.spars.back().perpendicularToRibs);
   assert(boxes[0]->findData(sparAlignmentKey(current,current.spars.back().referenceId))>=0);
   for(int i=1;i<boxes[0]->count();++i)
     assert(boxes[0]->itemData(i).toString().startsWith(current.referenceId+"/"));
 }
 }
-void testSparParallelReferences() { testResolution(); testEdgesAndControls(); testTwistedSparDirection(); testInheritedRootProfile(); testEditor(); testLinkedRearSparCollision(); testLinkedRearSparWidthChanges(); }
+void testPerpendicularSparControls() {
+  using namespace designrc::gui;
+  auto d = fixture();
+  d.spars[0].perpendicularToRibs = true;
+  WingPanelEditor editor{d, DisplayUnit::Millimeters};
+  auto* tabs = editor.findChild<QTabWidget*>();
+  for (int i = 0; i < tabs->count(); ++i) if (tabs->tabText(i) == "Spars") tabs->setCurrentIndex(i);
+  editor.resize(900, 1200); editor.show(); QApplication::processEvents();
+  auto* perpendicular = editor.findChild<QRadioButton*>("sparPerpendicularToRibs");
+  auto* parallel = editor.findChild<QRadioButton*>("sparParallelMode");
+  auto* combo = editor.findChild<QComboBox*>("sparParallelTo");
+  auto* tip = editor.findChild<QDoubleSpinBox*>("sparTipChordLocation");
+  assert(perpendicular->isChecked() && !parallel->isChecked());
+  assert(!tip->isVisible() && !combo->isEnabled());
+  assert(perpendicular->mapTo(&editor, QPoint{}).y() < parallel->mapTo(&editor, QPoint{}).y());
+  auto* root = editor.findChild<QDoubleSpinBox*>("sparRootChordLocation");
+  auto* rootLabel = root->parentWidget()->findChild<QLabel*>();
+  assert(rootLabel && rootLabel->text() == "Root Chord Location");
+  assert(perpendicular->mapTo(&editor, QPoint{}).x() == parallel->mapTo(&editor, QPoint{}).x());
+  assert(perpendicular->mapTo(&editor, QPoint{}).x() == rootLabel->mapTo(&editor, QPoint{}).x());
+  std::vector<WingPanelData> panels{editor.data()};
+  resolveSparParallelLocations(panels);
+  // X remains fixed even though the wing is swept and tapered.
+  const auto& spar = panels[0].spars[0];
+  assert(std::abs(d.rootChord * .30 - (d.sweep + d.tipChord * spar.tipChordLocationPercent / 100)) < 1e-7);
+  auto impossible = d;
+  impossible.sweep = 100;
+  assert(rejected({impossible}));
+  std::vector<WingPanelData> diagnostic{impossible};
+  resolveSparParallelLocations(diagnostic, DisplayUnit::Millimeters, true);
+  assert(diagnostic[0].spars[0].tipChordLocationPercent < 0);
+  parallel->click();
+  assert(!perpendicular->isChecked() && tip->isVisible() && combo->isEnabled());
+  assert(tip->value() == 30);
+  tip->setValue(42);
+  combo->setCurrentIndex(combo->findData(part(d,"fixed/" + d.fixedJoiners[0].referenceId)));
+  assert(!tip->isVisible());
+  perpendicular->click();
+  auto saved = panelDataFromJson(panelDataToJson(editor.data()));
+  assert(saved.spars[0].perpendicularToRibs && saved.spars[0].manualTipChordLocationPercent == 42);
+  WingPanelEditor reopened{saved, DisplayUnit::Millimeters};
+  assert(reopened.findChild<QRadioButton*>("sparPerpendicularToRibs")->isChecked());
+  parallel->click(); combo->setCurrentIndex(0);
+  assert(tip->isVisible() && tip->value() == 42);
+  // Legacy rows preserve their numeric/manual definition.
+  assert(!panelDataFromJson(panelDataToJson(fixture())).spars[0].perpendicularToRibs);
+  for (auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
+    const auto defaults = installedDefaultPanelData(unit);
+    assert(defaults.sparDefaults.perpendicularToRibs);
+  }
+}
+
+void testSparParallelReferences() { testPerpendicularSparControls(); testResolution(); testEdgesAndControls(); testTwistedSparDirection(); testInheritedRootProfile(); testEditor(); testLinkedRearSparCollision(); testLinkedRearSparWidthChanges(); }
 
 void testSparJoinerWarning() {
   auto d = fixture();
@@ -327,6 +385,32 @@ void testSparJoinerWarning() {
     assert(false && "Missing warning dialog button");
   });
   timer.start(1);
+  // The reported swept/tapered plywood project must not warn: both spars
+  // already follow the straight cross-wing joiner direction.
+  QFile saved{QString::fromStdWString((std::filesystem::path{__FILE__}.parent_path() /
+      "fixtures" / "Parallel_to_Joiner.designrc").wstring())};
+  assert(saved.open(QIODevice::ReadOnly));
+  const auto project = QJsonDocument::fromJson(saved.readAll()).object();
+  const auto reported = panelDataFromJson(project["panels"].toArray()[0].toObject());
+  assert(reported.fixedJoiners[0].material == 0);
+  assert(confirmSparJoinerAlignment(nullptr, {reported}, static_cast<DisplayUnit>(project["globalUnit"].toInt())));
+  assert(dialogs == 0);
+  auto straightWood = fixture();
+  straightWood.fixedJoiners[0].material = 0;
+  for (auto& spar : straightWood.spars) spar.perpendicularToRibs = true;
+  assert(confirmSparJoinerAlignment(nullptr, {straightWood}));
+  assert(dialogs == 0);
+  for (auto& spar : straightWood.spars) {
+    spar.perpendicularToRibs = false;
+    spar.parallelTo = part(straightWood, "fixed/" + straightWood.fixedJoiners[0].referenceId);
+  }
+  std::vector<WingPanelData> woodPanels{straightWood};
+  resolveSparParallelLocations(woodPanels);
+  for (const auto& spar : woodPanels[0].spars)
+    assert(std::abs(straightWood.sweep + straightWood.tipChord * spar.tipChordLocationPercent / 100 -
+        straightWood.rootChord * .30) < 1e-8);
+  assert(confirmSparJoinerAlignment(nullptr, woodPanels));
+  assert(dialogs == 0);
   assert(!confirmSparJoinerAlignment(nullptr, {d}));
   assert(dialogs == 1);
   assert(text == "Warning:  One or more spar 1, 2 has the same root chord location as joiner 1, but is not parallel to the joiner.  Select Parallel to Joiner 1 to make it align.");

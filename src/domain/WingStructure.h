@@ -12,6 +12,9 @@
 
 namespace designrc::domain {
 
+// -1 preserves pre-radio-button projects; explicit modes are chord, spar face, and center.
+constexpr int kSheetStopChord = 0, kSheetUpToSpar = 1, kSheetMidSpar = 2;
+
 class EdgeHeightError final : public std::invalid_argument {
 public:
   EdgeHeightError(std::string edgeName, std::size_t ribIndex,
@@ -125,6 +128,11 @@ struct StructureParameters {
   double teTopSheetThickness{2.0};
   int teTopSheetStopRib{2};
   bool teBottomSheet{false};
+  int leTopSheetBoundaryMode{-1}, leBottomSheetBoundaryMode{-1};
+  int teTopSheetBoundaryMode{-1}, teBottomSheetBoundaryMode{-1};
+  double teTopSheetStopChordPercent{25.0}, teBottomSheetStopChordPercent{25.0};
+  bool leTopSheetCoverRibs{false}, leBottomSheetCoverRibs{false};
+  bool teTopSheetCoverRibs{false}, teBottomSheetCoverRibs{false};
   double teBottomSheetThickness{2.0};
   int teBottomSheetStopRib{2};
   bool turbulators{false};

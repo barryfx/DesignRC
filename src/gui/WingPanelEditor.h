@@ -77,6 +77,7 @@ struct SparDefaults {
   double tipChordLocationPercent{-1.0};
   QString referenceId{QUuid::createUuid().toString(QUuid::WithoutBraces)};
   QString parallelTo;
+  bool perpendicularToRibs{false};
   double manualTipChordLocationPercent{-1.0};
 };
 
@@ -189,10 +190,16 @@ struct WingPanelData {
   double leBottomSheetStopChordPercent{30.0}; bool leBottomSheetUpToSpar{true};
   bool teTopSheet{false}; double teTopSheetThickness{2.0}; int teTopSheetStopRib{2};
   bool teBottomSheet{false}; double teBottomSheetThickness{2.0}; int teBottomSheetStopRib{2};
+  // -1 migrates the pre-radio-button settings; 0 = chord, 1 = spar face, 2 = spar center.
+  int leTopSheetBoundaryMode{-1}, leBottomSheetBoundaryMode{-1};
+  int teTopSheetBoundaryMode{-1}, teBottomSheetBoundaryMode{-1};
+  double teTopSheetStopChordPercent{25.0}, teBottomSheetStopChordPercent{25.0};
+  bool leTopSheetCoverRibs{false}, leBottomSheetCoverRibs{false};
+  bool teTopSheetCoverRibs{false}, teBottomSheetCoverRibs{false};
   bool turbulators{false}; int turbulatorCount{1}; double turbulatorHeight{2.0}; double turbulatorWidth{2.0};
   bool topRearSpar{false}; double topRearSparHeight{4.0}; double topRearSparWidth{4.0};
   bool bottomRearSpar{false}; double bottomRearSparHeight{4.0}; double bottomRearSparWidth{4.0};
-  SparDefaults sparDefaults;
+  SparDefaults sparDefaults = [] { SparDefaults s; s.perpendicularToRibs = true; return s; }();
   std::vector<SparDefaults> spars{SparDefaults{}};
   bool sparShearWebs{false};
 
@@ -333,6 +340,9 @@ private:
     QCheckBox* deleteSelection{};
     QDoubleSpinBox *rootChordLocation{}, *tipChordLocation{};
     QComboBox* parallelTo{};
+    QRadioButton* perpendicularToRibs{};
+    QRadioButton* parallelMode{};
+    QWidget* tipLocationRow{};
     QRadioButton *top{}, *bottom{}, *mid{};
     QRadioButton *wood{}, *carbonFiber{};
     QRadioButton *tube{}, *rod{}, *strip{};
@@ -439,7 +449,7 @@ private:
   QSpinBox *ribletStartRib_{}, *ribletEndRib_{}, *ribletsPerBay_{};
 
   QCheckBox *topSpar_{}, *bottomSpar_{}, *shearWebs_{}, *leTopSheet_{}, *leBottomSheet_{},
-      *leTopSheetUpToSpar_{}, *leBottomSheetUpToSpar_{}, *teTopSheet_{},
+      *teTopSheet_{},
       *teBottomSheet_{}, *turbulators_{}, *topRearSpar_{}, *bottomRearSpar_{};
   QWidget *topSparDetails_{}, *bottomSparDetails_{}, *shearDetails_{}, *cfTubeDetails_{}, *cfRodDetails_{},
       *leTopSheetDetails_{}, *leBottomSheetDetails_{}, *teTopSheetDetails_{}, *teBottomSheetDetails_{},
@@ -453,6 +463,13 @@ private:
   QSpinBox *leTopSheetStopRib_{}, *leBottomSheetStopRib_{}, *teTopSheetStopRib_{},
       *teBottomSheetStopRib_{}, *turbulatorCount_{};
   QDoubleSpinBox *leTopSheetStopChordPercent_{}, *leBottomSheetStopChordPercent_{};
+  struct SheetBoundaryWidgets {
+    QDoubleSpinBox* stopChord{};
+    QRadioButton *stopAtChord{}, *upToSpar{}, *midSpar{};
+    QCheckBox* coverRibs{};
+    QButtonGroup* modes{};
+  };
+  std::array<SheetBoundaryWidgets, 4> sheetBoundaries_{};
 
   QVBoxLayout* sparEditorsLayout_{};
   std::vector<SparEditorWidgets> sparEditors_;
@@ -460,6 +477,7 @@ private:
     std::array<double, 4> locations;
     QString parallelTo;
     double manualTip{};
+    bool perpendicularToRibs{};
   };
   std::vector<std::optional<PendingSparMove>> pendingSparMoves_;
   QCheckBox* sparShearWebs_{};

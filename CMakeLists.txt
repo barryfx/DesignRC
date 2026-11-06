@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.8.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.9.0 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -123,7 +123,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="November 5, 2026"
+  DESIGNRC_RELEASE_DATE="November 6, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
@@ -245,6 +245,7 @@ if(DESIGNRC_BUILD_TESTS)
   add_test(NAME designrc_domain_tests COMMAND designrc_domain_tests)
 
   add_executable(designrc_gui_tests
+    tests/SheetingBoundaryGuiTests.cpp
     tests/SparAlignmentTests.cpp
     src/gui/SparAlignment.cpp
     src/gui/SparAlignment.h
@@ -267,8 +268,10 @@ if(DESIGNRC_BUILD_TESTS)
     target_link_options(designrc_gui_tests PRIVATE /STACK:4194304)
   endif()
   add_test(NAME designrc_gui_tests COMMAND designrc_gui_tests)
+  add_test(NAME designrc_spar_directions_gui_tests COMMAND designrc_gui_tests --spar-directions)
   add_test(NAME designrc_spar_joiner_warning_gui_tests COMMAND designrc_gui_tests --spar-joiner-warning)
   add_test(NAME designrc_spoiler_placement_gui_tests COMMAND designrc_gui_tests --spoiler-placement)
+  add_test(NAME designrc_sheeting_boundaries_gui_tests COMMAND designrc_gui_tests --sheeting-boundaries)
 
   add_executable(designrc_geometry_tests
     tests/OcctGeometryTests.cpp
@@ -288,6 +291,7 @@ if(DESIGNRC_BUILD_TESTS)
   endif()
   add_test(NAME designrc_geometry_tests COMMAND designrc_geometry_tests)
   add_test(NAME designrc_spoiler_between_spars_tests COMMAND designrc_geometry_tests --spoiler-between-spars)
+  add_test(NAME designrc_sheeting_boundaries_geometry_tests COMMAND designrc_geometry_tests --sheeting-boundaries)
   add_test(NAME designrc_builtup_control_tests COMMAND designrc_geometry_tests --builtup)
   add_test(NAME designrc_hinge_spar_tests COMMAND designrc_geometry_tests --hinge-spars)
   add_test(NAME designrc_control_direction_tests COMMAND designrc_geometry_tests --control-direction)

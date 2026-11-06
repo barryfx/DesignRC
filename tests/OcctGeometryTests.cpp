@@ -1,4 +1,5 @@
 #include "TestWingStructure.h"
+#include "SheetingTestFixtures.h"
 #include "domain/AirfoilProfile.h"
 #include "domain/DxfExporter.h"
 #include "domain/WingDesign.h"
@@ -42,6 +43,58 @@
 
 int runTest(int argc, char* argv[]) {
   using designrc::domain::AirfoilProfile;
+  if (argc > 1 && std::string{argv[1]} == "--sheeting-boundaries") {
+    sheettest::testBoundaries();
+    const auto p = sheettest::panel();
+    const auto foil = AirfoilProfile::nacaSymmetric(.12);
+    const auto ribs = designrc::domain::generateRibs(p, foil, foil);
+    for (bool top : {false, true}) for (bool rear : {false, true}) {
+      auto settings = sheettest::stock();
+      settings.trailingEdgeType = 2; settings.trailingEdgeWidth = 20; settings.trailingEdgeHeight = 10;
+      sheettest::sheet(settings, top, rear, designrc::domain::kSheetMidSpar, true);
+      settings.topRibCaps = settings.bottomRibCaps = true;
+      settings.topRibCapThickness = settings.bottomRibCapThickness = 1;
+      settings.topRibCapWidth = settings.bottomRibCapWidth = 3;
+      const auto wing = testsupport::buildStructure(ribs, settings);
+      designrc::geometry::MaterialShapeSet actual;
+      const auto shape = designrc::geometry::buildStructuredWingPreview(wing, p.ribThickness, nullptr, &actual);
+      assert((!shape.IsNull() && BRepCheck_Analyzer{shape, false}.IsValid()));
+      auto withoutStock = wing;
+      // Retain other spars: caps legitimately meet their sides and may be
+      // trimmed there. Compare only the selected, partially covered spar.
+      withoutStock.members.erase(withoutStock.members.begin() + (top ? 2 : 3));
+      designrc::geometry::MaterialShapeSet uncut;
+      static_cast<void>(designrc::geometry::buildStructuredWingPreview(withoutStock, p.ribThickness, nullptr, &uncut));
+      const auto sheetVolume = [](const auto& parts) {
+        double volume = 0;
+        for (const auto& part : parts.parts) if (part.name.find("sheeting") != std::string::npos) {
+          GProp_GProps properties;
+          BRepGProp::VolumeProperties(part.shape, properties);
+          volume += properties.Mass();
+        }
+        return volume;
+      };
+      assert(sheetVolume(actual) > 0);
+      std::cerr << "Sheet cover: top=" << top << " rear=" << rear << " actual=" << sheetVolume(actual)
+                << " uncut=" << sheetVolume(uncut) << '\n';
+      if (std::abs(sheetVolume(actual) - sheetVolume(uncut)) >= 1e-3)
+        throw std::runtime_error("Covered sheet lost material over recessed stock");
+      const auto capVolume = [](const auto& parts) {
+        double volume = 0;
+        for (const auto& part : parts.parts) if (part.name.find("rib cap") != std::string::npos) {
+          GProp_GProps properties;
+          BRepGProp::VolumeProperties(part.shape, properties);
+          volume += properties.Mass();
+        }
+        return volume;
+      };
+      assert(capVolume(actual) > 0);
+      std::cerr << "Cap cover: actual=" << capVolume(actual) << " uncut=" << capVolume(uncut) << '\n';
+      if (std::abs(capVolume(actual) - capVolume(uncut)) >= 1e-3)
+        throw std::runtime_error("Rib caps lost material over recessed stock");
+    }
+    return 0;
+  }
   if (argc > 1 && std::string{argv[1]} == "--spoiler-between-spars") {
     using namespace designrc::domain;
     WingParameters p;

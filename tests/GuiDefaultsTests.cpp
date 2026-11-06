@@ -38,6 +38,7 @@
 #include <limits>
 
 void testSparParallelReferences();
+void testSheetingBoundaryControls();
 void testSparJoinerWarning();
 void testSpoilerPlacementControls();
 
@@ -277,6 +278,14 @@ int main(int argc, char* argv[]) {
   _set_error_mode(_OUT_TO_STDERR);
 #endif
   QApplication application{argc, argv};
+  if (application.arguments().contains("--spar-directions")) {
+    testSparParallelReferences();
+    return 0;
+  }
+  if (application.arguments().contains("--sheeting-boundaries")) {
+    testSheetingBoundaryControls();
+    return 0;
+  }
   if (application.arguments().contains("--spoiler-placement")) {
     testSpoilerPlacementControls();
     return 0;
@@ -1755,12 +1764,12 @@ int main(int argc, char* argv[]) {
   auto* frontTopStop =
       sparEditor.findChild<QDoubleSpinBox*>("leTopSheetStopChordPercent");
   auto* frontTopUpToSpar =
-      sparEditor.findChild<QCheckBox*>("leTopSheetUpToSpar");
+      sparEditor.findChild<QRadioButton*>("leTopSheetUpToSpar");
   assert(frontTopStop != nullptr && frontTopStop->value() == 30.0 &&
          frontTopStop->decimals() == 2);
   assert(frontTopUpToSpar != nullptr && frontTopUpToSpar->isChecked());
   assert(!frontTopStop->isEnabled());
-  frontTopUpToSpar->click();
+  sparEditor.findChild<QRadioButton*>("leTopSheetStopChordLocationMode")->click();
   assert(frontTopStop->isEnabled());
   frontTopStop->setValue(37.25);
   const auto frontSheetData = sparEditor.data();
@@ -1773,6 +1782,8 @@ int main(int argc, char* argv[]) {
   auto legacyFrontSheetJson = frontSheetJson;
   legacyFrontSheetJson.remove("leTopSheetUpToSpar");
   legacyFrontSheetJson.remove("leTopSheetStopChordPercent");
+  legacyFrontSheetJson.remove("leTopSheetBoundaryMode");
+  legacyFrontSheetJson.remove("leTopSheetCoverRibs");
   const auto migratedFrontSheet = panelDataFromJson(legacyFrontSheetJson);
   assert(migratedFrontSheet.leTopSheetUpToSpar);
   assert(migratedFrontSheet.leTopSheetStopChordPercent == 30.0);
@@ -1822,6 +1833,7 @@ int main(int argc, char* argv[]) {
       "sparRootChordLocation");
   auto* secondTipChord = defaultSparRows[1]->findChild<QDoubleSpinBox*>(
       "sparTipChordLocation");
+  defaultSparRows[1]->findChild<QRadioButton*>("sparParallelMode")->click();
   secondRootChord->setValue(55.25);
   secondTipChord->setValue(60.75);
   const auto savedSparDefaults = sparDefaultsEditor.data();
@@ -1891,6 +1903,8 @@ int main(int argc, char* argv[]) {
   assert(std::abs(installedMetric.spoilerMinimumCircleDistance - 12.0) <
          1.0e-8);
   assert(installedMetric.spars.size() == 2);
+  for (const auto& spar : installedMetric.spars) assert(spar.chordLocationPercent == 35);
+  assert(installedMetric.fixedJoiners.front().chordLocationPercent == 35);
   assert(installedMetric.fixedJoiners.size() == 1 && installedMetric.removableJoiners.empty());
   const auto metricJoinerReference = installedMetric.referenceId + "/fixed/" +
       installedMetric.fixedJoiners.front().referenceId;

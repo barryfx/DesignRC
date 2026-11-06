@@ -1,4 +1,5 @@
 #include "TestWingStructure.h"
+#include "SheetingTestFixtures.h"
 #include "domain/AirfoilProfile.h"
 #include "domain/WingDesign.h"
 #include "domain/DxfExporter.h"
@@ -20,6 +21,7 @@
 #include <thread>
 
 int runTests() {
+  sheettest::testBoundaries();
 #ifdef _WIN32
   _set_error_mode(_OUT_TO_STDERR);
 #endif

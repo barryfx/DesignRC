@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.8.0 User Help</title>
+  <title>DesignRC 1.9.0 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,14 +44,15 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.8.0 User Help</h1>
+    <h1>DesignRC 1.9.0 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
-      <a href="#new-18">New in 1.8.0</a>
+      <a href="#new-19">New in 1.9.0</a>
+      <a href="#new-18">Earlier: 1.8.0</a>
       <a href="#imported-curves">Import LE/TE curves</a>
       <a href="#workspace">The main window</a>
       <a href="#workflow">Recommended workflow</a>
@@ -91,7 +92,17 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
-      <h2 id="new-18">New in 1.8.0 &mdash; November 5, 2026</h2>
+      <h2 id="new-19">New in 1.9.0 &mdash; November 6, 2026</h2>
+      <ul>
+        <li><strong>Sheeting boundaries:</strong> Front/Rear Top/Bottom sheeting each have mutually exclusive Stop Chord Location, Up To Spar, and Mid Spar radio buttons. Spar modes use the first spar from the LE on the matching Top/Bottom side. Mid Spar ends at the center of its width.</li>
+        <li><strong>Cover Ribs:</strong> recesses covered stock beneath the sheet. Up To Spar covers the full selected spar; Mid Spar preserves its centerline boundary. Straight stock moves as one member, including beyond the sheet's Stop Rib.</li>
+        <li><strong>Rib caps:</strong> fill exposed areas and meet the sheeting edge, including the uncovered half of a recessed spar. Clearance accounts for cap width, airfoil slope, and actual wood or tube sections.</li>
+        <li><strong>Spar direction:</strong> new spars default to Perpendicular to Ribs, mutually exclusive with Parallel to. Tip Chord Location and its title appear only for Parallel to with Manual selected. Switching back to Manual restores the previous tip value. Saved projects retain their selected direction.</li>
+        <li><strong>Straight joiners:</strong> joiners align across mirrored wing halves and adjoining panels. Plywood stays in one flat chordwise plane, with an outline that can rise with dihedral. Parallel to and alignment warnings use this same direction, correcting false warnings for already perpendicular spars.</li>
+        <li><strong>Metric install defaults:</strong> both wood spars and the joiner start at 35% root chord to clear the swept tip. Inch defaults retain 25%; existing projects and saved User Defaults keep their settings.</li>
+      </ul>
+
+      <h2 id="new-18">Earlier: 1.8.0 &mdash; November 5, 2026</h2>
       <ul>
         <li><strong>Sheet Entire Panel:</strong> a one-time button enables all four sheeting options and sets their stop ribs to the panel's last rib.</li>
         <li><strong>Parallel to:</strong> align a straight spar with geometry in its current panel. Curved references use their end-to-end direction, Tip Chord Location becomes read-only, and Top/Bottom/Mid placement is retained. Saved references update with their geometry and are checked for missing or circular links.</li>
@@ -228,19 +239,20 @@
       <h2 id="rib-caps">Rib Caps tab</h2>
       <p><strong>Top Rib Caps</strong> and <strong>Bottom Rib Caps</strong> independently add cap strips along the clear sections of each full rib. Riblets are excluded and receive neither caps nor cap recesses. Both start unchecked and are also available in Defaults.</p>
       <p>Checking an option reveals <strong>Thickness</strong> (initially 1/16 inch, 1.5875 mm) and <strong>Width</strong> (initially 1/4 inch, 6.35 mm). Width runs across the rib; Thickness is recessed into its top or bottom surface so the finished cap follows the airfoil. These fields use the global units and accept explicit mm or in values, like other length fields.</p>
-      <p>Caps stop at spars, sheeting, spoilers, edge stock, controls, and other occupied areas. When a build tab overlaps a rib cap, generation completes with a construction warning identifying the panel and rib. The temporary tab passes through the cap; the cap remains unchanged in the preview and STEP assembly. Remove construction tabs before finishing the wing. Root and tip caps stay within the panel end faces; very thin nose and tail regions retain a small rib core. Caps appear in the wing preview, plan, and STEP assembly.</p>
+      <p>Caps stop at sheeting, spoilers, edge stock, controls, and stock that reaches the cap surface. With Front or Rear sheeting and Cover Ribs selected, caps fill the exposed area up to the sheet edge. Mid Spar caps butt against the sheet at the spar center and cover its uncovered half when the recessed stock leaves room. When a build tab overlaps a rib cap, generation completes with a construction warning identifying the panel and rib. The temporary tab passes through the cap; the cap remains unchanged in the preview and STEP assembly. Remove construction tabs before finishing the wing. Root and tip caps stay within the panel end faces; very thin nose and tail regions retain a small rib core. Caps appear in the wing preview, plan, and STEP assembly.</p>
       <p>Cap collision checks run in parallel across ribs, using the configured thread limit. The status bar identifies the rib and cap side being checked, for example <strong>Checking rib cap collisions for Rib 11 (Top; ...)</strong>.</p>
 
       <h2 id="spars">Spars tab</h2>
       <p>Use <strong>Add Spar</strong> to create any number of spar definitions. Check spar headings and press <strong>Delete Checked</strong> to remove selected rows.</p>
       <dl>
         <dt>Root Chord Location</dt><dd>Position as a percentage of the root airfoil chord.</dd>
-        <dt>Tip Chord Location</dt><dd>Position as a percentage of the tip airfoil chord. Editable in Manual mode; calculated and disabled when a Parallel to reference is selected. The spar is extruded in a straight line between the root and tip positions.</dd>
+        <dt>Tip Chord Location</dt><dd>Position as a percentage of the tip airfoil chord. Shown and editable only when Parallel to is selected with Manual (Tip Chord Location). The spar is extruded in a straight line between the root and tip positions.</dd>
+        <dt>Perpendicular to Ribs</dt><dd>The default direction for new spars. Keeps the straight spar perpendicular to the rib axis in plan view through its Root Chord Location. Top / Bottom / Mid still controls height. Mutually exclusive with Parallel to; the dropdown and Tip Chord Location are inactive in this mode.</dd>
         <dt id="spar-parallel">Parallel to</dt>
         <dd>
-          <p>The dropdown below Root/Tip Chord Location lists spanwise geometry in the <strong>current panel only</strong>. Its choices refresh when opened and include other spars, fixed/removable joiners, alignment pins, aileron/flap hinges and their spars or TE, LE/TE edges, sheeting boundaries, shear webs, turbulators, and spoilers where present. The spar itself is excluded.</p>
-          <p>Set <strong>Root Chord Location</strong>, then choose a reference such as <strong>Fixed Joiner 1</strong> or <strong>Trailing Edge</strong>. The spar stays straight through its root position and follows the reference's direction in plan view. Curved references use their end-to-end direction; the spar does not follow the curve. <strong>Top / Bottom / Mid</strong> continues to determine height. The disabled Tip Chord Location displays the calculated percentage.</p>
-          <p><strong>Manual (Tip Chord Location)</strong> restores the previously entered manual tip value and enables editing. Selected references are saved with projects and update when their geometry changes. Deleted references, circular dependencies, and directions that put the tip outside the allowed 0–90% chord range must be corrected before generation; change the root location, select another reference, or return to Manual.</p>
+          <p>Select the Parallel to radio button to enable its dropdown, which lists spanwise geometry in the <strong>current panel only</strong>. Its choices refresh when opened and include other spars, fixed/removable joiners, alignment pins, aileron/flap hinges and their spars or TE, LE/TE edges, sheeting boundaries, shear webs, turbulators, and spoilers where present. The spar itself is excluded.</p>
+          <p>Set <strong>Root Chord Location</strong>, then choose a reference such as <strong>Fixed Joiner 1</strong> or <strong>Trailing Edge</strong>. The spar stays straight through its root position and follows the reference's direction in plan view. Curved references use their end-to-end direction; the spar does not follow the curve. <strong>Top / Bottom / Mid</strong> continues to determine height. The Tip Chord Location title and field are hidden while a reference controls the direction.</p>
+          <p><strong>Manual (Tip Chord Location)</strong> shows the Tip Chord Location title and field, restores the previously entered manual tip value, and enables editing. Selected references are saved with projects and update when their geometry changes. Deleted references, circular dependencies, and directions that put the tip outside the allowed 0–90% chord range must be corrected before generation; change the root location, select another reference, or return to Manual.</p>
           <p>Automatic rear-collision relocation switches the affected spar to Manual so it can follow the obstruction's front edge. Rejected moves restore its original reference and root/tip locations.</p>
         </dd>
         <dt>Vertical Location: Top / Bottom / Mid</dt><dd>Places the spar against the upper surface, against the lower surface, or through the airfoil interior.</dd>
@@ -252,25 +264,29 @@
       </dl>
 
       <h3>Generate Wing alignment warning</h3>
-      <p>Pressing <strong>Generate Wing</strong> checks spars and joiners in each panel. When a spar has the same root chord percentage as a joiner but a different plan-view direction, one warning dialog lists all affected pairs for that button press. <strong>Continue</strong> proceeds with generation without changing the settings; <strong>Cancel</strong> stops before generation so you can select the corresponding joiner in Parallel to. A later button press checks again. Equal percentages alone do not imply parallel directions on a tapered or swept wing. New-install defaults explicitly link both wood spars to the joiner.</p>
+      <p>Pressing <strong>Generate Wing</strong> checks spars and joiners in each panel. When a spar has the same root chord percentage as a joiner but a different plan-view direction, one warning dialog lists all affected pairs for that button press. <strong>Continue</strong> proceeds with generation without changing the settings; <strong>Cancel</strong> stops before generation so you can select the corresponding joiner in Parallel to. A later button press checks again. Equal percentages alone do not imply parallel directions on a tapered or swept wing. The installed swept-wing example retains both wood spars parallel to its joiner; newly added spars default to Perpendicular to Ribs. New metric install defaults place both spars and the joiner at 35% root chord to clear the swept tip; inch install defaults retain 25%.</p>
 
       <h2 id="sheeting">Sheeting tab</h2>
       <p><strong>Sheet Entire Panel</strong> enables Front Top, Front Bottom, Rear Top, and Rear Bottom Sheeting and sets all four Stop Rib Numbers to the panel's last rib. Press it again after changing the rib count to apply the new last rib.</p>
       <dl>
-        <dt>Front Top Sheeting / Front Bottom Sheeting</dt><dd>Each checkbox reveals <strong>Thickness</strong>, <strong>Stop Rib Number</strong>, <strong>Stop Chord Location</strong>, and <strong>Up To Spar</strong>. Recesses the matching rib surface and builds curved sheeting from the leading-edge system. Front sheeting is resolved before rear sheeting and spar solids so adjoining sheets meet cleanly. When Front sheeting extends beyond a spar, DesignRC recesses the spar beneath the sheeting so the sheeting covers it while remaining on the airfoil surface.</dd>
-        <dt>Stop Chord Location</dt><dd>Ends Front sheeting at the entered percentage of chord. If the location intersects a spar, DesignRC moves the boundary to the far edge of that spar.</dd>
-        <dt>Up To Spar</dt><dd>Ends Front sheeting at the applicable spar instead of the Stop Chord Location. Clear this option to enter the stop location manually.</dd>
-        <dt>Rear Top Sheeting / Rear Bottom Sheeting</dt><dd>Each checkbox reveals <strong>Thickness</strong> and <strong>Stop Rib Number</strong>. Builds recessed curved sheeting aft from the spar region and butts it against TE sheeting where their ranges meet.</dd>
-        <dt>Stop Rib Number</dt><dd>Last rib covered by a sheet that begins at the panel root.</dd>
+        <dt>Front Top Sheeting / Front Bottom Sheeting</dt><dd>Builds recessed curved sheeting from the leading-edge system to the chosen chordwise boundary. Each checkbox reveals <strong>Thickness</strong>, <strong>Stop Rib Number</strong>, three stacked boundary radio buttons, and <strong>Cover Ribs</strong>.</dd>
+        <dt>Rear Top Sheeting / Rear Bottom Sheeting</dt><dd>Builds recessed curved sheeting from the chosen boundary aft to the TE or adjoining TE sheeting/stock. Provides the same Thickness, Stop Rib Number, boundary modes, and Cover Ribs controls as Front sheeting.</dd>
+        <dt>Stop Chord Location</dt><dd>Select this radio button to enter the boundary as a percentage of local chord. It is the end of Front sheeting and the beginning of Rear sheeting. The percentage field is disabled while either spar-based mode is selected.</dd>
+        <dt>Up To Spar</dt><dd>Uses the first spar from the LE on the matching side: a Top spar for Top sheeting or a Bottom spar for Bottom sheeting. Selection is based on the smallest root chord percentage, not row order or closeness to 25%. Without Cover Ribs, Front sheeting stops at its forward face and Rear sheeting starts at its aft face.</dd>
+        <dt>Mid Spar</dt><dd>Uses the center of that same first matching-side spar. It means the middle of the spar's width, not a spar with Vertical Location set to Mid. Front and Rear sheets using this mode meet at the spar centerline. This remains the boundary when Cover Ribs is checked.</dd>
+        <dt>Cover Ribs</dt><dd>Shown beneath the three mutually exclusive radio buttons. Recesses covered spars farther into the ribs so the sheet lies above their stock, allowing for the airfoil slope across the covered width. Up To Spar then extends across the full selected spar; Mid Spar covers only its corresponding half. A manual stop inside a covered spar is extended to the appropriate far face. Covered straight stock is moved as one member, including beyond the sheet's Stop Rib, rather than stepped or bent at the last sheeted rib. Clear the checkbox to leave the spar at its normal surface position. Normal rib recesses for the sheeting remain in either case.</dd>
+        <dt>Stop Rib Number</dt><dd>Last rib covered by a sheet that begins at the panel root. For example, Stop Rib 2 covers only the first bay; rib caps can remain ahead of the spar on subsequent unsheeted ribs.</dd>
         <dt>Turbulators</dt><dd><strong>Count</strong> selects 1–4 longitudinal strips; <strong>Height</strong> and <strong>Width</strong> define their rectangular stock cross-section. Front sheeting is divided around enabled turbulators.</dd>
       </dl>
+
+      <p>Front sheeting is resolved before Rear sheeting. Where both are enabled, the Rear sheet is trimmed to meet the Front sheet rather than adding an overlapping layer. The four boundary modes, percentages, and Cover Ribs settings are independent and saved in projects and User Defaults.</p>
 
       <h2 id="joiners">Joiners tab</h2>
       <p>Use <strong>Fixed Panel</strong> or <strong>Removable Panel</strong> to choose the panel joint type. Changing panel type deletes incompatible joiner rows after confirmation.</p>
       <h3>Fixed Panel</h3>
       <p><strong>Add Fixed Joiner</strong> creates rows at an entered chord location. A fixed joiner may be:</p>
       <ul>
-        <li>a one-piece V-shaped wood joiner aligned with matching upper and lower wood spars;</li>
+        <li>a one-piece flat plywood joiner, perpendicular to the root rib in plan view, between matching upper and lower wood spars;</li>
         <li>a carbon-fiber tube or rod; or</li>
         <li>a steel rod.</li>
       </ul>
@@ -283,7 +299,7 @@
         <dt>This Panel / Adjoining Panel</dt><dd>Choose Sleeve or Rod on each side of a sleeve/rod joint. Sleeve materials are <strong>CF</strong>, <strong>Aluminum</strong>, <strong>Steel</strong>, or <strong>Fiberglass</strong>, with OD and ID; rod materials are CF or Steel, with OD. Alignment pins offer <strong>Sleeve/Pin</strong> or <strong>Pin/Hole</strong>, the applicable side selection, and sleeve or pin dimensions and materials.</dd>
         <dt>Delete Checked</dt><dd>Removes the selected fixed or removable rows.</dd>
       </dl>
-      <p>Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. Each fixed joiner and removable sleeve/rod joiner has a <strong>Number of Rib Bays</strong> field. The integer count starts at 1 and cannot exceed the physical rib bays in the panel. One bay passes through two ribs, two bays through three ribs, and so on; optional R1a counts as a physical rib. The same count applies on both sides of a joint and must fit the adjoining panel too. Circular joiners, sleeves, rods, and wood joiners reach the far face of the selected terminal rib. Every traversed wood-joiner rib, including the terminal rib, is bisected into two manufacturing pieces; intersecting shear webs are omitted over the selected span. Alignment pins retain their existing lengths and have no bay-count field. Generate Wing checks that the full joiner section stays within each traversed rib at its center plane and both faces. A joiner leaving a rib reports &quot;Joiner N exits rib RN. Decrease dihedral or joiner length.&quot; These settings are saved in projects and Edit &gt; Defaults. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint. Joiners are also checked against other joiners, including overlapping wood joiners.</p>
+      <p>All joiners stay straight across the mirrored wing halves and across adjoining panels, perpendicular to the joint root rib. Their chord location specifies the position at that rib, rather than a constant chord percentage along swept or tapered panels. A plywood joiner stays in one flat chordwise plane; its cut outline can rise with dihedral. Joiner axes and rib openings are oriented through the joint geometry so panels assemble at the intended dihedral. Fixed and removable tube or rod joiners are raised above the camber line at each joint rib by the same amount that they fall below the camber line at the adjoining rib, preserving equal rib material above and below the joiner. Alignment pins are excluded from this balancing rule. Each fixed joiner and removable sleeve/rod joiner has a <strong>Number of Rib Bays</strong> field. The integer count starts at 1 and cannot exceed the physical rib bays in the panel. One bay passes through two ribs, two bays through three ribs, and so on; optional R1a counts as a physical rib. The same count applies on both sides of a joint and must fit the adjoining panel too. Circular joiners, sleeves, rods, and wood joiners reach the far face of the selected terminal rib. Every traversed wood-joiner rib, including the terminal rib, is bisected into two manufacturing pieces; intersecting shear webs are omitted over the selected span. Alignment pins retain their existing lengths and have no bay-count field. Generate Wing checks that the full joiner section stays within each traversed rib at its center plane and both faces. A joiner leaving a rib reports &quot;Joiner N exits rib RN. Decrease dihedral or joiner length.&quot; These settings are saved in projects and Edit &gt; Defaults. Invalid wood-spar alignment is rejected because a wood joiner cannot bend through a swept joint. Joiners are also checked against other joiners, including overlapping wood joiners.</p>
 
       <h2 id="lete">LE/TE tab</h2>
       <h3 id="imported-curves">Imported LE/TE curves</h3>
@@ -421,7 +437,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.8.0 &middot; Release date: November 5, 2026</footer>
+  <footer>DesignRC 1.9.0 &middot; Release date: November 6, 2026</footer>
 </div>
 </body>
 </html>

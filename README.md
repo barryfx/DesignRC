@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.8.0**, dated **November 5, 2026**.
+source version is **1.9.0**, dated **November 6, 2026**.
 
 > **Platform targets:** Windows 11 x64, Ubuntu 24.04/26.04 x86-64, and Fedora 44 x86-64.
 
@@ -28,7 +28,32 @@ source version is **1.8.0**, dated **November 5, 2026**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## What's new in 1.8.0 (November 5, 2026)
+## What's new in 1.9.0 (November 6, 2026)
+
+- **Sheeting boundaries:** Front/Rear Top/Bottom sheeting each offer mutually exclusive
+  **Stop Chord Location**, **Up To Spar**, and **Mid Spar** radio buttons. The spar modes
+  use the first spar from the LE on the matching Top/Bottom side. Mid Spar means the
+  center of that spar's width.
+- **Cover Ribs:** recesses covered spars so sheeting lies above them. Up To Spar covers
+  the full selected spar; Mid Spar retains its centerline boundary. Straight stock moves
+  as one member, including beyond the sheet's Stop Rib.
+- **Rib caps and sheeting:** caps fill exposed areas and butt against the sheet edge,
+  including the uncovered half of a recessed spar at Mid Spar. Clearance accounts for
+  cap width, airfoil slope, and the actual wood or tube cross-section.
+- **Spar direction:** newly added spars default to **Perpendicular to Ribs**, mutually
+  exclusive with **Parallel to**. The Tip Chord Location title and field appear only
+  under Parallel to with **Manual (Tip Chord Location)** selected. Switching back to
+  Manual restores its previous value; saved projects retain their chosen direction.
+- **Straight joiners:** joiners stay straight across mirrored wing halves and adjoining
+  panels. Plywood joiners stay in one flat chordwise plane instead of following a swept
+  chord-percentage line. Parallel to and the Generate Wing warning use the same direction,
+  avoiding false warnings for perpendicular spars at the joiner's root location.
+- **Metric install defaults:** both wood spars and their joiner now start at 35% root
+  chord to clear the swept tip. Inch install defaults retain 25%; existing projects and
+  saved User Defaults retain their settings.
+- Added GUI, sheeting/rib-cap geometry, and mirrored/cross-panel joiner regressions.
+
+## Earlier: 1.8.0 (November 5, 2026)
 
 - **Sheet Entire Panel:** one press enables all four sheeting options and sets their stop ribs
   to the panel's last rib. Press again after changing the rib count to apply the new last rib.
@@ -238,9 +263,9 @@ press **F1**.
 - Percent controls accept manually entered values to two decimal places while their arrows retain
   one-percent increments. LE/TE stock height errors restore the minimum valid cut-face height.
 
-## Download
+## Published downloads (1.8.0)
 
-Download installers, source archives, and checksums from the
+The source version described above is 1.9.0. Published installers, source archives, and checksums are available from the
 [DesignRC 1.8.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.8.0):
 
 - `DesignRC-1.8.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
@@ -368,13 +393,19 @@ Run the complete suite with:
 ctest --preset windows-debug
 ```
 
-The complete suite contains 15 tests:
+The complete suite contains 21 tests:
 
 - `designrc_domain_tests` - airfoil, structure, naming, DXF, and SVG behavior;
 - `designrc_gui_tests` - defaults, parameter controls, plans, and PDF/DXF/SVG generation;
 - `designrc_geometry_tests` - OpenCascade solid construction and boolean operations;
 - `designrc_step_export_tests` - STEP assembly structure, names, and component grouping;
-- `designrc_joiner_backend_tests` - joiner placement, bay counts, and rib clearance;
+- `designrc_joiner_backend_tests` - straight mirrored/cross-panel joiners, placement, bay counts, and rib clearance;
+- `designrc_spar_directions_gui_tests` - perpendicular/reference/manual modes and collision recovery;
+- `designrc_spar_joiner_warning_gui_tests` - alignment warnings and straight plywood references;
+- `designrc_sheeting_boundaries_gui_tests` - exclusive boundary controls, Cover Ribs, and saved defaults;
+- `designrc_sheeting_boundaries_geometry_tests` - sheeting boundaries, rib-cap fitting, and recessed-stock clearance;
+- `designrc_spoiler_placement_gui_tests` - manual placement and selected-spar controls;
+- `designrc_spoiler_between_spars_tests` - spoiler solids between front and rear spars;
 - `designrc_stock_fit_tests` - stock height fits, sheeting recesses, hinge-sheet coverage,
   and exported rib contours;
 - `designrc_hinge_spar_tests` - beveled hinge ribs/spars, sheeting, curves, and end-face alignment;
@@ -524,15 +555,15 @@ x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source ar
 SHA-256 checksums to:
 
 ```text
-dist/designrc_1.8.0-1_amd64.deb
-dist/DesignRC-1.8.0-1-source.tar.gz
-dist/DesignRC-1.8.0-1-Linux-x64.sha256
+dist/designrc_1.9.0-1_amd64.deb
+dist/DesignRC-1.9.0-1-source.tar.gz
+dist/DesignRC-1.9.0-1-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.8.0-1_amd64.deb
+sudo apt install ./dist/designrc_1.9.0-1_amd64.deb
 ```
 
 ### Reproducible Ubuntu 24.04 compatibility build
@@ -573,7 +604,7 @@ uninstalls the package. For example:
 docker run --rm \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   ubuntu:24.04 bash /workspace/packaging/linux/test-ubuntu-package.sh \
-  /workspace/dist/ubuntu-24.04/designrc_1.8.0-1_amd64.deb
+  /workspace/dist/ubuntu-24.04/designrc_1.9.0-1_amd64.deb
 # Repeat with ubuntu:26.04.
 ```
 
@@ -623,15 +654,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.8.0-1.x86_64.rpm
-dist/DesignRC-1.8.0-source.tar.gz
-dist/DesignRC-1.8.0-Linux-RPM-x64.sha256
+dist/designrc-1.9.0-1.x86_64.rpm
+dist/DesignRC-1.9.0-source.tar.gz
+dist/DesignRC-1.9.0-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.8.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.9.0-1.x86_64.rpm
 designrc
 ```
 

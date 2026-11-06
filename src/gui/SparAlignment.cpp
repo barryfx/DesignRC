@@ -20,6 +20,15 @@ domain::SparParameters parameters(const SparDefaults& s) {
       s.woodHeight, s.woodWidth, s.tubeOd, s.tubeId, s.rodOd,
       s.stripWidth, s.stripThickness, s.tipChordLocationPercent};
 }
+double perpendicularTip(const std::vector<domain::RibDefinition>& ribs,
+    const domain::SparParameters& spar, bool allowOutsideChordRange) {
+  try { return domain::sparTipParallelTo(ribs, spar, {0, 1}, allowOutsideChordRange); }
+  catch (const std::invalid_argument& error) {
+    if (QString::fromUtf8(error.what()).startsWith("Parallel to direction puts"))
+      throw std::invalid_argument("Perpendicular to Ribs puts the spar tip outside the allowed 0-90% chord range. Change Root Chord Location or select Parallel to.");
+    throw;
+  }
+}
 QString key(const QString& panel, const QString& part) {
   return panel + "/" + part;
 }
@@ -158,7 +167,9 @@ public:
         add(p, "spar/" + s.referenceId, QString{"Spar %1"}.arg(i + 1), [=, this] {
           auto parameter = parameters(s);
           double tip = s.tipChordLocationPercent < 0 ? s.chordLocationPercent : s.tipChordLocationPercent;
-          if (!s.parallelTo.isEmpty()) {
+          if (s.perpendicularToRibs) {
+            tip = perpendicularTip(ribs_[p], parameter, allowOutsideChordRange_);
+          } else if (!s.parallelTo.isEmpty()) {
             if (!s.parallelTo.startsWith(d.referenceId + "/"))
               throw std::invalid_argument("Parallel to references must be in the current panel");
             const auto line = get(s.parallelTo);
@@ -214,10 +225,12 @@ public:
         for (std::size_t i = 0; i < d.fixedJoiners.size(); ++i) {
           const auto j = d.fixedJoiners[i];
           add(p, "fixed/" + j.referenceId, QString{"Fixed Joiner %1"}.arg(i + 1), [=, this] {
-            if (j.material != 0) return circular();
             const auto end = static_cast<std::size_t>(j.ribBays);
-            if (end >= ribs_[p].size()) throw std::invalid_argument("Parallel to wood joiner has an invalid rib span");
-            return fractionLine(p, j.chordLocationPercent, j.chordLocationPercent, 0, end);
+            if (j.material == 0 && end >= ribs_[p].size())
+              throw std::invalid_argument("Parallel to wood joiner has an invalid rib span");
+            // Every joiner crosses the joint perpendicular to its root rib.
+            // Wood is a flat plywood plate, not a constant-chord-percent sweep.
+            return circular();
           });
         }
       if (d.joinerPanelMode == 0)
@@ -242,17 +255,22 @@ public:
         const QString side = top ? "top" : "bottom", title = top ? "Top" : "Bottom";
         if (front || rear) {
           const auto boundary = [=, this](bool isRear) {
-            const bool toSpar = isRear || (top ? d.leTopSheetUpToSpar : d.leBottomSheetUpToSpar);
+            const int mode = isRear ? (top ? d.teTopSheetBoundaryMode : d.teBottomSheetBoundaryMode) :
+                (top ? d.leTopSheetBoundaryMode : d.leBottomSheetBoundaryMode);
+            const bool toSpar = mode >= 0 ? mode != domain::kSheetStopChord :
+                isRear || (top ? d.leTopSheetUpToSpar : d.leBottomSheetUpToSpar);
             if (toSpar) {
               const SparDefaults* best = nullptr;
               for (const auto& s : panels_[p].spars)
                 if (s.verticalLocation == (top ? 0 : 1) && (!best ||
-                    std::abs(s.chordLocationPercent - 25) < std::abs(best->chordLocationPercent - 25))) best = &s;
+                    s.chordLocationPercent < best->chordLocationPercent)) best = &s;
               if (best) return get(sparAlignmentKey(panels_[p], best->referenceId));
               return fractionLine(p, 25, 25);
             }
-            const double percent = top ? d.leTopSheetStopChordPercent : d.leBottomSheetStopChordPercent;
-            const int stop = top ? d.leTopSheetStopRib : d.leBottomSheetStopRib;
+            const double percent = isRear ? (top ? d.teTopSheetStopChordPercent : d.teBottomSheetStopChordPercent) :
+                (top ? d.leTopSheetStopChordPercent : d.leBottomSheetStopChordPercent);
+            const int stop = isRear ? (top ? d.teTopSheetStopRib : d.teBottomSheetStopRib) :
+                (top ? d.leTopSheetStopRib : d.leBottomSheetStopRib);
             return fractionLine(p, percent, percent, 0, station(p, stop));
           };
           if (front) add(p, "sheet/front/" + side, "Front " + title + " Sheeting (aft edge)", [boundary] { return boundary(false); });
@@ -276,6 +294,8 @@ public:
     return result;
   }
   double tip(std::size_t p, const SparDefaults& spar) {
+    if (spar.perpendicularToRibs)
+      return perpendicularTip(ribs_[p], parameters(spar), allowOutsideChordRange_);
     if (!spar.parallelTo.startsWith(panels_[p].referenceId + "/"))
       throw std::invalid_argument("Parallel to references must be in the current panel");
     const auto line = get(spar.parallelTo);
@@ -307,18 +327,18 @@ std::vector<SparAlignmentReference> sparAlignmentReferences(const std::vector<Wi
 }
 void resolveSparParallelLocations(std::vector<WingPanelData>& panels, DisplayUnit unit, bool allowOutsideChordRange) {
   const bool linked = std::any_of(panels.begin(), panels.end(), [](const auto& p) {
-    return std::any_of(p.spars.begin(), p.spars.end(), [](const auto& s) { return !s.parallelTo.isEmpty(); });
+    return std::any_of(p.spars.begin(), p.spars.end(), [](const auto& s) { return s.perpendicularToRibs || !s.parallelTo.isEmpty(); });
   });
   if (!linked) return;
   References references(panels, unit, allowOutsideChordRange);
   std::vector<std::vector<double>> tips(panels.size());
   for (std::size_t p = 0; p < panels.size(); ++p)
     for (const auto& spar : panels[p].spars)
-      tips[p].push_back(spar.parallelTo.isEmpty() ? spar.tipChordLocationPercent : references.tip(p, spar));
+      tips[p].push_back(!spar.perpendicularToRibs && spar.parallelTo.isEmpty() ? spar.tipChordLocationPercent : references.tip(p, spar));
   for (std::size_t p = 0; p < panels.size(); ++p)
     for (std::size_t s = 0; s < panels[p].spars.size(); ++s) {
       auto& spar = panels[p].spars[s];
-      if (!spar.parallelTo.isEmpty() && spar.manualTipChordLocationPercent < 0)
+      if ((spar.perpendicularToRibs || !spar.parallelTo.isEmpty()) && spar.manualTipChordLocationPercent < 0)
         spar.manualTipChordLocationPercent = spar.tipChordLocationPercent;
       spar.tipChordLocationPercent = tips[p][s];
     }

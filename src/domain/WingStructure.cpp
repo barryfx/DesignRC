@@ -1951,6 +1951,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     joiner.annotateOnBothPlanHalves = true;
     double rootBottomZ = 0.0;
     double rootTopZ = 0.0;
+    const double joinerModelX = modelPlanePoint(ribs.front(), camberCenter(ribs.front(), .25 * ribs.front().chord)).x;
     for (std::size_t i = 0; i <= rib2Index; ++i) {
       const auto [upper, lower] = localSurfaces(ribs[i]);
       const double x = 0.25 * ribs[i].chord;
@@ -1969,13 +1970,12 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           (ribs[i].spanPosition - ribs.front().spanPosition);
       const double targetBottomZ = rootBottomZ + rise;
       const double targetTopZ = rootTopZ + rise;
-      const auto localAt = [&](const double localX, const double targetZ) {
-        const double modelX = modelPlanePoint(ribs[i], {localX, 0.0}).x;
-        return localPlanePoint(ribs[i], {modelX, targetZ});
+      const auto localAt = [&](const double offset, const double targetZ) {
+        return localPlanePoint(ribs[i], {joinerModelX + offset, targetZ});
       };
-      joiner.rectangularProfiles.push_back({localAt(x - halfWidth, targetBottomZ),
-          localAt(x + halfWidth, targetBottomZ), localAt(x + halfWidth, targetTopZ),
-          localAt(x - halfWidth, targetTopZ)});
+      joiner.rectangularProfiles.push_back({localAt(-halfWidth, targetBottomZ),
+          localAt(halfWidth, targetBottomZ), localAt(halfWidth, targetTopZ),
+          localAt(-halfWidth, targetTopZ)});
     }
     const double edgeLength = std::hypot(
         ribs[rib2Index].spanPosition - ribs.front().spanPosition,
@@ -2026,6 +2026,46 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         spar.type == 2 ? spar.stripWidth :
         spar.type == 0 ? spar.tubeOd : spar.rodOd;
   };
+  const auto firstSheetSpar = [&](int vertical) {
+    std::size_t selected = p.spars.size();
+    for (std::size_t i = 0; i < p.spars.size(); ++i)
+      if (p.spars[i].verticalLocation == vertical &&
+          (selected == p.spars.size() || p.spars[i].chordLocationPercent < p.spars[selected].chordLocationPercent))
+        selected = i;
+    return selected;
+  };
+  const auto sheetBoundary = [&](std::size_t ribIndex, int vertical, bool rear,
+                                  int mode, double percent, bool cover) {
+    const auto& rib = ribs[ribIndex];
+    double x = .25 * rib.chord, width = 0;
+    const auto selected = firstSheetSpar(vertical);
+    if (selected < p.spars.size()) {
+      x = sparCenters[selected][ribIndex].x;
+      width = sparWidth(p.spars[selected]);
+    } else if (vertical == 0 && p.topSpar) width = p.topSparWidth;
+    else if (vertical == 1 && p.bottomSpar) width = p.bottomSparWidth;
+    else if (vertical == 0 && p.topRearSpar) { x = .60 * rib.chord; width = p.topRearSparWidth; }
+    else if (vertical == 1 && p.bottomRearSpar) { x = .60 * rib.chord; width = p.bottomRearSparWidth; }
+    if (mode == kSheetMidSpar) return x;
+    if (mode == kSheetUpToSpar)
+      return x + (rear != cover ? 1 : -1) * width * .5;
+    double boundary = std::clamp(percent, 0.0, 100.0) * rib.chord / 100.0;
+    if (cover) {
+      const auto extend = [&](double center, double w) {
+        if (boundary >= center - w * .5 - 1e-8 && boundary <= center + w * .5 + 1e-8)
+          boundary = rear ? center - w * .5 : center + w * .5;
+      };
+      if (p.topSpar && vertical == 0) extend(.25 * rib.chord, p.topSparWidth);
+      if (p.bottomSpar && vertical == 1) extend(.25 * rib.chord, p.bottomSparWidth);
+      if (p.topRearSpar && vertical == 0) extend(.60 * rib.chord, p.topRearSparWidth);
+      if (p.bottomRearSpar && vertical == 1) extend(.60 * rib.chord, p.bottomRearSparWidth);
+      for (std::size_t i = 0; i < p.spars.size(); ++i)
+        if (p.spars[i].verticalLocation == vertical)
+          extend(sparCenters[i][ribIndex].x, sparWidth(p.spars[i]));
+    }
+    return boundary;
+  };
+  std::vector<double> rearTopStarts(ribs.size()), rearBottomStarts(ribs.size());
   std::vector<double> frontTopEnds(ribs.size());
   std::vector<double> frontBottomEnds(ribs.size());
   std::vector<double> legacyTopSparInsets(ribs.size());
@@ -2035,7 +2075,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   const auto resolveFrontEnd = [&](const std::size_t ribIndex,
                                    const int verticalLocation,
                                    const bool upToSpar,
-                                   const double stopPercent) {
+                                   const double stopPercent, int mode, bool cover) {
     const auto& rib = ribs[ribIndex];
     if (rib.planform || p.controlRegion || (p.ailerons && p.aileronPerpendicularToRibs) ||
         (p.flaps && p.flapPerpendicularToRibs)) {
@@ -2053,18 +2093,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       }
     }
 
+    if (mode >= 0) return sheetBoundary(ribIndex, verticalLocation, false, mode, stopPercent, cover);
     double frontEnd = 0.25 * rib.chord;
-    std::size_t selected = p.spars.size();
-    double closestToLegacyLocation = 101.0;
-    for (std::size_t index = 0; index < p.spars.size(); ++index) {
-      const auto& spar = p.spars[index];
-      if (spar.verticalLocation != verticalLocation) continue;
-      const double distance = std::abs(spar.chordLocationPercent - 25.0);
-      if (distance < closestToLegacyLocation) {
-        selected = index;
-        closestToLegacyLocation = distance;
-      }
-    }
+    const std::size_t selected = firstSheetSpar(verticalLocation);
     if (upToSpar) {
       if (selected != p.spars.size())
         frontEnd = sparCenters[selected][ribIndex].x -
@@ -2098,9 +2129,107 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
   };
   for (std::size_t ribIndex = 0; ribIndex < ribs.size(); ++ribIndex) {
     frontTopEnds[ribIndex] = resolveFrontEnd(
-        ribIndex, 0, p.leTopSheetUpToSpar, p.leTopSheetStopChordPercent);
+        ribIndex, 0, p.leTopSheetUpToSpar, p.leTopSheetStopChordPercent,
+        p.leTopSheetBoundaryMode, p.leTopSheetCoverRibs);
     frontBottomEnds[ribIndex] = resolveFrontEnd(
-        ribIndex, 1, p.leBottomSheetUpToSpar, p.leBottomSheetStopChordPercent);
+        ribIndex, 1, p.leBottomSheetUpToSpar, p.leBottomSheetStopChordPercent,
+        p.leBottomSheetBoundaryMode, p.leBottomSheetCoverRibs);
+    rearTopStarts[ribIndex] = sheetBoundary(ribIndex, 0, true, p.teTopSheetBoundaryMode < 0 ?
+        kSheetUpToSpar : p.teTopSheetBoundaryMode, p.teTopSheetStopChordPercent, p.teTopSheetCoverRibs);
+    rearBottomStarts[ribIndex] = sheetBoundary(ribIndex, 1, true, p.teBottomSheetBoundaryMode < 0 ?
+        kSheetUpToSpar : p.teBottomSheetBoundaryMode, p.teBottomSheetStopChordPercent, p.teBottomSheetCoverRibs);
+  }
+  // Move covered stock as one member, including beyond a sheet's Stop Rib.
+  // Stepping the member down only at covered ribs would bend a straight spar.
+  const auto spatialPoint = [&](const RibDefinition& rib, Point2 point) {
+    const auto translation = ribTwistTranslation(rib);
+    const double twist = rib.twistDegrees * std::numbers::pi / 180;
+    const double plane = rib.ribPlaneAngleDegrees * std::numbers::pi / 180;
+    const bool center = std::abs(rib.spanPosition) < 1e-9 && std::abs(rib.ribThicknessStartFactor) < 1e-9;
+    const double z = std::sin(twist) * point.x + std::cos(twist) * point.y + translation.y;
+    return std::array{modelPlanePoint(rib, point).x,
+        rib.spanPosition - (center ? 0 : std::sin(plane) * z),
+        rib.dihedralHeight + (center ? 1 : std::cos(plane)) * z};
+  };
+  std::vector<Point2> sheetStockAxes;
+  for (const auto& centers : sparCenters) {
+    const auto a = spatialPoint(ribs.front(), centers.front());
+    const auto b = spatialPoint(ribs.back(), centers.back());
+    sheetStockAxes.push_back({(b[0] - a[0]) / (b[1] - a[1]), (b[2] - a[2]) / (b[1] - a[1])});
+  }
+  const auto coveredDepth = [&](std::size_t ribIndex, int vertical, Point2 center, double width,
+                                  double height, bool circular = false, std::optional<Point2> axis = {}) {
+    double depth = 0;
+    const bool top = vertical == 0;
+    const bool frontEnabled = top ? p.leTopSheet : p.leBottomSheet;
+    const bool rearEnabled = top ? p.teTopSheet : p.teBottomSheet;
+    const bool frontCover = top ? p.leTopSheetCoverRibs : p.leBottomSheetCoverRibs;
+    const bool rearCover = top ? p.teTopSheetCoverRibs : p.teBottomSheetCoverRibs;
+    const int frontMode = top ? p.leTopSheetBoundaryMode : p.leBottomSheetBoundaryMode;
+    const int rearMode = top ? p.teTopSheetBoundaryMode : p.teBottomSheetBoundaryMode;
+    const bool frontActive = frontEnabled && ribIndex <= stopIndex(top ? p.leTopSheetStopRib : p.leBottomSheetStopRib);
+    if (!(frontMode >= 0 && frontActive && frontCover) &&
+        !(rearMode >= 0 && rearEnabled && rearCover && ribIndex <= stopIndex(top ? p.teTopSheetStopRib : p.teBottomSheetStopRib)))
+      return depth;
+    const double frontEnd = top ? frontTopEnds[ribIndex] : frontBottomEnds[ribIndex];
+    double rearStart = top ? rearTopStarts[ribIndex] : rearBottomStarts[ribIndex];
+    if (frontActive) rearStart = std::max(rearStart, frontEnd);
+    const bool rearActive = rearMode >= 0 && rearEnabled && rearCover &&
+        ribIndex <= stopIndex(top ? p.teTopSheetStopRib : p.teBottomSheetStopRib);
+    const bool touchesSheet = (frontMode >= 0 && frontActive && frontCover && center.x - width * .5 < frontEnd + 1e-8) ||
+        (rearActive && center.x + width * .5 > rearStart - 1e-8);
+    if (!touchesSheet) return depth;
+    const double capThickness = (top ? p.topRibCaps : p.bottomRibCaps)
+        ? (top ? p.topRibCapThickness : p.bottomRibCapThickness) : 0;
+    const auto surfaces = localSurfaces(ribs[ribIndex]);
+    for (int sample = 0; sample <= 16; ++sample) {
+      const double fraction = (sample - 8) / 8.0;
+      const double x = center.x + fraction * width * .5;
+      // At a partial-width boundary, recess the uncovered half enough for
+      // the cap as well as the sheeted half for its skin.
+      double thickness = 0;
+      if (frontMode >= 0 && frontActive && frontCover && x <= frontEnd + 1e-8)
+        thickness = std::max(thickness, top ? p.leTopSheetThickness : p.leBottomSheetThickness);
+      if (rearMode >= 0 && rearEnabled && rearCover &&
+          ribIndex <= stopIndex(top ? p.teTopSheetStopRib : p.teBottomSheetStopRib) && x >= rearStart - 1e-8)
+        thickness = std::max(thickness, top ? p.teTopSheetThickness : p.teBottomSheetThickness);
+      if (thickness <= 0) thickness = capThickness;
+      if (thickness <= 0) continue;
+      const double halfHeight = height * .5 * (circular ? std::sqrt(std::max(0.0, 1 - fraction * fraction)) : 1);
+      const double required = top ? center.y + halfHeight + thickness - interpolateY(surfaces.first, x) :
+          interpolateY(surfaces.second, x) + thickness - center.y + halfHeight;
+      double faceAllowance = 0;
+      if (axis) {
+        const auto& rib = ribs[ribIndex];
+        const auto& surface = top ? surfaces.first : surfaces.second;
+        const double slope = (interpolateY(surface, x + .01) - interpolateY(surface, x - .01)) / .02;
+        const double angle = rib.ribPlaneAngleDegrees * std::numbers::pi / 180;
+        double offset = p.ribThickness * std::max(std::abs(rib.ribThicknessStartFactor),
+            std::abs(rib.ribThicknessStartFactor + 1));
+        if (capThickness > 0)
+          offset = std::max(offset, std::abs(p.ribThickness * (rib.ribThicknessStartFactor + .5)) +
+              (top ? p.topRibCapWidth : p.bottomRibCapWidth) * .5);
+        faceAllowance = offset * (std::abs(axis->y * std::cos(angle) - std::sin(angle)) +
+            std::abs(axis->x * std::cos(angle) * slope)) / std::max(.1, std::cos(angle));
+      }
+      depth = std::max(depth, required + faceAllowance + .01);
+    }
+    return depth;
+  };
+  std::vector<double> sparCoverDepths(p.spars.size());
+  std::array<double, 4> legacyCoverDepths{};
+  for (std::size_t r = 0; r < ribs.size(); ++r) {
+    for (std::size_t s = 0; s < p.spars.size(); ++s)
+      if (p.spars[s].verticalLocation != 2)
+        sparCoverDepths[s] = std::max(sparCoverDepths[s], coveredDepth(r, p.spars[s].verticalLocation,
+            sparCenters[s][r], sparWidth(p.spars[s]), sparSectionSize(p.spars[s]).height,
+            sparSectionSize(p.spars[s]).circular, sheetStockAxes[s]));
+    if (p.topSpar) legacyCoverDepths[0] = std::max(legacyCoverDepths[0], coveredDepth(r, 0, surfaceCenter(ribs[r], .25, true, p.topSparHeight), p.topSparWidth, p.topSparHeight));
+    if (p.bottomSpar) legacyCoverDepths[1] = std::max(legacyCoverDepths[1], coveredDepth(r, 1, surfaceCenter(ribs[r], .25, false, p.bottomSparHeight), p.bottomSparWidth, p.bottomSparHeight));
+    if (p.topRearSpar) legacyCoverDepths[2] = std::max(legacyCoverDepths[2], coveredDepth(r, 0, surfaceCenter(ribs[r], .60, true, p.topRearSparHeight), p.topRearSparWidth, p.topRearSparHeight));
+    if (p.bottomRearSpar) legacyCoverDepths[3] = std::max(legacyCoverDepths[3], coveredDepth(r, 1, surfaceCenter(ribs[r], .60, false, p.bottomRearSparHeight), p.bottomRearSparWidth, p.bottomRearSparHeight));
+  }
+  for (std::size_t ribIndex = 0; ribIndex < ribs.size(); ++ribIndex) {
     const bool topSheetActive = p.leTopSheet &&
         ribIndex <= stopIndex(p.leTopSheetStopRib);
     const bool bottomSheetActive = p.leBottomSheet &&
@@ -2113,14 +2242,17 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       auto& center = sparCenters[index][ribIndex];
       const auto& spar = p.spars[index];
       const double width = sparWidth(spar);
-      if (topSheetActive && spar.verticalLocation == 0 &&
+      double depth = sparCoverDepths[index];
+      if (p.leTopSheetBoundaryMode < 0 && topSheetActive && spar.verticalLocation == 0 &&
           covered(frontTopEnds[ribIndex], center.x, width))
-        center.y -= p.leTopSheetThickness;
-      if (bottomSheetActive && spar.verticalLocation == 1 &&
+        depth = std::max(depth, p.leTopSheetThickness);
+      if (p.leBottomSheetBoundaryMode < 0 && bottomSheetActive && spar.verticalLocation == 1 &&
           covered(frontBottomEnds[ribIndex], center.x, width))
-        center.y += p.leBottomSheetThickness;
+        depth = std::max(depth, p.leBottomSheetThickness);
+      if (spar.verticalLocation == 0) center.y -= depth;
+      if (spar.verticalLocation == 1) center.y += depth;
     }
-    if (topSheetActive) {
+    if (topSheetActive && p.leTopSheetBoundaryMode < 0) {
       if (p.topSpar && covered(frontTopEnds[ribIndex], 0.25 * ribs[ribIndex].chord,
                               p.topSparWidth))
         legacyTopSparInsets[ribIndex] = p.leTopSheetThickness;
@@ -2128,7 +2260,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                   p.topRearSparWidth))
         legacyTopRearSparInsets[ribIndex] = p.leTopSheetThickness;
     }
-    if (bottomSheetActive) {
+    if (bottomSheetActive && p.leBottomSheetBoundaryMode < 0) {
       if (p.bottomSpar && covered(frontBottomEnds[ribIndex], 0.25 * ribs[ribIndex].chord,
                                  p.bottomSparWidth))
         legacyBottomSparInsets[ribIndex] = p.leBottomSheetThickness;
@@ -2136,6 +2268,22 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
                                      p.bottomRearSparWidth))
         legacyBottomRearSparInsets[ribIndex] = p.leBottomSheetThickness;
     }
+    legacyTopSparInsets[ribIndex] = std::max(legacyTopSparInsets[ribIndex], legacyCoverDepths[0]);
+    legacyBottomSparInsets[ribIndex] = std::max(legacyBottomSparInsets[ribIndex], legacyCoverDepths[1]);
+    legacyTopRearSparInsets[ribIndex] = std::max(legacyTopRearSparInsets[ribIndex], legacyCoverDepths[2]);
+    legacyBottomRearSparInsets[ribIndex] = std::max(legacyBottomRearSparInsets[ribIndex], legacyCoverDepths[3]);
+  }
+  for (std::size_t s = 0; s < p.spars.size(); ++s)
+    if (sparCoverDepths[s] > 0) sparCenters[s] = straightMemberCenters(ribs, sparCenters[s]);
+  for (std::size_t r = 0; r < ribs.size(); ++r) {
+    if (p.leTopSheetBoundaryMode >= 0)
+      frontTopEnds[r] = sheetBoundary(r, 0, false, p.leTopSheetBoundaryMode, p.leTopSheetStopChordPercent, p.leTopSheetCoverRibs);
+    if (p.leBottomSheetBoundaryMode >= 0)
+      frontBottomEnds[r] = sheetBoundary(r, 1, false, p.leBottomSheetBoundaryMode, p.leBottomSheetStopChordPercent, p.leBottomSheetCoverRibs);
+    if (p.teTopSheetBoundaryMode >= 0)
+      rearTopStarts[r] = sheetBoundary(r, 0, true, p.teTopSheetBoundaryMode, p.teTopSheetStopChordPercent, p.teTopSheetCoverRibs);
+    if (p.teBottomSheetBoundaryMode >= 0)
+      rearBottomStarts[r] = sheetBoundary(r, 1, true, p.teBottomSheetBoundaryMode, p.teBottomSheetStopChordPercent, p.teBottomSheetCoverRibs);
   }
 
   if (buildSpoiler && p.spoilerImmediatelyBehindSpar && !p.spoilerSparReferenceId.empty()) {
@@ -2540,17 +2688,7 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     const auto applyNewSparSheetingBoundary = [&](const int verticalLocation,
                                                    double& leEnd,
                                                    double& teStart) {
-      std::size_t selected = p.spars.size();
-      double closestToLegacyLocation = 101.0;
-      for (std::size_t index = 0; index < p.spars.size(); ++index) {
-        const auto& spar = p.spars[index];
-        if (spar.verticalLocation != verticalLocation) continue;
-        const double distance = std::abs(spar.chordLocationPercent - 25.0);
-        if (distance < closestToLegacyLocation) {
-          selected = index;
-          closestToLegacyLocation = distance;
-        }
-      }
+      const std::size_t selected = firstSheetSpar(verticalLocation);
       if (selected == p.spars.size()) return;
       const auto& spar = p.spars[selected];
       const double width = spar.material == 0 ? spar.woodWidth :
@@ -2563,6 +2701,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
     applyNewSparSheetingBoundary(1, bottomLeEnd, bottomTeStart);
     topLeEnd = frontTopEnds[ribIndex];
     bottomLeEnd = frontBottomEnds[ribIndex];
+    if (p.teTopSheetBoundaryMode >= 0) topTeStart = rearTopStarts[ribIndex];
+    if (p.teBottomSheetBoundaryMode >= 0) bottomTeStart = rearBottomStarts[ribIndex];
     const double leadingCarbonDiameter = p.leadingEdgeType == 3
         ? p.leadingEdgeTubeOd : p.leadingEdgeType == 4 ? p.leadingEdgeRodOd : 0.0;
     double topSheetingMinimumX = minimumX;
@@ -2879,6 +3019,9 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         topNotches.push_back({fraction * rib.chord, p.turbulatorWidth, p.turbulatorHeight});
       }
     }
+    const auto sparTopNotchStart = topNotches.size();
+    const auto sparBottomNotchStart = bottomNotches.size();
+    std::vector<std::vector<Point2>> capStockProfiles;
     std::vector<std::vector<Point2>> sparBooleanCutouts;
     std::vector<std::vector<Point2>> sparBooleanHoles;
     for (std::size_t sparIndex = 0; sparIndex < p.spars.size(); ++sparIndex) {
@@ -2889,6 +3032,11 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           spar.type == 2 ? spar.stripWidth : spar.type == 0 ? spar.tubeOd : spar.rodOd;
       const double height = spar.material == 0 ? spar.woodHeight :
           spar.type == 2 ? spar.stripThickness : width;
+      if (rectangular)
+        capStockProfiles.push_back(rectangle({{{center.x - width * .5, center.y - height * .5},
+            {center.x + width * .5, center.y - height * .5},
+            {center.x + width * .5, center.y + height * .5},
+            {center.x - width * .5, center.y + height * .5}}}));
       if (rectangular && spar.verticalLocation == 0)
         topNotches.push_back({center.x, width, height});
       else if (rectangular && spar.verticalLocation == 1)
@@ -2904,6 +3052,8 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         sparBooleanHoles.push_back(circle(center, width));
       }
     }
+    const auto sparTopNotchEnd = topNotches.size();
+    const auto sparBottomNotchEnd = bottomNotches.size();
     if (p.controlRegion && p.controlSkin.hingeSpars) {
       const auto hinge = hingeSparSection(rib, controlLeadingCut(rib), p.controlSkin, true);
       for (const auto& notch : hinge.notches)
@@ -2973,9 +3123,17 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
       std::vector<std::pair<double, double>> blocked;
       for (const auto& recess : top ? capTopSheeting : capBottomSheeting)
         blocked.emplace_back(recess.left, recess.right);
-      for (const auto& notch : top ? topNotches : bottomNotches)
+      const auto& sameNotches = top ? topNotches : bottomNotches;
+      const auto firstStockNotch = top ? sparTopNotchStart : sparBottomNotchStart;
+      const auto lastStockNotch = top ? sparTopNotchEnd : sparBottomNotchEnd;
+      for (std::size_t n = 0; n < sameNotches.size(); ++n) {
+        // Stock recessed under Cover Ribs can leave room for a cap. Its actual
+        // profile below determines whether it reaches the cap band.
+        if (n >= firstStockNotch && n < lastStockNotch) continue;
+        const auto& notch = sameNotches[n];
         blocked.emplace_back(notch.centerX - notch.width * 0.5,
                              notch.centerX + notch.width * 0.5);
+      }
       for (const auto& notch : top ? bottomNotches : topNotches) {
         const double a = notch.centerX - notch.width * 0.5;
         const double b = notch.centerX + notch.width * 0.5;
@@ -3006,10 +3164,48 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
           bandLow = std::min(bandLow, point.y - (top ? thickness : 0.0));
           bandHigh = std::max(bandHigh, point.y + (top ? 0.0 : thickness));
         }
-        if (y1 >= bandLow - 1.0e-8 && y0 <= bandHigh + 1.0e-8)
-          blocked.emplace_back(x0, x1);
+        if (y1 < bandLow - 1.0e-8 || y0 > bandHigh + 1.0e-8) return;
+        // Clip the actual stock section to the cap band. A bounding box
+        // falsely interrupts caps over recessed tubes and partial-width skins.
+        const double a = std::max(left, x0), b = std::min(right, x1);
+        std::vector<double> stations{a, b};
+        for (const auto point : profile)
+          if (point.x > a && point.x < b) stations.push_back(point.x);
+        for (const auto point : surface)
+          if (point.x > a && point.x < b) stations.push_back(point.x);
+        std::sort(stations.begin(), stations.end());
+        stations.erase(std::unique(stations.begin(), stations.end()), stations.end());
+        const auto gaps = [&](double x) {
+          double low = std::numeric_limits<double>::max(), high = -low;
+          for (std::size_t n = 0; n < profile.size(); ++n) {
+            const auto u = profile[n], v = profile[(n + 1) % profile.size()];
+            if (x < std::min(u.x, v.x) - 1e-9 || x > std::max(u.x, v.x) + 1e-9) continue;
+            if (std::abs(v.x - u.x) < 1e-12) {
+              low = std::min({low, u.y, v.y}); high = std::max({high, u.y, v.y});
+            } else {
+              const double y = u.y + (v.y - u.y) * (x - u.x) / (v.x - u.x);
+              low = std::min(low, y); high = std::max(high, y);
+            }
+          }
+          const double outer = interpolateY(surface, x);
+          return std::array{high - (outer - (top ? thickness : 0)),
+              outer + (top ? 0 : thickness) - low};
+        };
+        for (std::size_t n = 1; n < stations.size(); ++n) {
+          const double u = stations[n - 1], v = stations[n];
+          if (v - u < 1e-10) continue;
+          const auto first = gaps(u), last = gaps(v);
+          double begin = 0, end = 1;
+          for (int side = 0; side < 2; ++side) {
+            if (first[side] < 0 && last[side] < 0) { end = -1; break; }
+            if (first[side] < 0) begin = std::max(begin, first[side] / (first[side] - last[side]));
+            if (last[side] < 0) end = std::min(end, first[side] / (first[side] - last[side]));
+          }
+          if (end > begin + 1e-8)
+            blocked.emplace_back(u + (v - u) * begin, u + (v - u) * end);
+        }
       };
-      for (const auto& profile : sparBooleanCutouts) excludeProfile(profile);
+      for (const auto& profile : capStockProfiles) excludeProfile(profile);
       for (const auto& profile : sparBooleanHoles) excludeProfile(profile);
       if (p.carbonSpar)
         excludeProfile(circle(carbonSparCenters[ribIndex], p.carbonSpar == 1 ? p.cfTubeOd : p.cfRodOd));
@@ -3077,11 +3273,17 @@ StructuredWing applyWingStructure(const std::vector<RibDefinition>& ribs,
         auto outer = clippedSurface(surface, a, b);
         // Match the retained side of an existing notch exactly, including
         // its sampled end height, so the cap and its recess share a face.
+        const auto sheetEdge = [&](double x) {
+          const auto& sheets = top ? capTopSheeting : capBottomSheeting;
+          return std::any_of(sheets.begin(), sheets.end(), [x](const auto& sheet) {
+            return std::abs(x - sheet.left) < 1e-8 || std::abs(x - sheet.right) < 1e-8;
+          });
+        };
         for (const auto& point : retained)
-          if (std::abs(point.x - a) < 1.0e-8) outer.front().y = point.y;
+          if (!sheetEdge(a) && std::abs(point.x - a) < 1.0e-8) outer.front().y = point.y;
         const auto end = std::find_if(retained.begin(), retained.end(),
             [b](const Point2 point) { return std::abs(point.x - b) < 1.0e-8; });
-        if (end != retained.end()) outer.back().y = end->y;
+        if (end != retained.end() && !sheetEdge(b)) outer.back().y = end->y;
         auto profile = outer;
         for (auto it = outer.rbegin(); it != outer.rend(); ++it)
           profile.push_back({it->x, it->y + (top ? -thickness : thickness)});
