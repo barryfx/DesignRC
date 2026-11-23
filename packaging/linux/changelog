@@ -1,3 +1,13 @@
+designrc (1.9.1-1) noble; urgency=medium
+
+  * Move Wiring Holes and its parameters to Ribs below Lightening Holes.
+  * Remove duplicate controls from Spoilers and Ailerons/Flaps, including Defaults.
+  * Preserve wiring-hole selections and parameters from older projects/defaults.
+  * Add focused GUI and legacy-project compatibility regression coverage.
+  * Update About, Help, README, and source-release documentation for 1.9.1.
+
+ -- Barry Foust <barryfx@users.noreply.github.com>  Mon, 23 Nov 2026 12:00:00 -0500
+
 designrc (1.9.0-1) noble; urgency=medium
 
   * Add mutually exclusive sheeting boundaries and Cover Ribs on all four sides.

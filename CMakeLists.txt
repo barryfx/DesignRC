@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(DesignRC VERSION 1.9.0 LANGUAGES CXX)
+project(DesignRC VERSION 1.9.1 LANGUAGES CXX)
 
 option(DESIGNRC_BUILD_TESTS "Build DesignRC tests" ON)
 set(DESIGNRC_LINUX_PACKAGE_GENERATOR "DEB" CACHE STRING
@@ -123,7 +123,7 @@ endif()
 target_include_directories(designrc PRIVATE src ${OpenCASCADE_INCLUDE_DIR})
 target_compile_definitions(designrc PRIVATE
   DESIGNRC_VERSION="${PROJECT_VERSION}"
-  DESIGNRC_RELEASE_DATE="November 6, 2026"
+  DESIGNRC_RELEASE_DATE="November 23, 2026"
 )
 target_link_libraries(designrc PRIVATE
   designrc_domain
@@ -268,6 +268,7 @@ if(DESIGNRC_BUILD_TESTS)
     target_link_options(designrc_gui_tests PRIVATE /STACK:4194304)
   endif()
   add_test(NAME designrc_gui_tests COMMAND designrc_gui_tests)
+  add_test(NAME designrc_wiring_holes_gui_tests COMMAND designrc_gui_tests --wiring-holes)
   add_test(NAME designrc_spar_directions_gui_tests COMMAND designrc_gui_tests --spar-directions)
   add_test(NAME designrc_spar_joiner_warning_gui_tests COMMAND designrc_gui_tests --spar-joiner-warning)
   add_test(NAME designrc_spoiler_placement_gui_tests COMMAND designrc_gui_tests --spoiler-placement)

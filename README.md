@@ -2,7 +2,7 @@
 
 DesignRC is a parametric desktop application for designing built-up RC airplane wings. It creates
 manufacturing geometry and a complete mirrored-wing preview from a half-wing definition. The
-source version is **1.9.0**, dated **November 6, 2026**.
+source version is **1.9.1**, dated **November 23, 2026**.
 
 > **Platform targets:** Windows 11 x64, Ubuntu 24.04/26.04 x86-64, and Fedora 44 x86-64.
 
@@ -28,7 +28,19 @@ source version is **1.9.0**, dated **November 6, 2026**.
 The application contains detailed installed HTML help. After building, select **Help > Help** or
 press **F1**.
 
-## What's new in 1.9.0 (November 6, 2026)
+## What's new in 1.9.1 (November 23, 2026)
+
+- **Wiring Holes on Ribs:** the checkbox and its Start Rib, End Rib, Start Chord
+  Location, Width, and Height fields now appear only on the Ribs tab, below Lightening
+  Holes. The duplicate controls on Spoilers and Ailerons/Flaps are removed.
+- **Defaults:** Edit > Defaults uses the same Ribs-only controls for all panels.
+- **Backward compatibility:** older projects and saved defaults retain their wiring-hole
+  selection and dimensions automatically. An enabled checkbox in an older project loads
+  checked on Ribs; disabled settings remain unchecked. Hole generation is unchanged.
+- Added focused GUI coverage for placement, units, parameter editing, saved settings,
+  and loading enabled/disabled wiring holes from an older three-panel project.
+
+## Earlier: 1.9.0 (November 6, 2026)
 
 - **Sheeting boundaries:** Front/Rear Top/Bottom sheeting each offer mutually exclusive
   **Stop Chord Location**, **Up To Spar**, and **Mid Spar** radio buttons. The spar modes
@@ -265,22 +277,22 @@ press **F1**.
 
 ## Download
 
-Download the 1.9.0 installers, corresponding source archives, and checksums from the
-[DesignRC 1.9.0 release](https://github.com/barryfx/DesignRC/releases/tag/1.9.0):
+Download the 1.9.1 installers, corresponding source archives, and checksums from the
+[DesignRC 1.9.1 release](https://github.com/barryfx/DesignRC/releases/tag/1.9.1):
 
-- `DesignRC-1.9.0-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
+- `DesignRC-1.9.1-Windows-x64-Setup.exe` for Windows 11 x64. Download and run the installer. Because
   it is not code-signed, Windows may display a warning before allowing it to run.
-- `designrc_1.9.0-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
+- `designrc_1.9.1-1_amd64.deb` for Ubuntu 24.04 and 26.04 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo apt install ./designrc_1.9.0-1_amd64.deb
+  sudo apt install ./designrc_1.9.1-1_amd64.deb
   designrc
   ```
 
   APT installs the required distribution runtime libraries automatically. Qt 6.4.2, OCCT 8.0,
   and ICU 74 are included. This build requires `libc6 >= 2.38`. Use its matching
-  `DesignRC-1.9.0-1-source.tar.gz` source archive and `DesignRC-1.9.0-1-Linux-x64.sha256`
+  `DesignRC-1.9.1-1-source.tar.gz` source archive and `DesignRC-1.9.1-1-Linux-x64.sha256`
   checksum manifest.
   On WSL, install `wslu` and `xdg-utils` if **Help > Help** should open in the Windows default browser:
 
@@ -288,15 +300,15 @@ Download the 1.9.0 installers, corresponding source archives, and checksums from
   sudo apt install wslu xdg-utils
   ```
 
-- `designrc-1.9.0-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
+- `designrc-1.9.1-1.x86_64.rpm` for Fedora 44 x86-64. From the download directory, install and run it
   with:
 
   ```bash
-  sudo dnf install ./designrc-1.9.0-1.x86_64.rpm
+  sudo dnf install ./designrc-1.9.1-1.x86_64.rpm
   designrc
   ```
 
-Release packaging also produces source archives and `DesignRC-1.9.0-SHA256SUMS.txt`. Use the checksum file
+Release packaging also produces source archives and `DesignRC-1.9.1-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
 ## Typical use
@@ -393,10 +405,11 @@ Run the complete suite with:
 ctest --preset windows-debug
 ```
 
-The complete suite contains 21 tests:
+The complete suite contains 22 tests:
 
 - `designrc_domain_tests` - airfoil, structure, naming, DXF, and SVG behavior;
 - `designrc_gui_tests` - defaults, parameter controls, plans, and PDF/DXF/SVG generation;
+- `designrc_wiring_holes_gui_tests` - Ribs-only placement, Defaults, parameter controls, and saved wiring settings;
 - `designrc_geometry_tests` - OpenCascade solid construction and boolean operations;
 - `designrc_step_export_tests` - STEP assembly structure, names, and component grouping;
 - `designrc_joiner_backend_tests` - straight mirrored/cross-panel joiners, placement, bay counts, and rib clearance;
@@ -555,15 +568,15 @@ x86-64 `.deb` targeting the build host's Ubuntu version, corresponding source ar
 SHA-256 checksums to:
 
 ```text
-dist/designrc_1.9.0-1_amd64.deb
-dist/DesignRC-1.9.0-1-source.tar.gz
-dist/DesignRC-1.9.0-1-Linux-x64.sha256
+dist/designrc_1.9.1-1_amd64.deb
+dist/DesignRC-1.9.1-1-source.tar.gz
+dist/DesignRC-1.9.1-1-Linux-x64.sha256
 ```
 
 Install the locally built package with:
 
 ```bash
-sudo apt install ./dist/designrc_1.9.0-1_amd64.deb
+sudo apt install ./dist/designrc_1.9.1-1_amd64.deb
 ```
 
 ### Reproducible Ubuntu 24.04 compatibility build
@@ -604,7 +617,7 @@ uninstalls the package. For example:
 docker run --rm \
   --mount "type=bind,source=$PWD,target=/workspace,readonly" \
   ubuntu:24.04 bash /workspace/packaging/linux/test-ubuntu-package.sh \
-  /workspace/dist/ubuntu-24.04/designrc_1.9.0-1_amd64.deb
+  /workspace/dist/ubuntu-24.04/designrc_1.9.1-1_amd64.deb
 # Repeat with ubuntu:26.04.
 ```
 
@@ -654,15 +667,15 @@ The script uses `build/fedora-release` and writes the x86-64 RPM, corresponding 
 SHA-256 checksums to:
 
 ```text
-dist/designrc-1.9.0-1.x86_64.rpm
-dist/DesignRC-1.9.0-source.tar.gz
-dist/DesignRC-1.9.0-Linux-RPM-x64.sha256
+dist/designrc-1.9.1-1.x86_64.rpm
+dist/DesignRC-1.9.1-source.tar.gz
+dist/DesignRC-1.9.1-Linux-RPM-x64.sha256
 ```
 
 Install the locally built package and start DesignRC with:
 
 ```bash
-sudo dnf install ./dist/designrc-1.9.0-1.x86_64.rpm
+sudo dnf install ./dist/designrc-1.9.1-1.x86_64.rpm
 designrc
 ```
 

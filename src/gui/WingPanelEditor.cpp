@@ -1619,6 +1619,7 @@ QWidget* WingPanelEditor::makeRibsPage() {
   lighteningLayout->addWidget(detailRow(
       {{"Min Hole Distance", ribLighteningMinimumHoleDistance_}}));
   form->addRow(ribLighteningHoleDetails_);
+  form->addRow(makeWiringHolesSection("Ribs"));
 
   riblets_ = new QCheckBox{
       "Riblets (Riblets require CF LE and mid Spar)"};
@@ -2671,7 +2672,6 @@ QWidget* WingPanelEditor::makeControlsPage() {
   connect(flaps_, &QCheckBox::toggled, this, [this] { updateConditionalControls(); emitChanged(); });
   for (auto* spinner : {aileronStart_, aileronStop_, flapStart_, flapStop_})
     connect(spinner, &QSpinBox::valueChanged, this, &WingPanelEditor::emitChanged);
-  layout->addWidget(makeWiringHolesSection("Controls"));
   layout->addStretch(); return scrollPage(content);
 }
 
@@ -2745,7 +2745,6 @@ QWidget* WingPanelEditor::makeSpoilersPage() {
   detailLayout->addWidget(spoilerMinimumCircleDistanceDetails_);
   spoilerDetails_ = detail;
   layout->addWidget(detail);
-  layout->addWidget(makeWiringHolesSection("Spoilers"));
   layout->addStretch();
   connect(spoilers_, &QCheckBox::toggled, this, [this] {
     updateConditionalControls(); emitChanged();
@@ -2804,7 +2803,7 @@ QWidget* WingPanelEditor::makeWiringHolesSection(const QString& suffix) {
   row.details = new QWidget;
   auto* details = new QVBoxLayout{row.details};
   details->setContentsMargins(0, 0, 0, 0);
-  if (suffix == "Spoilers") {
+  if (suffix == "Ribs") {
     details->addWidget(detailRow({{"Start Rib", row.startRib}}));
     details->addWidget(detailRow({{"End Rib", row.endRib}}));
     details->addWidget(detailRow({{"Start Chord Location", row.chordLocation}}));

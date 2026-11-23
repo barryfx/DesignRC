@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DesignRC 1.9.0 User Help</title>
+  <title>DesignRC 1.9.1 User Help</title>
   <style>
     :root { color-scheme:light; --ink:#302821; --muted:#675c52; --accent:#7a4d2d; --line:#d9cec3; --paper:#fffdf9; --panel:#f5eee6; }
     * { box-sizing:border-box; }
@@ -44,14 +44,15 @@
 <body>
 <div class="page">
   <header>
-    <h1>DesignRC 1.9.0 User Help</h1>
+    <h1>DesignRC 1.9.1 User Help</h1>
     <p>Parametric built-up RC wing design, 3D structure, plans, and manufacturing export</p>
   </header>
   <div class="layout">
     <nav aria-label="Help topics">
       <strong>Contents</strong>
       <a href="#overview">What DesignRC does</a>
-      <a href="#new-19">New in 1.9.0</a>
+      <a href="#new-191">New in 1.9.1</a>
+      <a href="#new-19">Earlier: 1.9.0</a>
       <a href="#new-18">Earlier: 1.8.0</a>
       <a href="#imported-curves">Import LE/TE curves</a>
       <a href="#workspace">The main window</a>
@@ -92,7 +93,14 @@
       </ul>
       <div class="note"><strong>Design convention:</strong> panel parameters describe the right half-wing from the aircraft centerline outward. DesignRC generates that half and mirrors it for the complete preview, plan, and assembly.</div>
 
-      <h2 id="new-19">New in 1.9.0 &mdash; November 6, 2026</h2>
+      <h2 id="new-191">New in 1.9.1 &mdash; November 23, 2026</h2>
+      <ul>
+        <li><strong>Wiring Holes:</strong> available only on the Ribs tab, below Lightening Holes. Its Start Rib, End Rib, Start Chord Location, Width, and Height controls keep their existing function. The duplicate controls on Spoilers and Ailerons/Flaps are removed.</li>
+        <li><strong>Defaults:</strong> the same Ribs-only controls are available in Edit &gt; Defaults for every panel.</li>
+        <li><strong>Older projects:</strong> wiring-hole selections and parameters load automatically into Ribs. Previously enabled holes remain checked and disabled holes remain unchecked. Saved User Defaults are preserved too.</li>
+      </ul>
+
+      <h2 id="new-19">Earlier: 1.9.0 &mdash; November 6, 2026</h2>
       <ul>
         <li><strong>Sheeting boundaries:</strong> Front/Rear Top/Bottom sheeting each have mutually exclusive Stop Chord Location, Up To Spar, and Mid Spar radio buttons. Spar modes use the first spar from the LE on the matching Top/Bottom side. Mid Spar ends at the center of its width.</li>
         <li><strong>Cover Ribs:</strong> recesses covered stock beneath the sheet. Up To Spar covers the full selected spar; Mid Spar preserves its centerline boundary. Straight stock moves as one member, including beyond the sheet's Stop Rib.</li>
@@ -233,6 +241,7 @@
         </dd>
         <dt>Add Rib 1a</dt><dd>Panel 1 only. Adds a center-section reinforcement rib midway between the first two regular stations; later rib labels adjust accordingly.</dd>
         <dt>Lightening Holes</dt><dd>Creates optimized circular rib holes. <strong>Start Rib</strong> and <strong>Stop Rib</strong> select the range; <strong>Min Border Distance</strong> retains material around rib edges and structural openings, and <strong>Min Hole Distance</strong> separates neighboring holes. Add this option last because cutting the holes can significantly increase generation time.</dd>
+        <dt>Wiring Holes</dt><dd>Available only on Ribs, below Lightening Holes, including in Edit &gt; Defaults. Adds rectangular wiring openings using Start Rib, End Rib, Start Chord Location, Width, and Height. Older projects and User Defaults retain their saved checkbox state and parameters automatically.</dd>
         <dt>Riblets</dt><dd>Adds partial ribs over the selected <strong>Start Rib</strong> to <strong>End Rib</strong> range. <strong>Riblets per Bay</strong> selects 1–5 intermediate riblets in each bay. Riblets require a carbon-fiber leading edge and a mid-position CF spar between 20% and 40% chord; the option is unavailable without these parts.</dd>
       </dl>
 
@@ -337,7 +346,6 @@
         <dt>Height</dt><dd>Nominal control body height setting.</dd>
         <dt>Start / Stop Rib</dt><dd>Spanwise boundaries. Flaps stop before a panel tip; an aileron may extend through the tip rib.</dd>
         <dt>Hinge Post Width / Height</dt><dd>Cross-section of the separate fixed hinge-post solid ahead of the movable control.</dd>
-        <dt>Wiring Holes</dt><dd>Adds rectangular wiring openings through the selected ribs using start/end ribs, chord location, width, and height.</dd>
       </dl>
       <ul>
         <li>A clearance gap is maintained around movable controls.</li>
@@ -361,7 +369,6 @@
         <dt>Spoiler Thickness</dt><dd>Thickness of the moving panel and frame rails.</dd>
         <dt>Frame Rail Width</dt><dd>Width of the surrounding frame rails. Support Rail Height is calculated and displayed.</dd>
         <dt>Lightening Holes</dt><dd>Adds optimized holes to the spoiler panel. <strong>Min Border Distance</strong> retains material around its outline, and <strong>Min Circle Distance</strong> separates neighboring holes.</dd>
-        <dt>Wiring Holes</dt><dd>The same synchronized wiring-hole definition shown on the Ailerons/Flaps page.</dd>
       </dl>
       <p>Spoiler panels, frame rails, and support rails are checked against spars, the trailing edge, and the other spoiler parts. Collision messages identify both conflicting components.</p>
 
@@ -437,7 +444,7 @@
       </ul>
     </main>
   </div>
-  <footer>DesignRC 1.9.0 &middot; Release date: November 6, 2026</footer>
+  <footer>DesignRC 1.9.1 &middot; Release date: November 23, 2026</footer>
 </div>
 </body>
 </html>

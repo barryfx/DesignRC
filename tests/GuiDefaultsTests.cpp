@@ -43,6 +43,97 @@ void testSparJoinerWarning();
 void testSpoilerPlacementControls();
 
 namespace {
+void testWiringHolesOnRibs() {
+  using namespace designrc::gui;
+  // Projects written before the move store one shared wiring definition,
+  // regardless of which tab's checkbox the user operated.
+  QFile legacyFile{QString::fromStdWString((std::filesystem::path{__FILE__}.parent_path() /
+      "fixtures" / "3PanelGlider.designrc").wstring())};
+  assert(legacyFile.open(QIODevice::ReadOnly));
+  const auto legacyProject = QJsonDocument::fromJson(legacyFile.readAll()).object();
+  const auto legacyPanels = legacyProject.value("panels").toArray();
+  assert(!legacyPanels.isEmpty());
+  bool sawEnabled = false, sawDisabled = false;
+  for (qsizetype i = 0; i < legacyPanels.size(); ++i) {
+    const auto json = legacyPanels[i].toObject();
+    const auto legacy = panelDataFromJson(json);
+    const bool enabled = json.value("wiringHoles").toBool();
+    sawEnabled |= enabled; sawDisabled |= !enabled;
+    for (bool defaults : {false, true}) {
+      WingPanelEditor editor{legacy,
+          static_cast<DisplayUnit>(legacyProject.value("globalUnit").toInt()), defaults, true, i == 0};
+      auto* check = editor.findChild<QCheckBox*>("wiringHolesRibs");
+      assert(check && check->isChecked() == enabled);
+      const auto loaded = editor.data();
+      assert(loaded.wiringHoles == enabled);
+      assert(loaded.wiringHoleStartRib == legacy.wiringHoleStartRib);
+      if (legacy.wiringHoleEndRib > 0) assert(loaded.wiringHoleEndRib == legacy.wiringHoleEndRib);
+      assert(loaded.wiringHoleChordLocationPercent == legacy.wiringHoleChordLocationPercent);
+      assert(std::abs(loaded.wiringHoleWidth - legacy.wiringHoleWidth) < 1e-8);
+      assert(std::abs(loaded.wiringHoleHeight - legacy.wiringHoleHeight) < 1e-8);
+      assert(panelDataToJson(loaded).value("wiringHoles").toBool() == enabled);
+    }
+  }
+  assert(sawEnabled && sawDisabled);
+  for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches})
+    for (bool defaults : {false, true}) for (bool root : {false, true}) {
+      WingPanelData data;
+      data.ribCount = 9; data.addRib1a = root;
+      data.wiringHoles = true; data.wiringHoleStartRib = 2;
+      data.wiringHoleEndRib = 9 + (root ? 1 : 0);
+      WingPanelEditor editor{data, unit, defaults, true, root};
+      auto* tabs = editor.findChild<QTabWidget*>();
+      int ribsPage = -1;
+      for (int i = 0; i < tabs->count(); ++i)
+        if (tabs->tabText(i) == "Ribs") ribsPage = i;
+      assert(ribsPage >= 0);
+      tabs->setCurrentIndex(ribsPage);
+      editor.resize(850, 1100); editor.show(); QApplication::processEvents();
+      auto* wiring = editor.findChild<QCheckBox*>("wiringHolesRibs");
+      auto* lightening = editor.findChild<QCheckBox*>("ribLighteningHoles");
+      auto* riblets = editor.findChild<QCheckBox*>("riblets");
+      auto* start = editor.findChild<QSpinBox*>("wiringHoleStartRibRibs");
+      auto* end = editor.findChild<QSpinBox*>("wiringHoleEndRibRibs");
+      auto* chord = editor.findChild<QDoubleSpinBox*>("wiringHoleChordLocationPercentRibs");
+      auto* width = editor.findChild<LengthInput*>("wiringHoleWidthRibs");
+      auto* height = editor.findChild<LengthInput*>("wiringHoleHeightRibs");
+      assert(wiring && lightening && riblets && start && end && chord && width && height);
+      assert(tabs->widget(ribsPage)->isAncestorOf(wiring));
+      assert(!editor.findChild<QCheckBox*>("wiringHolesSpoilers"));
+      assert(!editor.findChild<QCheckBox*>("wiringHolesControls"));
+      int wiringCheckboxes = 0;
+      for (auto* check : editor.findChildren<QCheckBox*>())
+        if (check->text() == "Wiring Holes") ++wiringCheckboxes;
+      assert(wiringCheckboxes == 1);
+      assert(wiring->isVisible() && wiring->isChecked());
+      assert(wiring->mapTo(&editor, QPoint{}).x() == lightening->mapTo(&editor, QPoint{}).x());
+      assert(lightening->mapTo(&editor, QPoint{}).y() < wiring->mapTo(&editor, QPoint{}).y());
+      assert(wiring->mapTo(&editor, QPoint{}).y() < riblets->mapTo(&editor, QPoint{}).y());
+      assert(start->isVisible() && end->isVisible() && width->isVisible() && height->isVisible());
+      assert(start->value() == 2 && end->value() == 9 + (root ? 1 : 0));
+      if (root) assert(start->text() == "R1a");
+      int changes = 0;
+      QObject::connect(&editor, &WingPanelEditor::changed, [&] { ++changes; });
+      wiring->click();
+      assert(changes > 0 && !start->isVisible() && !editor.data().wiringHoles);
+      wiring->click();
+      assert(wiring->isChecked() && start->isVisible());
+      chord->setValue(63.75);
+      const double halfInch = unit == DisplayUnit::Inches ? .5 : 12.7;
+      width->findChild<QDoubleSpinBox*>()->setValue(halfInch);
+      height->findChild<QDoubleSpinBox*>()->setValue(halfInch);
+      assert(std::abs(height->valueMm() - 12.7) < 1e-8);
+      const auto saved = panelDataFromJson(panelDataToJson(editor.data()));
+      assert(saved.wiringHoles && saved.wiringHoleChordLocationPercent == 63.75);
+      assert(saved.wiringHoleStartRib == 2 && saved.wiringHoleEndRib == data.wiringHoleEndRib);
+      assert(std::abs(saved.wiringHoleWidth - 12.7) < 1e-8);
+      assert(std::abs(saved.wiringHoleHeight - 12.7) < 1e-8);
+      WingPanelEditor reopened{saved, unit, defaults, true, root};
+      assert(reopened.findChild<QCheckBox*>("wiringHolesRibs")->isChecked());
+      assert(reopened.findChild<QDoubleSpinBox*>("wiringHoleChordLocationPercentRibs")->value() == 63.75);
+    }
+}
+
 void testSheetEntirePanel() {
   using namespace designrc::gui;
   for (const auto unit : {DisplayUnit::Millimeters, DisplayUnit::Inches}) {
@@ -278,6 +369,10 @@ int main(int argc, char* argv[]) {
   _set_error_mode(_OUT_TO_STDERR);
 #endif
   QApplication application{argc, argv};
+  if (application.arguments().contains("--wiring-holes")) {
+    testWiringHolesOnRibs();
+    return 0;
+  }
   if (application.arguments().contains("--spar-directions")) {
     testSparParallelReferences();
     return 0;
@@ -295,6 +390,7 @@ int main(int argc, char* argv[]) {
     return 0;
   }
   using namespace designrc::gui;
+  testWiringHolesOnRibs();
   testSheetEntirePanel();
   testSparParallelReferences();
   testHingeSparHeightDefaults();
@@ -1566,17 +1662,17 @@ int main(int argc, char* argv[]) {
   auto* spoilerSupportRail =
       dihedralSpoilerEditor.findChild<QLabel*>("spoilerSupportRailHeight");
   auto* spoilerWiring =
-      dihedralSpoilerEditor.findChild<QCheckBox*>("wiringHolesSpoilers");
+      dihedralSpoilerEditor.findChild<QCheckBox*>("wiringHolesRibs");
   auto* spoilerWiringStart =
-      dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleStartRibSpoilers");
+      dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleStartRibRibs");
   auto* spoilerWiringEnd =
-      dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleEndRibSpoilers");
+      dihedralSpoilerEditor.findChild<QSpinBox*>("wiringHoleEndRibRibs");
   auto* spoilerWiringChord = dihedralSpoilerEditor.findChild<QDoubleSpinBox*>(
-      "wiringHoleChordLocationPercentSpoilers");
+      "wiringHoleChordLocationPercentRibs");
   auto* spoilerWiringWidth = dihedralSpoilerEditor.findChild<LengthInput*>(
-      "wiringHoleWidthSpoilers");
+      "wiringHoleWidthRibs");
   auto* spoilerWiringHeight = dihedralSpoilerEditor.findChild<LengthInput*>(
-      "wiringHoleHeightSpoilers");
+      "wiringHoleHeightRibs");
   assert(spoilerEnd && spoilerChordLocationWidget && immediatelyBehindSpar &&
          spoilerWidth && spoilerThickness);
   assert(spoilerFrameRail && spoilerSupportRail && spoilerWiring);
@@ -1607,6 +1703,8 @@ int main(int argc, char* argv[]) {
          verticalPosition(spoilerSupportRail));
   assert(verticalPosition(minimumWoodMargin) <
          verticalPosition(minimumCircleDistance));
+  spoilerTabs->setCurrentIndex(1); // Wiring Holes moved to Ribs.
+  QApplication::processEvents();
   assert(verticalPosition(spoilerWiringStart) <
          verticalPosition(spoilerWiringEnd));
   assert(verticalPosition(spoilerWiringEnd) <
@@ -1644,24 +1742,21 @@ int main(int argc, char* argv[]) {
   assert(std::abs(restoredWiring.wiringHoleWidth / 25.4 - 3.0 / 8.0) < 1.0e-8);
   assert(std::abs(restoredWiring.wiringHoleHeight / 25.4 - 1.0 / 4.0) < 1.0e-8);
   WingPanelEditor wiringEditor{wiringDefaults, DisplayUnit::Inches};
-  auto* controlsWiring = wiringEditor.findChild<QCheckBox*>("wiringHolesControls");
-  auto* spoilersWiring = wiringEditor.findChild<QCheckBox*>("wiringHolesSpoilers");
-  auto* controlsStart = wiringEditor.findChild<QSpinBox*>("wiringHoleStartRibControls");
-  auto* controlsEnd = wiringEditor.findChild<QSpinBox*>("wiringHoleEndRibControls");
-  auto* spoilerChord =
+  auto* ribsWiring = wiringEditor.findChild<QCheckBox*>("wiringHolesRibs");
+  auto* wiringStart = wiringEditor.findChild<QSpinBox*>("wiringHoleStartRibRibs");
+  auto* wiringEnd = wiringEditor.findChild<QSpinBox*>("wiringHoleEndRibRibs");
+  auto* wiringChord =
       wiringEditor.findChild<QDoubleSpinBox*>(
-          "wiringHoleChordLocationPercentSpoilers");
-  assert(controlsWiring && spoilersWiring && controlsWiring->isChecked() &&
-         spoilersWiring->isChecked());
-  assert(controlsStart && controlsStart->text() == "R1a");
-  assert(controlsEnd && controlsEnd->text() == "R9");
-  spoilerChord->setValue(63.75);
-  assert(std::abs(wiringEditor.findChild<QDoubleSpinBox*>(
-             "wiringHoleChordLocationPercentControls")->value() - 63.75) <
-         1.0e-8);
-  assert(wiringEditor.findChild<LengthInput*>("wiringHoleWidthControls")
+          "wiringHoleChordLocationPercentRibs");
+  assert(ribsWiring && ribsWiring->isChecked());
+  assert(!wiringEditor.findChild<QCheckBox*>("wiringHolesControls"));
+  assert(wiringStart && wiringStart->text() == "R1a");
+  assert(wiringEnd && wiringEnd->text() == "R9");
+  wiringChord->setValue(63.75);
+  assert(std::abs(wiringEditor.data().wiringHoleChordLocationPercent - 63.75) < 1.0e-8);
+  assert(wiringEditor.findChild<LengthInput*>("wiringHoleWidthRibs")
              ->findChild<QDoubleSpinBox*>()->text() == "3/8 in");
-  assert(wiringEditor.findChild<LengthInput*>("wiringHoleHeightControls")
+  assert(wiringEditor.findChild<LengthInput*>("wiringHoleHeightRibs")
              ->findChild<QDoubleSpinBox*>()->text() == "1/4 in");
 
   WingPanelEditor sparEditor{WingPanelData{}, DisplayUnit::Millimeters};
