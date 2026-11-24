@@ -1,0 +1,16 @@
+#!/bin/sh
+# Resolve every bundled resource relative to the mounted/extracted AppDir.
+set -eu
+appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+resources="$appdir/usr/share/designrc/occt/resources"
+export CSF_OCCTResourcePath="$resources"
+export CSF_MDTVTexturesDirectory="$resources/Textures"
+export CSF_ShadersDirectory="$resources/Shaders"
+export CSF_SHMessage="$resources/SHMessage"
+export LD_LIBRARY_PATH="$appdir/usr/lib/designrc:$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$appdir/usr/lib/designrc/qt6/plugins"
+export FONTCONFIG_PATH="${FONTCONFIG_PATH:-$appdir/usr/share/designrc/fonts}"
+export FONTCONFIG_FILE="${FONTCONFIG_FILE:-$appdir/usr/share/designrc/fonts/fonts.conf}"
+# Use the bundled XCB plugin, including on Wayland desktops via XWayland.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+exec "$appdir/usr/lib/designrc/designrc" "$@"

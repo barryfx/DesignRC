@@ -246,7 +246,7 @@
         <p class="eyebrow"><span></span> Installer downloads: 1.9.1 · November 23, 2026</p>
         <h2>Choose your platform.</h2>
         <p>
-          DesignRC is available for 64-bit Windows and Linux. Every installer is published with
+            DesignRC is available for 64-bit Windows and Linux. Installers and the portable AppImage are published with
           source archives and SHA-256 checksums. Download version 1.9.1 for your platform below.
         </p>
       </div>
@@ -283,6 +283,18 @@
             Download .rpm <span>↓</span>
           </a>
           <code>sudo dnf install ./designrc-1.9.1-1.x86_64.rpm</code>
+        </article>
+
+        <article class="download-card">
+          <div class="platform-icon" aria-hidden="true">A</div>
+          <p class="platform-label">Ubuntu 24.04 / Fedora 44 · x86_64</p>
+          <h3>Portable Linux AppImage</h3>
+          <p>Run without installing a DesignRC package. Includes Qt, Open CASCADE, and runtime libraries. Added November 24, 2026.</p>
+          <a class="download-link" href="https://github.com/barryfx/DesignRC/releases/download/1.9.1/DesignRC-1.9.1-x86_64.AppImage">
+            Download .AppImage <span>↓</span>
+          </a>
+          <code>chmod +x DesignRC-1.9.1-x86_64.AppImage<br>./DesignRC-1.9.1-x86_64.AppImage</code>
+          <small>If FUSE is unavailable, add --appimage-extract-and-run. <a href="https://github.com/barryfx/DesignRC/blob/main/packaging/linux/APPIMAGE.md">Usage and test details</a>.</small>
         </article>
       </div>
 

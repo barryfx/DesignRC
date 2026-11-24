@@ -308,6 +308,18 @@ Download the 1.9.1 installers, corresponding source archives, and checksums from
   designrc
   ```
 
+- `DesignRC-1.9.1-x86_64.AppImage` is a portable Linux download, added November 24, 2026.
+  It bundles Qt, OCCT, and runtime libraries and was tested on Ubuntu 24.04 and Fedora 44.
+  No DesignRC package installation is required:
+
+  ```bash
+  chmod +x DesignRC-1.9.1-x86_64.AppImage
+  ./DesignRC-1.9.1-x86_64.AppImage
+  ```
+
+  If FUSE mounting is unavailable, add `--appimage-extract-and-run`.
+  See [AppImage usage, build, and test details](packaging/linux/APPIMAGE.md).
+
 Release packaging also produces source archives and `DesignRC-1.9.1-SHA256SUMS.txt`. Use the checksum file
 to verify a download before installing it.
 
@@ -620,6 +632,13 @@ docker run --rm \
   /workspace/dist/ubuntu-24.04/designrc_1.9.1-1_amd64.deb
 # Repeat with ubuntu:26.04.
 ```
+
+### Portable Linux AppImage
+
+The AppImage packaging workflow creates `DesignRC-1.9.1-x86_64.AppImage`
+from the tested Ubuntu 24.04 DEB, with Qt, OCCT, and runtime libraries bundled.
+It can run on Ubuntu 24.04 and Fedora 44 without installing the DesignRC package.
+See [AppImage build, usage, and test instructions](packaging/linux/APPIMAGE.md).
 
 ## Building on Fedora
 
